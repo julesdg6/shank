@@ -72,14 +72,14 @@ async def upload_audio(file: UploadFile = File(...)):
         )
 
     # Save the uploaded file using the internally generated task_id as the filename
-    dest = UPLOADS_DIR / f"{task_id}{suffix}"
-    dest.write_bytes(content)
+    upload_path = UPLOADS_DIR / f"{task_id}{suffix}"
+    upload_path.write_bytes(content)
 
     task = {
         'task_id': task_id,
         'type': 'upload',
         'source': file.filename,
-        'file_path': str(dest),
+        'file_path': str(upload_path),
         'status': 'pending',
         'created_at': datetime.now(timezone.utc).isoformat(),
     }
