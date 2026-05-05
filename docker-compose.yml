@@ -1,10 +1,24 @@
-version: '3.8'
 services:
-  api:
+  shank-api:
     build: ./api
     ports:
-      - '8087:8000'
-  worker:
+      - "8088:8080"
+    environment:
+      - DATA_DIR=/srv/shank/data
+    volumes:
+      - ./data:/srv/shank/data
+    networks:
+      - shank-net
+
+  shank-worker:
     build: ./worker
-    depends_on:
-      - api
+    environment:
+      - DATA_DIR=/srv/shank/data
+    volumes:
+      - ./data:/srv/shank/data
+    networks:
+      - shank-net
+
+networks:
+  shank-net:
+    driver: bridge
