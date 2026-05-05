@@ -1,0 +1,11 @@
+**/__pycache__/
+*.pyc
+.env
+data/
+*.mp3
+*.wav
+*.flac
+*.mid
+*.json
+*.csv
+*.md

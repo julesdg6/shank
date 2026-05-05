@@ -1,0 +1,10 @@
+version: '3.8'
+services:
+  api:
+    build: ./api
+    ports:
+      - '8087:8000'
+  worker:
+    build: ./worker
+    depends_on:
+      - api
