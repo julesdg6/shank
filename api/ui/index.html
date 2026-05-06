@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SHANK — AI Song Analyzer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0d0f14;
+      --surface: #161b25;
+      --surface2: #1e2535;
+      --border: #2a3347;
+      --accent: #6c63ff;
+      --accent-hover: #857dff;
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --error: #ef4444;
+      --text: #e2e8f0;
+      --text-muted: #8898aa;
+      --radius: 10px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 2rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    header h1 { font-size: 1.4rem; font-weight: 700; letter-spacing: 0.05em; }
+    header .badge {
+      background: var(--accent);
+      color: #fff;
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 99px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .status-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--success);
+      margin-left: auto;
+      box-shadow: 0 0 6px var(--success);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+    .status-dot.offline { background: var(--error); box-shadow: 0 0 6px var(--error); }
+
+    /* ── Layout ── */
+    main {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+      margin-bottom: 2rem;
+    }
+    @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+
+    /* ── Card ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+    }
+    .card h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 1.25rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: var(--text);
+    }
+    .card h2 .icon { font-size: 1.2rem; }
+
+    /* ── Drop Zone ── */
+    .dropzone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 2rem 1rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      position: relative;
+    }
+    .dropzone:hover, .dropzone.dragging {
+      border-color: var(--accent);
+      background: rgba(108, 99, 255, 0.06);
+    }
+    .dropzone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+      width: 100%;
+    }
+    .dropzone .dz-icon { font-size: 2.5rem; margin-bottom: 0.5rem; display: block; }
+    .dropzone p { color: var(--text-muted); font-size: 0.88rem; margin-bottom: 0.25rem; }
+    .dropzone .dz-hint { font-size: 0.75rem; color: var(--text-muted); opacity: 0.7; }
+    .dropzone .dz-selected { color: var(--accent); font-weight: 500; margin-top: 0.5rem; font-size: 0.85rem; }
+
+    /* ── Input ── */
+    .input-group { display: flex; flex-direction: column; gap: 0.75rem; }
+    input[type="url"], input[type="text"] {
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-size: 0.9rem;
+      padding: 0.65rem 0.9rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    input[type="url"]:focus, input[type="text"]:focus { border-color: var(--accent); }
+    input::placeholder { color: var(--text-muted); }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.4rem;
+      font-size: 0.88rem;
+      font-weight: 600;
+      padding: 0.65rem 1.25rem;
+      border-radius: var(--radius);
+      border: none;
+      cursor: pointer;
+      transition: background 0.2s, opacity 0.2s;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-sm { padding: 0.4rem 0.8rem; font-size: 0.78rem; }
+    .btn-ghost {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+    }
+    .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* ── Progress ── */
+    .progress-wrap { height: 4px; background: var(--surface2); border-radius: 2px; overflow: hidden; margin-top: 0.75rem; }
+    .progress-bar { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s; }
+
+    /* ── Alert ── */
+    .alert {
+      font-size: 0.82rem;
+      padding: 0.6rem 0.85rem;
+      border-radius: 7px;
+      margin-top: 0.75rem;
+      display: none;
+    }
+    .alert.show { display: block; }
+    .alert-success { background: rgba(34,197,94,0.1); color: var(--success); border: 1px solid rgba(34,197,94,0.3); }
+    .alert-error   { background: rgba(239,68,68,0.1);  color: var(--error);   border: 1px solid rgba(239,68,68,0.3); }
+
+    /* ── Tasks Table ── */
+    .tasks-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1rem;
+    }
+    .tasks-header h2 { font-size: 1rem; font-weight: 600; display: flex; align-items: center; gap: 0.5rem; }
+    #tasks-count {
+      background: var(--surface2);
+      color: var(--text-muted);
+      font-size: 0.72rem;
+      padding: 2px 8px;
+      border-radius: 99px;
+      font-weight: 600;
+    }
+
+    .table-wrap { overflow-x: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.84rem;
+    }
+    thead th {
+      text-align: left;
+      padding: 0.5rem 0.75rem;
+      color: var(--text-muted);
+      font-weight: 600;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    tbody tr { border-bottom: 1px solid var(--border); }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: rgba(255,255,255,0.02); }
+    tbody td {
+      padding: 0.65rem 0.75rem;
+      vertical-align: middle;
+    }
+    .td-id {
+      font-family: monospace;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      max-width: 140px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .td-source {
+      max-width: 200px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* ── Status badge ── */
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      font-size: 0.73rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 3px 8px;
+      border-radius: 99px;
+    }
+    .status-badge::before { content: '●'; font-size: 0.55rem; }
+    .s-pending   { background: rgba(245,158,11,0.12); color: var(--warning); }
+    .s-running   { background: rgba(108,99,255,0.15); color: var(--accent); }
+    .s-done, .s-complete, .s-completed
+                 { background: rgba(34,197,94,0.12);  color: var(--success); }
+    .s-failed, .s-error
+                 { background: rgba(239,68,68,0.1);   color: var(--error); }
+    .s-unknown   { background: rgba(136,152,170,0.12); color: var(--text-muted); }
+
+    /* ── Type pill ── */
+    .type-pill {
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 99px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .t-upload { background: rgba(34,197,94,0.1);  color: #4ade80; }
+    .t-url    { background: rgba(59,130,246,0.1); color: #60a5fa; }
+
+    /* ── Empty state ── */
+    #empty-state {
+      text-align: center;
+      padding: 3rem 1rem;
+      color: var(--text-muted);
+      display: none;
+    }
+    #empty-state .es-icon { font-size: 3rem; display: block; margin-bottom: 0.5rem; }
+    #empty-state p { font-size: 0.88rem; }
+
+    /* ── Spinner ── */
+    .spin {
+      display: inline-block;
+      width: 12px; height: 12px;
+      border: 2px solid transparent;
+      border-top-color: currentColor;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Result popover ── */
+    #result-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+    #result-modal.open { display: flex; }
+    .modal-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      max-width: 600px;
+      width: 100%;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+    .modal-box h3 { font-size: 1rem; margin-bottom: 1rem; }
+    pre {
+      background: var(--surface2);
+      border-radius: 7px;
+      padding: 1rem;
+      font-size: 0.78rem;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #a5f3fc;
+    }
+    .modal-close { float: right; background: none; border: none; color: var(--text-muted); font-size: 1.2rem; cursor: pointer; line-height: 1; }
+  </style>
+</head>
+<body>
+
+<header>
+  <span style="font-size:1.5rem">🎵</span>
+  <h1>SHANK</h1>
+  <span class="badge">AI Analyzer</span>
+  <div id="api-dot" class="status-dot" title="API status"></div>
+</header>
+
+<main>
+  <div class="grid">
+
+    <!-- ── Upload Card ── -->
+    <div class="card">
+      <h2><span class="icon">📁</span> Upload Audio File</h2>
+      <div class="dropzone" id="dropzone">
+        <input type="file" id="file-input" accept=".mp3,.wav,.flac" />
+        <span class="dz-icon">🎵</span>
+        <p>Drag &amp; drop an audio file here</p>
+        <p class="dz-hint">Supported: MP3, WAV, FLAC &nbsp;·&nbsp; Max 200 MB</p>
+        <div class="dz-selected" id="dz-selected"></div>
+      </div>
+      <div class="progress-wrap" id="upload-progress-wrap" style="display:none">
+        <div class="progress-bar" id="upload-progress-bar" style="width:0%"></div>
+      </div>
+      <div class="alert" id="upload-alert"></div>
+      <button class="btn btn-primary" id="upload-btn" style="margin-top:1rem;width:100%" disabled>
+        Upload &amp; Analyze
+      </button>
+    </div>
+
+    <!-- ── URL Card ── -->
+    <div class="card">
+      <h2><span class="icon">🔗</span> YouTube URL</h2>
+      <div class="input-group">
+        <input
+          type="url"
+          id="url-input"
+          placeholder="https://www.youtube.com/watch?v=…"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <div class="alert" id="url-alert"></div>
+        <button class="btn btn-primary" id="url-btn">
+          Submit &amp; Analyze
+        </button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── Tasks Card ── -->
+  <div class="card">
+    <div class="tasks-header">
+      <h2>
+        <span class="icon">📋</span> Tasks
+        <span id="tasks-count">0</span>
+      </h2>
+      <button class="btn btn-ghost btn-sm" id="clear-btn">Clear all</button>
+    </div>
+
+    <div id="empty-state">
+      <span class="es-icon">🎧</span>
+      <p>No tasks yet. Upload a file or submit a YouTube URL above to get started.</p>
+    </div>
+
+    <div class="table-wrap" id="table-wrap">
+      <table id="tasks-table">
+        <thead>
+          <tr>
+            <th>Task ID</th>
+            <th>Type</th>
+            <th>Source</th>
+            <th>Status</th>
+            <th>Created</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="tasks-body"></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<!-- ── Result Modal ── -->
+<div id="result-modal">
+  <div class="modal-box">
+    <button class="modal-close" id="modal-close">✕</button>
+    <h3>Task Details</h3>
+    <pre id="modal-pre"></pre>
+  </div>
+</div>
+
+<script>
+  // ── Config ──────────────────────────────────────────────────────────────
+  const API = ''; // same origin; API served from same host
+  const TASK_ID_PREFIX_LEN = 8; // characters shown before "…" in the task table
+
+  // ── State ───────────────────────────────────────────────────────────────
+  let tasks = JSON.parse(localStorage.getItem('shank_tasks') || '[]');
+  let pollTimer = null;
+
+  // ── Utilities ────────────────────────────────────────────────────────────
+  function saveTasks() { localStorage.setItem('shank_tasks', JSON.stringify(tasks)); }
+
+  function showAlert(el, msg, type) {
+    el.textContent = msg;
+    el.className = `alert show alert-${type}`;
+  }
+  function clearAlert(el) { el.className = 'alert'; el.textContent = ''; }
+
+  function statusBadge(status) {
+    const s = (status || 'unknown').toLowerCase();
+    const cls = ['pending','running','done','complete','completed','failed','error'].includes(s)
+      ? `s-${s}` : 's-unknown';
+    return `<span class="status-badge ${cls}">${status || 'unknown'}</span>`;
+  }
+
+  function typePill(type) {
+    const cls = type === 'upload' ? 't-upload' : 't-url';
+    return `<span class="type-pill ${cls}">${type}</span>`;
+  }
+
+  function fmtDate(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
+  }
+
+  function needsPoll(status) {
+    const s = (status || '').toLowerCase();
+    return s === 'pending' || s === 'running';
+  }
+
+  // ── Render ───────────────────────────────────────────────────────────────
+  function render() {
+    const tbody = document.getElementById('tasks-body');
+    const empty = document.getElementById('empty-state');
+    const tableWrap = document.getElementById('table-wrap');
+    const count = document.getElementById('tasks-count');
+
+    count.textContent = tasks.length;
+
+    if (tasks.length === 0) {
+      empty.style.display = 'block';
+      tableWrap.style.display = 'none';
+      return;
+    }
+
+    empty.style.display = 'none';
+    tableWrap.style.display = '';
+
+    tbody.innerHTML = tasks.map((t, i) => `
+      <tr data-i="${i}">
+        <td class="td-id" title="${t.task_id}">${t.task_id.slice(0, TASK_ID_PREFIX_LEN)}…</td>
+        <td>${typePill(t.type)}</td>
+        <td class="td-source" title="${t.source || ''}">${t.source || '—'}</td>
+        <td>${statusBadge(t.status)}${needsPoll(t.status) ? ' <span class="spin"></span>' : ''}</td>
+        <td style="white-space:nowrap;color:var(--text-muted);font-size:0.8rem">${fmtDate(t.created_at)}</td>
+        <td>
+          <button class="btn btn-ghost btn-sm view-btn" data-i="${i}">View</button>
+        </td>
+      </tr>
+    `).join('');
+
+    // Attach view buttons
+    tbody.querySelectorAll('.view-btn').forEach(btn => {
+      btn.addEventListener('click', () => openModal(parseInt(btn.dataset.i)));
+    });
+  }
+
+  // ── Modal ────────────────────────────────────────────────────────────────
+  function openModal(i) {
+    const t = tasks[i];
+    if (!t) return;
+    document.getElementById('modal-pre').textContent = JSON.stringify(t, null, 2);
+    document.getElementById('result-modal').classList.add('open');
+  }
+  document.getElementById('modal-close').addEventListener('click', () => {
+    document.getElementById('result-modal').classList.remove('open');
+  });
+  document.getElementById('result-modal').addEventListener('click', e => {
+    if (e.target === e.currentTarget)
+      document.getElementById('result-modal').classList.remove('open');
+  });
+
+  // ── Polling ──────────────────────────────────────────────────────────────
+  async function pollTask(i) {
+    const t = tasks[i];
+    if (!t) return;
+    try {
+      const res = await fetch(`${API}/tasks/${t.task_id}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      tasks[i] = { ...tasks[i], ...data };
+      saveTasks();
+      render();
+    } catch (_) { /* network error; ignore */ }
+  }
+
+  function startPolling() {
+    if (pollTimer) return;
+    pollTimer = setInterval(async () => {
+      const pending = tasks.reduce((acc, t, i) => { if (needsPoll(t.status)) acc.push(i); return acc; }, []);
+      if (pending.length === 0) { stopPolling(); return; }
+      await Promise.all(pending.map(pollTask));
+    }, 3000);
+  }
+
+  function stopPolling() { clearInterval(pollTimer); pollTimer = null; }
+
+  function maybeStartPolling() {
+    if (tasks.some(t => needsPoll(t.status))) startPolling();
+  }
+
+  // ── Add task ─────────────────────────────────────────────────────────────
+  function addTask(task) {
+    tasks.unshift(task);
+    saveTasks();
+    render();
+    maybeStartPolling();
+  }
+
+  // ── Clear ────────────────────────────────────────────────────────────────
+  document.getElementById('clear-btn').addEventListener('click', () => {
+    tasks = [];
+    saveTasks();
+    stopPolling();
+    render();
+  });
+
+  // ── File Upload ──────────────────────────────────────────────────────────
+  const dropzone  = document.getElementById('dropzone');
+  const fileInput = document.getElementById('file-input');
+  const dzSelected = document.getElementById('dz-selected');
+  const uploadBtn = document.getElementById('upload-btn');
+  const uploadAlert = document.getElementById('upload-alert');
+
+  let selectedFile = null;
+
+  function setFile(f) {
+    if (!f) return;
+    selectedFile = f;
+    dzSelected.textContent = `Selected: ${f.name} (${(f.size / 1024 / 1024).toFixed(2)} MB)`;
+    uploadBtn.disabled = false;
+    clearAlert(uploadAlert);
+  }
+
+  fileInput.addEventListener('change', () => setFile(fileInput.files[0]));
+
+  dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragging'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragging'));
+  dropzone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropzone.classList.remove('dragging');
+    setFile(e.dataTransfer.files[0]);
+  });
+
+  uploadBtn.addEventListener('click', async () => {
+    if (!selectedFile) return;
+    clearAlert(uploadAlert);
+    uploadBtn.disabled = true;
+
+    const progressWrap = document.getElementById('upload-progress-wrap');
+    const progressBar  = document.getElementById('upload-progress-bar');
+    progressWrap.style.display = '';
+    progressBar.style.width = '0%';
+
+    try {
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+
+      // Use XMLHttpRequest for upload progress
+      const result = await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${API}/tasks/upload`);
+        xhr.upload.addEventListener('progress', e => {
+          if (e.lengthComputable) {
+            progressBar.style.width = `${Math.round(e.loaded / e.total * 100)}%`;
+          }
+        });
+        xhr.onload = () => {
+          if (xhr.status === 202) resolve(JSON.parse(xhr.responseText));
+          else reject(JSON.parse(xhr.responseText));
+        };
+        xhr.onerror = () => reject({ detail: 'Network error' });
+        xhr.send(formData);
+      });
+
+      progressBar.style.width = '100%';
+      showAlert(uploadAlert, `✅ Task queued! ID: ${result.task_id}`, 'success');
+      addTask({ task_id: result.task_id, type: 'upload', source: selectedFile.name, status: result.status, created_at: new Date().toISOString() });
+
+      // Reset
+      selectedFile = null;
+      dzSelected.textContent = '';
+      fileInput.value = '';
+      uploadBtn.disabled = true;
+      setTimeout(() => { progressWrap.style.display = 'none'; progressBar.style.width = '0%'; }, 1000);
+
+    } catch (err) {
+      progressWrap.style.display = 'none';
+      const msg = err?.detail || (typeof err === 'string' ? err : 'Upload failed');
+      showAlert(uploadAlert, `❌ ${msg}`, 'error');
+      uploadBtn.disabled = false;
+    }
+  });
+
+  // ── URL Submit ────────────────────────────────────────────────────────────
+  const urlInput = document.getElementById('url-input');
+  const urlBtn   = document.getElementById('url-btn');
+  const urlAlert = document.getElementById('url-alert');
+
+  async function submitUrl() {
+    const url = urlInput.value.trim();
+    if (!url) { showAlert(urlAlert, 'Please enter a YouTube URL.', 'error'); return; }
+    clearAlert(urlAlert);
+    urlBtn.disabled = true;
+
+    try {
+      const res = await fetch(`${API}/tasks/url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const detail = data?.detail?.[0]?.msg || data?.detail || 'Submission failed';
+        showAlert(urlAlert, `❌ ${detail}`, 'error');
+      } else {
+        showAlert(urlAlert, `✅ Task queued! ID: ${data.task_id}`, 'success');
+        addTask({ task_id: data.task_id, type: 'url', source: url, status: data.status, created_at: new Date().toISOString() });
+        urlInput.value = '';
+      }
+    } catch (_) {
+      showAlert(urlAlert, '❌ Network error. Is the API running?', 'error');
+    } finally {
+      urlBtn.disabled = false;
+    }
+  }
+
+  urlBtn.addEventListener('click', submitUrl);
+  urlInput.addEventListener('keydown', e => { if (e.key === 'Enter') submitUrl(); });
+
+  // ── API Health ────────────────────────────────────────────────────────────
+  async function checkApiHealth() {
+    const dot = document.getElementById('api-dot');
+    try {
+      const res = await fetch(`${API}/`, { cache: 'no-store' });
+      dot.className = res.ok ? 'status-dot' : 'status-dot offline';
+    } catch (_) {
+      dot.className = 'status-dot offline';
+    }
+  }
+  checkApiHealth();
+  setInterval(checkApiHealth, 30000);
+
+  // ── Init ──────────────────────────────────────────────────────────────────
+  render();
+  maybeStartPolling();
+</script>
+</body>
+</html>
