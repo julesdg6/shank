@@ -44,10 +44,18 @@ def _update_task(task_file: Path, updates: dict) -> None:
     _write_task(task_file, task)
 
 
-def process_pending_tasks() -> None:
-    """Scan TASKS_DIR for pending URL tasks and download their audio."""
+def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
+    """Scan *tasks_dir* for pending URL tasks and download their audio.
+
+    Returns the number of tasks that were picked up.
+    """
+    if not tasks_dir.exists():
+        return 0
+
     _ensure_dirs()
-    for task_file in sorted(TASKS_DIR.glob('*.json')):
+    picked_up = 0
+
+    for task_file in sorted(tasks_dir.glob('*.json')):
         task = _read_task(task_file)
         if task is None:
             continue
@@ -68,6 +76,7 @@ def process_pending_tasks() -> None:
             continue
 
         log.info('Picked up task %s url=%s', task_id, url)
+        picked_up += 1
 
         _update_task(task_file, {
             'status': 'processing',
@@ -90,9 +99,13 @@ def process_pending_tasks() -> None:
                 'completed_at': datetime.now(timezone.utc).isoformat(),
             })
 
+    return picked_up
+
 
 if __name__ == '__main__':
     log.info('Worker starting (poll interval=%ds, DATA_DIR=%s)', POLL_INTERVAL, DATA_DIR)
     while True:
-        process_pending_tasks()
+        count = process_pending_tasks()
+        if count:
+            log.info('Processed %d task(s) this cycle', count)
         time.sleep(POLL_INTERVAL)

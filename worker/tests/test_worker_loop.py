@@ -60,6 +60,19 @@ def test_pending_url_task_is_downloaded(data_dir):
     assert 'completed_at' in task
 
 
+def test_no_tasks_returns_zero(data_dir):
+    """process_pending_tasks should return 0 when there are no tasks."""
+    tasks_dir = data_dir / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    assert worker_loop.process_pending_tasks(tasks_dir) == 0
+
+
+def test_missing_dir_returns_zero(data_dir, tmp_path):
+    """process_pending_tasks should return 0 when the tasks dir does not exist."""
+    missing = tmp_path / 'nonexistent'
+    assert worker_loop.process_pending_tasks(missing) == 0
+
+
 def test_done_task_is_skipped(data_dir):
     """Tasks that are already done must not be re-processed."""
     _make_task(data_dir, status='done')
@@ -188,6 +201,7 @@ def test_multiple_pending_tasks_all_processed(data_dir):
         return output_dir / f'{task_id}.mp3'
 
     with patch('worker_loop.download_youtube', side_effect=fake_download) as mock_dl:
-        worker_loop.process_pending_tasks()
+        count = worker_loop.process_pending_tasks()
 
     assert mock_dl.call_count == 3
+    assert count == 3
