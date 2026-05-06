@@ -1,148 +1,207 @@
-"""Tests for the worker loop task-polling logic."""
-import json
+"""Tests for worker/worker_loop.py – polling loop and task handling."""
 import importlib
+import json
 import sys
+import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
+# Make the worker package importable without installing it.
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+import worker_loop  # noqa: E402
+
+
+YOUTUBE_URL = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+
 
 @pytest.fixture()
-def tasks_dir(tmp_path):
-    """Return a fresh temporary tasks directory."""
-    d = tmp_path / 'tasks'
-    d.mkdir()
-    return d
-
-
-@pytest.fixture()
-def worker(tmp_path, monkeypatch):
-    """Import worker_loop with DATA_DIR pointing at tmp_path."""
+def data_dir(tmp_path, monkeypatch):
+    """Point worker_loop at a temporary DATA_DIR and reload the module."""
     monkeypatch.setenv('DATA_DIR', str(tmp_path))
-    # Add the worker directory to sys.path so the bare module can be imported.
-    worker_dir = str(Path(__file__).resolve().parents[1])
-    if worker_dir not in sys.path:
-        sys.path.insert(0, worker_dir)
-    import worker_loop as wl
-    importlib.reload(wl)
-    return wl
+    importlib.reload(worker_loop)
+    return tmp_path
 
 
-def _write_task(tasks_dir: Path, task: dict) -> Path:
-    task_file = tasks_dir / f"{task['task_id']}.json"
-    task_file.write_text(json.dumps(task, indent=2))
-    return task_file
+def _make_task(data_dir: Path, *, task_type: str = 'url', status: str = 'pending') -> tuple[str, Path]:
+    task_id = str(uuid.uuid4())
+    tasks_dir = data_dir / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    task = {
+        'task_id': task_id,
+        'type': task_type,
+        'source': YOUTUBE_URL,
+        'status': status,
+    }
+    task_file = tasks_dir / f'{task_id}.json'
+    task_file.write_text(json.dumps(task))
+    return task_id, task_file
 
 
 # ---------------------------------------------------------------------------
-# process_pending_tasks
+# process_pending_tasks – happy path
 # ---------------------------------------------------------------------------
 
-def test_no_tasks_returns_zero(worker, tasks_dir):
-    assert worker.process_pending_tasks(tasks_dir) == 0
+def test_pending_url_task_is_downloaded(data_dir):
+    """A pending url task should be downloaded and marked done."""
+    task_id, task_file = _make_task(data_dir)
+    uploads_dir = data_dir / 'uploads'
+    fake_output = uploads_dir / f'{task_id}.mp3'
+
+    with patch('worker_loop.download_youtube', return_value=fake_output) as mock_dl:
+        worker_loop.process_pending_tasks()
+
+    mock_dl.assert_called_once_with(YOUTUBE_URL, worker_loop.UPLOADS_DIR, task_id)
+    task = json.loads(task_file.read_text())
+    assert task['status'] == 'done'
+    assert task['file_path'] == str(fake_output)
+    assert 'completed_at' in task
 
 
-def test_missing_dir_returns_zero(worker, tmp_path):
+def test_no_tasks_returns_zero(data_dir):
+    """process_pending_tasks should return 0 when there are no tasks."""
+    tasks_dir = data_dir / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    assert worker_loop.process_pending_tasks(tasks_dir) == 0
+
+
+def test_missing_dir_returns_zero(data_dir, tmp_path):
+    """process_pending_tasks should return 0 when the tasks dir does not exist."""
     missing = tmp_path / 'nonexistent'
-    assert worker.process_pending_tasks(missing) == 0
+    assert worker_loop.process_pending_tasks(missing) == 0
 
 
-def test_pending_upload_task_is_processed(worker, tasks_dir):
-    task = {
-        'task_id': 'aaaaaaaa-0000-0000-0000-000000000001',
-        'type': 'upload',
-        'source': 'song.mp3',
-        'file_path': '/tmp/song.mp3',
-        'status': 'pending',
-        'created_at': '2026-01-01T00:00:00+00:00',
-    }
-    task_file = _write_task(tasks_dir, task)
+def test_done_task_is_skipped(data_dir):
+    """Tasks that are already done must not be re-processed."""
+    _make_task(data_dir, status='done')
 
-    count = worker.process_pending_tasks(tasks_dir)
+    with patch('worker_loop.download_youtube') as mock_dl:
+        worker_loop.process_pending_tasks()
 
-    assert count == 1
-    result = json.loads(task_file.read_text())
-    assert result['status'] == 'done'
-    assert 'started_at' in result
-    assert 'finished_at' in result
+    mock_dl.assert_not_called()
 
 
-def test_pending_url_task_is_processed(worker, tasks_dir):
-    task = {
-        'task_id': 'aaaaaaaa-0000-0000-0000-000000000002',
+def test_upload_type_task_is_skipped(data_dir):
+    """Tasks of type 'upload' are not URL tasks and must be ignored."""
+    _make_task(data_dir, task_type='upload', status='pending')
+
+    with patch('worker_loop.download_youtube') as mock_dl:
+        worker_loop.process_pending_tasks()
+
+    mock_dl.assert_not_called()
+
+
+def test_processing_task_is_skipped(data_dir):
+    """Tasks already marked 'processing' should not be picked up again."""
+    _make_task(data_dir, status='processing')
+
+    with patch('worker_loop.download_youtube') as mock_dl:
+        worker_loop.process_pending_tasks()
+
+    mock_dl.assert_not_called()
+
+
+def test_task_missing_task_id_field_is_skipped(data_dir):
+    """A task file missing 'task_id' should be skipped without crashing."""
+    tasks_dir = data_dir / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    task_file = tasks_dir / 'no-id.json'
+    task_file.write_text(json.dumps({'type': 'url', 'source': YOUTUBE_URL, 'status': 'pending'}))
+
+    with patch('worker_loop.download_youtube') as mock_dl:
+        worker_loop.process_pending_tasks()
+
+    mock_dl.assert_not_called()
+
+
+def test_task_missing_source_field_is_skipped(data_dir):
+    """A task file missing 'source' should be skipped without crashing."""
+    tasks_dir = data_dir / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    task_id = str(uuid.uuid4())
+    task_file = tasks_dir / f'{task_id}.json'
+    task_file.write_text(json.dumps({'task_id': task_id, 'type': 'url', 'status': 'pending'}))
+
+    with patch('worker_loop.download_youtube') as mock_dl:
+        worker_loop.process_pending_tasks()
+
+    mock_dl.assert_not_called()
+
+
+def test_task_invalid_uuid_task_id_is_skipped(data_dir):
+    """A task file with a non-UUID task_id should be skipped without crashing."""
+    tasks_dir = data_dir / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    task_file = tasks_dir / 'bad-uuid.json'
+    task_file.write_text(json.dumps({
+        'task_id': '../../etc/passwd',
         'type': 'url',
-        'source': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+        'source': YOUTUBE_URL,
         'status': 'pending',
-        'created_at': '2026-01-01T00:00:00+00:00',
-    }
-    task_file = _write_task(tasks_dir, task)
+    }))
 
-    count = worker.process_pending_tasks(tasks_dir)
+    with patch('worker_loop.download_youtube') as mock_dl:
+        worker_loop.process_pending_tasks()
 
-    assert count == 1
-    result = json.loads(task_file.read_text())
-    assert result['status'] == 'done'
+    mock_dl.assert_not_called()
 
 
-def test_already_processing_task_is_skipped(worker, tasks_dir):
-    task = {
-        'task_id': 'aaaaaaaa-0000-0000-0000-000000000003',
-        'type': 'upload',
-        'source': 'song.mp3',
-        'status': 'processing',
-        'created_at': '2026-01-01T00:00:00+00:00',
-    }
-    _write_task(tasks_dir, task)
+# ---------------------------------------------------------------------------
+# process_pending_tasks – error handling
+# ---------------------------------------------------------------------------
 
-    count = worker.process_pending_tasks(tasks_dir)
-    assert count == 0
+def test_failed_download_marks_task_failed(data_dir):
+    """If download_youtube raises, the task status must be set to 'failed'."""
+    task_id, task_file = _make_task(data_dir)
 
+    with patch('worker_loop.download_youtube', side_effect=RuntimeError('boom')):
+        worker_loop.process_pending_tasks()
 
-def test_done_task_is_skipped(worker, tasks_dir):
-    task = {
-        'task_id': 'aaaaaaaa-0000-0000-0000-000000000004',
-        'type': 'upload',
-        'source': 'song.mp3',
-        'status': 'done',
-        'created_at': '2026-01-01T00:00:00+00:00',
-    }
-    _write_task(tasks_dir, task)
-
-    count = worker.process_pending_tasks(tasks_dir)
-    assert count == 0
+    task = json.loads(task_file.read_text())
+    assert task['status'] == 'failed'
+    assert 'boom' in task['error']
+    assert 'completed_at' in task
 
 
-def test_unknown_task_type_marked_failed(worker, tasks_dir):
-    task = {
-        'task_id': 'aaaaaaaa-0000-0000-0000-000000000005',
-        'type': 'unknown_type',
-        'source': 'whatever',
-        'status': 'pending',
-        'created_at': '2026-01-01T00:00:00+00:00',
-    }
-    task_file = _write_task(tasks_dir, task)
+def test_task_status_set_to_processing_before_download(data_dir):
+    """The task file must be written with status='processing' before the download starts."""
+    task_id, task_file = _make_task(data_dir)
+    observed_statuses: list[str] = []
 
-    count = worker.process_pending_tasks(tasks_dir)
+    def fake_download(url, output_dir, tid):
+        task = json.loads(task_file.read_text())
+        observed_statuses.append(task['status'])
+        return output_dir / f'{tid}.mp3'
 
-    assert count == 1
-    result = json.loads(task_file.read_text())
-    assert result['status'] == 'failed'
-    assert 'error' in result
+    with patch('worker_loop.download_youtube', side_effect=fake_download):
+        worker_loop.process_pending_tasks()
+
+    assert observed_statuses == ['processing']
 
 
-def test_multiple_pending_tasks_all_processed(worker, tasks_dir):
-    for i in range(3):
-        task = {
-            'task_id': f'aaaaaaaa-0000-0000-0000-00000000000{i + 6}',
-            'type': 'url',
-            'source': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-            'status': 'pending',
-            'created_at': '2026-01-01T00:00:00+00:00',
-        }
-        _write_task(tasks_dir, task)
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-    count = worker.process_pending_tasks(tasks_dir)
+def test_read_task_returns_none_for_corrupt_file(data_dir, tmp_path):
+    """_read_task must return None for files with invalid JSON."""
+    bad_file = tmp_path / 'bad.json'
+    bad_file.write_text('not valid json {{{')
+    assert worker_loop._read_task(bad_file) is None
+
+
+def test_multiple_pending_tasks_all_processed(data_dir):
+    """All pending URL tasks in the directory should be processed."""
+    ids = [_make_task(data_dir)[0] for _ in range(3)]
+    uploads_dir = data_dir / 'uploads'
+
+    def fake_download(url, output_dir, task_id):
+        return output_dir / f'{task_id}.mp3'
+
+    with patch('worker_loop.download_youtube', side_effect=fake_download) as mock_dl:
+        count = worker_loop.process_pending_tasks()
+
+    assert mock_dl.call_count == 3
     assert count == 3
-
-    for task_file in tasks_dir.glob('*.json'):
-        assert json.loads(task_file.read_text())['status'] == 'done'

@@ -1,3 +1,4 @@
 fastapi
 uvicorn
 librosa
+yt-dlp
