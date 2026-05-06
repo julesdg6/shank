@@ -44,19 +44,22 @@ def _make_task(data_dir: Path, *, task_type: str = 'url', status: str = 'pending
 # process_pending_tasks – happy path
 # ---------------------------------------------------------------------------
 
-def test_pending_url_task_is_downloaded(data_dir):
-    """A pending url task should be downloaded and marked done."""
+def test_pending_url_task_is_downloaded_and_normalized(data_dir):
+    """A pending url task should be downloaded, normalized and marked completed."""
     task_id, task_file = _make_task(data_dir)
     uploads_dir = data_dir / 'uploads'
     fake_output = uploads_dir / f'{task_id}.mp3'
 
-    with patch('worker_loop.download_youtube', return_value=fake_output) as mock_dl:
+    with patch('worker_loop.download_youtube', return_value=fake_output) as mock_dl, \
+         patch('worker_loop.normalize_audio') as mock_norm:
         worker_loop.process_pending_tasks()
 
     mock_dl.assert_called_once_with(YOUTUBE_URL, worker_loop.UPLOADS_DIR, task_id)
+    mock_norm.assert_called_once()
     task = json.loads(task_file.read_text())
-    assert task['status'] == 'done'
+    assert task['status'] == 'completed'
     assert task['file_path'] == str(fake_output)
+    assert 'normalized_path' in task
     assert 'completed_at' in task
 
 
@@ -77,30 +80,74 @@ def test_done_task_is_skipped(data_dir):
     """Tasks that are already done must not be re-processed."""
     _make_task(data_dir, status='done')
 
-    with patch('worker_loop.download_youtube') as mock_dl:
+    with patch('worker_loop.download_youtube') as mock_dl, \
+         patch('worker_loop.normalize_audio') as mock_norm:
         worker_loop.process_pending_tasks()
 
     mock_dl.assert_not_called()
+    mock_norm.assert_not_called()
 
 
-def test_upload_type_task_is_skipped(data_dir):
-    """Tasks of type 'upload' are not URL tasks and must be ignored."""
-    _make_task(data_dir, task_type='upload', status='pending')
+def test_upload_type_task_without_file_path_is_skipped(data_dir):
+    """Upload tasks with no file_path should be skipped (file not yet saved)."""
+    task_id = str(uuid.uuid4())
+    tasks_dir = data_dir / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    task_file = tasks_dir / f'{task_id}.json'
+    task_file.write_text(json.dumps({
+        'task_id': task_id,
+        'type': 'upload',
+        'source': 'song.mp3',
+        'status': 'pending',
+        # no file_path
+    }))
 
-    with patch('worker_loop.download_youtube') as mock_dl:
-        worker_loop.process_pending_tasks()
+    with patch('worker_loop.download_youtube') as mock_dl, \
+         patch('worker_loop.normalize_audio') as mock_norm:
+        count = worker_loop.process_pending_tasks()
 
     mock_dl.assert_not_called()
+    mock_norm.assert_not_called()
+    assert count == 0
+
+
+def test_upload_type_task_with_file_path_is_normalized(data_dir):
+    """Upload tasks with a file_path should be normalized (no download)."""
+    task_id = str(uuid.uuid4())
+    tasks_dir = data_dir / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    fake_file = data_dir / 'uploads' / f'{task_id}.mp3'
+    task_file = tasks_dir / f'{task_id}.json'
+    task_file.write_text(json.dumps({
+        'task_id': task_id,
+        'type': 'upload',
+        'source': 'song.mp3',
+        'file_path': str(fake_file),
+        'status': 'pending',
+    }))
+
+    with patch('worker_loop.download_youtube') as mock_dl, \
+         patch('worker_loop.normalize_audio') as mock_norm:
+        count = worker_loop.process_pending_tasks()
+
+    mock_dl.assert_not_called()
+    mock_norm.assert_called_once()
+    assert count == 1
+    task = json.loads(task_file.read_text())
+    assert task['status'] == 'completed'
+    assert 'normalized_path' in task
 
 
 def test_processing_task_is_skipped(data_dir):
     """Tasks already marked 'processing' should not be picked up again."""
     _make_task(data_dir, status='processing')
 
-    with patch('worker_loop.download_youtube') as mock_dl:
+    with patch('worker_loop.download_youtube') as mock_dl, \
+         patch('worker_loop.normalize_audio') as mock_norm:
         worker_loop.process_pending_tasks()
 
     mock_dl.assert_not_called()
+    mock_norm.assert_not_called()
 
 
 def test_task_missing_task_id_field_is_skipped(data_dir):
@@ -110,10 +157,12 @@ def test_task_missing_task_id_field_is_skipped(data_dir):
     task_file = tasks_dir / 'no-id.json'
     task_file.write_text(json.dumps({'type': 'url', 'source': YOUTUBE_URL, 'status': 'pending'}))
 
-    with patch('worker_loop.download_youtube') as mock_dl:
+    with patch('worker_loop.download_youtube') as mock_dl, \
+         patch('worker_loop.normalize_audio') as mock_norm:
         worker_loop.process_pending_tasks()
 
     mock_dl.assert_not_called()
+    mock_norm.assert_not_called()
 
 
 def test_task_missing_source_field_is_skipped(data_dir):
@@ -124,10 +173,12 @@ def test_task_missing_source_field_is_skipped(data_dir):
     task_file = tasks_dir / f'{task_id}.json'
     task_file.write_text(json.dumps({'task_id': task_id, 'type': 'url', 'status': 'pending'}))
 
-    with patch('worker_loop.download_youtube') as mock_dl:
+    with patch('worker_loop.download_youtube') as mock_dl, \
+         patch('worker_loop.normalize_audio') as mock_norm:
         worker_loop.process_pending_tasks()
 
     mock_dl.assert_not_called()
+    mock_norm.assert_not_called()
 
 
 def test_task_invalid_uuid_task_id_is_skipped(data_dir):
@@ -142,10 +193,12 @@ def test_task_invalid_uuid_task_id_is_skipped(data_dir):
         'status': 'pending',
     }))
 
-    with patch('worker_loop.download_youtube') as mock_dl:
+    with patch('worker_loop.download_youtube') as mock_dl, \
+         patch('worker_loop.normalize_audio') as mock_norm:
         worker_loop.process_pending_tasks()
 
     mock_dl.assert_not_called()
+    mock_norm.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +228,8 @@ def test_task_status_set_to_processing_before_download(data_dir):
         observed_statuses.append(task['status'])
         return output_dir / f'{tid}.mp3'
 
-    with patch('worker_loop.download_youtube', side_effect=fake_download):
+    with patch('worker_loop.download_youtube', side_effect=fake_download), \
+         patch('worker_loop.normalize_audio'):
         worker_loop.process_pending_tasks()
 
     assert observed_statuses == ['processing']
@@ -200,7 +254,8 @@ def test_multiple_pending_tasks_all_processed(data_dir):
     def fake_download(url, output_dir, task_id):
         return output_dir / f'{task_id}.mp3'
 
-    with patch('worker_loop.download_youtube', side_effect=fake_download) as mock_dl:
+    with patch('worker_loop.download_youtube', side_effect=fake_download) as mock_dl, \
+         patch('worker_loop.normalize_audio'):
         count = worker_loop.process_pending_tasks()
 
     assert mock_dl.call_count == 3
