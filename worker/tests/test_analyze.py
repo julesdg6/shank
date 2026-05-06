@@ -114,6 +114,7 @@ def reloaded_worker_loop(monkeypatch, tmp_path):
 
 def test_poll_once_processes_pending_task(tmp_path, reloaded_worker_loop):
     """process_pending_tasks must pick up a pending upload task with a file_path and analyze it."""
+    from unittest.mock import patch  # noqa: PLC0415
     tasks_dir = tmp_path / 'tasks'
     tasks_dir.mkdir(parents=True, exist_ok=True)
 
@@ -130,16 +131,28 @@ def test_poll_once_processes_pending_task(tmp_path, reloaded_worker_loop):
     task_file = tasks_dir / f'{task_id}.json'
     task_file.write_text(json.dumps(task))
 
-    reloaded_worker_loop.process_pending_tasks(tasks_dir)
+    normalized_dir = tmp_path / 'normalized'
+    normalized_dir.mkdir(parents=True, exist_ok=True)
+    normalized_wav = normalized_dir / f'{task_id}.wav'
+
+    def fake_normalize(input_path, output_path):
+        # Copy the source WAV so analyze_audio has a real file to read
+        import shutil  # noqa: PLC0415
+        shutil.copy(input_path, output_path)
+
+    with patch('worker_loop.normalize_audio', side_effect=fake_normalize):
+        reloaded_worker_loop.process_pending_tasks(tasks_dir)
 
     updated = json.loads(task_file.read_text())
     assert updated['status'] == 'done'
     assert isinstance(updated['bpm'], float)
     assert updated['key'] in _VALID_KEYS
+    assert 'normalized_path' in updated
 
 
 def test_poll_once_error_on_missing_audio(tmp_path, reloaded_worker_loop):
-    """process_pending_tasks must set status='failed' when analysis of a missing audio file fails."""
+    """process_pending_tasks must set status='failed' when normalization fails for a missing file."""
+    from unittest.mock import patch  # noqa: PLC0415
     tasks_dir = tmp_path / 'tasks'
     tasks_dir.mkdir(parents=True, exist_ok=True)
 
@@ -155,7 +168,8 @@ def test_poll_once_error_on_missing_audio(tmp_path, reloaded_worker_loop):
     task_file = tasks_dir / f'{task_id}.json'
     task_file.write_text(json.dumps(task))
 
-    reloaded_worker_loop.process_pending_tasks(tasks_dir)
+    with patch('worker_loop.normalize_audio', side_effect=RuntimeError('No such file')):
+        reloaded_worker_loop.process_pending_tasks(tasks_dir)
 
     updated = json.loads(task_file.read_text())
     assert updated['status'] == 'failed'
@@ -163,7 +177,7 @@ def test_poll_once_error_on_missing_audio(tmp_path, reloaded_worker_loop):
 
 
 def test_poll_once_skips_url_task_without_file(tmp_path, reloaded_worker_loop):
-    """URL tasks without a source must be skipped."""
+    """URL tasks should be downloaded, normalized, and analyzed."""
     from unittest.mock import patch  # noqa: PLC0415
     tasks_dir = tmp_path / 'tasks'
     tasks_dir.mkdir(parents=True, exist_ok=True)
@@ -179,8 +193,9 @@ def test_poll_once_skips_url_task_without_file(tmp_path, reloaded_worker_loop):
     task_file = tasks_dir / f'{task_id}.json'
     task_file.write_text(json.dumps(task))
 
-    # Mock download and analysis so no real network/file access occurs
+    # Mock download, normalize, and analysis so no real network/file access occurs
     with patch('worker_loop.download_youtube', return_value=tmp_path / 'audio.mp3'), \
+         patch('worker_loop.normalize_audio'), \
          patch('worker_loop.analyze_audio', return_value={'bpm': 120.0, 'key': 'C major'}):
         reloaded_worker_loop.process_pending_tasks(tasks_dir)
 

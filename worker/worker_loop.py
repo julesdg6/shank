@@ -2,6 +2,7 @@
 import json
 import logging
 import os
+import subprocess
 import time
 import uuid
 from datetime import datetime, timezone
@@ -19,12 +20,19 @@ log = logging.getLogger(__name__)
 DATA_DIR = Path(os.getenv('DATA_DIR', '/srv/shank/data'))
 UPLOADS_DIR = DATA_DIR / 'uploads'
 TASKS_DIR = DATA_DIR / 'tasks'
+NORMALIZED_DIR = DATA_DIR / 'normalized'
 POLL_INTERVAL = int(os.getenv('POLL_INTERVAL', '10'))
+
+# Standard WAV output format
+WAV_SAMPLE_RATE = '44100'
+WAV_CHANNELS = '2'
+WAV_CODEC = 'pcm_s16le'
 
 
 def _ensure_dirs() -> None:
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     TASKS_DIR.mkdir(parents=True, exist_ok=True)
+    NORMALIZED_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _read_task(task_file: Path) -> dict | None:
@@ -45,11 +53,32 @@ def _update_task(task_file: Path, updates: dict) -> None:
     _write_task(task_file, task)
 
 
+def normalize_audio(input_path: str, output_path: str) -> None:
+    """Normalize an audio file to a standard WAV format using ffmpeg.
+
+    Output: 44100 Hz, stereo, 16-bit PCM WAV.
+    Raises RuntimeError if ffmpeg exits with a non-zero status.
+    """
+    cmd = [
+        'ffmpeg',
+        '-y',              # overwrite output file without prompting
+        '-i', input_path,
+        '-ar', WAV_SAMPLE_RATE,
+        '-ac', WAV_CHANNELS,
+        '-c:a', WAV_CODEC,
+        output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f'ffmpeg failed (exit {result.returncode}): {result.stderr}')
+
+
 def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
     """Scan *tasks_dir* for pending tasks and process them.
 
-    - ``upload`` tasks: run librosa analysis on the existing ``file_path``.
-    - ``url`` tasks: download audio via yt-dlp, then run librosa analysis.
+    - ``url`` tasks: download audio via yt-dlp, normalize to WAV, then analyze BPM/key.
+    - ``upload`` tasks with ``file_path``: normalize to WAV, then analyze BPM/key.
+    - ``upload`` tasks without ``file_path``: skip (file not yet saved).
 
     Returns the number of tasks that were picked up.
     """
@@ -79,70 +108,87 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
             log.warning('Task file %s has invalid task_id %r, skipping', task_file.name, raw_task_id)
             continue
 
-        if task_type == 'upload':
-            file_path = task.get('file_path')
-            if not file_path:
-                log.warning('Task %s has no file_path, skipping', task_id)
-                continue
-
-            picked_up += 1
-            log.info('Picked up upload task %s', task_id)
-            _update_task(task_file, {
-                'status': 'processing',
-                'started_at': datetime.now(timezone.utc).isoformat(),
-            })
-
-            try:
-                results = analyze_audio(file_path)
-                _update_task(task_file, {
-                    'status': 'done',
-                    'bpm': results['bpm'],
-                    'key': results['key'],
-                    'completed_at': datetime.now(timezone.utc).isoformat(),
-                })
-                log.info('Task %s done: bpm=%s key=%s', task_id, results['bpm'], results['key'])
-            except Exception as exc:  # noqa: BLE001
-                log.exception('Task %s failed: %s', task_id, exc)
-                _update_task(task_file, {
-                    'status': 'failed',
-                    'error': str(exc),
-                    'completed_at': datetime.now(timezone.utc).isoformat(),
-                })
-
-        elif task_type == 'url':
+        if task_type == 'url':
             url = task.get('source')
             if not url:
                 log.warning('Task file %s is missing required fields, skipping', task_file.name)
                 continue
 
+            log.info('Picked up URL task %s url=%s', task_id, url)
             picked_up += 1
-            log.info('Picked up task %s url=%s', task_id, url)
+
             _update_task(task_file, {
                 'status': 'processing',
                 'started_at': datetime.now(timezone.utc).isoformat(),
             })
 
             try:
-                output_path = download_youtube(url, UPLOADS_DIR, task_id)
-                results = analyze_audio(str(output_path))
-                _update_task(task_file, {
-                    'status': 'done',
-                    'file_path': str(output_path),
-                    'bpm': results['bpm'],
-                    'key': results['key'],
-                    'completed_at': datetime.now(timezone.utc).isoformat(),
-                })
-                log.info('Task %s done → %s bpm=%s key=%s', task_id, output_path, results['bpm'], results['key'])
+                downloaded_path = download_youtube(url, UPLOADS_DIR, task_id)
+                _update_task(task_file, {'file_path': str(downloaded_path)})
+                log.info('Task %s downloaded → %s', task_id, downloaded_path)
             except Exception as exc:
-                log.exception('Task %s failed: %s', task_id, exc)
+                log.exception('Task %s download failed: %s', task_id, exc)
                 _update_task(task_file, {
                     'status': 'failed',
                     'error': str(exc),
                     'completed_at': datetime.now(timezone.utc).isoformat(),
                 })
+                continue
+
+            # Re-read so we have the latest file_path written above.
+            task = _read_task(task_file) or task
+
+        elif task_type == 'upload':
+            if not task.get('file_path'):
+                # File not yet present; nothing to process.
+                continue
+
+            log.info('Picked up upload task %s', task_id)
+            picked_up += 1
+
+            _update_task(task_file, {
+                'status': 'processing',
+                'started_at': datetime.now(timezone.utc).isoformat(),
+            })
+            task = _read_task(task_file) or task
 
         else:
-            log.warning('Task %s has unknown type %r, skipping', task_id, task_type)
+            log.warning('Task file %s has unknown type %r, skipping', task_file.name, task_type)
+            continue
+
+        # Normalize to WAV, then run BPM/key analysis.
+        input_path = task.get('file_path', '')
+        normalized_path = str(NORMALIZED_DIR / f'{task_id}.wav')
+
+        try:
+            normalize_audio(input_path, normalized_path)
+            log.info('Task %s normalized → %s', task_id, normalized_path)
+        except Exception as exc:
+            log.exception('Task %s normalization failed: %s', task_id, exc)
+            _update_task(task_file, {
+                'status': 'failed',
+                'error': str(exc),
+                'completed_at': datetime.now(timezone.utc).isoformat(),
+            })
+            continue
+
+        try:
+            results = analyze_audio(normalized_path)
+            _update_task(task_file, {
+                'status': 'done',
+                'normalized_path': normalized_path,
+                'bpm': results['bpm'],
+                'key': results['key'],
+                'completed_at': datetime.now(timezone.utc).isoformat(),
+            })
+            log.info('Task %s done: bpm=%s key=%s', task_id, results['bpm'], results['key'])
+        except Exception as exc:
+            log.exception('Task %s analysis failed: %s', task_id, exc)
+            _update_task(task_file, {
+                'status': 'failed',
+                'error': str(exc),
+                'completed_at': datetime.now(timezone.utc).isoformat(),
+            })
 
     return picked_up
 
