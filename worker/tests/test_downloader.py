@@ -60,6 +60,29 @@ def test_download_youtube_uses_mp3_postprocessor(tmp_path):
     assert pp['preferredcodec'] == 'mp3'
 
 
+def test_download_youtube_noplaylist_option(tmp_path):
+    """noplaylist=True must be set to prevent downloading entire playlists."""
+    captured_opts: list[dict] = []
+
+    def fake_init(opts):
+        captured_opts.append(opts)
+        m = MagicMock()
+        m.__enter__ = MagicMock(return_value=MagicMock())
+        m.__exit__ = MagicMock(return_value=False)
+        return m
+
+    with patch('downloader.yt_dlp.YoutubeDL', side_effect=fake_init):
+        downloader.download_youtube(YOUTUBE_URL, tmp_path, TASK_ID)
+
+    assert captured_opts[0].get('noplaylist') is True
+
+
+def test_download_youtube_rejects_non_uuid_task_id(tmp_path):
+    """A task_id that is not a valid UUID must raise ValueError (path traversal guard)."""
+    with pytest.raises(ValueError):
+        downloader.download_youtube(YOUTUBE_URL, tmp_path, '../../../etc/passwd')
+
+
 def test_download_youtube_creates_output_dir(tmp_path):
     """download_youtube should create output_dir if it does not exist."""
     nested = tmp_path / 'a' / 'b' / 'c'

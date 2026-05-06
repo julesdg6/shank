@@ -90,6 +90,51 @@ def test_processing_task_is_skipped(data_dir):
     mock_dl.assert_not_called()
 
 
+def test_task_missing_task_id_field_is_skipped(data_dir):
+    """A task file missing 'task_id' should be skipped without crashing."""
+    tasks_dir = data_dir / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    task_file = tasks_dir / 'no-id.json'
+    task_file.write_text(json.dumps({'type': 'url', 'source': YOUTUBE_URL, 'status': 'pending'}))
+
+    with patch('worker_loop.download_youtube') as mock_dl:
+        worker_loop.process_pending_tasks()
+
+    mock_dl.assert_not_called()
+
+
+def test_task_missing_source_field_is_skipped(data_dir):
+    """A task file missing 'source' should be skipped without crashing."""
+    tasks_dir = data_dir / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    task_id = str(uuid.uuid4())
+    task_file = tasks_dir / f'{task_id}.json'
+    task_file.write_text(json.dumps({'task_id': task_id, 'type': 'url', 'status': 'pending'}))
+
+    with patch('worker_loop.download_youtube') as mock_dl:
+        worker_loop.process_pending_tasks()
+
+    mock_dl.assert_not_called()
+
+
+def test_task_invalid_uuid_task_id_is_skipped(data_dir):
+    """A task file with a non-UUID task_id should be skipped without crashing."""
+    tasks_dir = data_dir / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    task_file = tasks_dir / 'bad-uuid.json'
+    task_file.write_text(json.dumps({
+        'task_id': '../../etc/passwd',
+        'type': 'url',
+        'source': YOUTUBE_URL,
+        'status': 'pending',
+    }))
+
+    with patch('worker_loop.download_youtube') as mock_dl:
+        worker_loop.process_pending_tasks()
+
+    mock_dl.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # process_pending_tasks – error handling
 # ---------------------------------------------------------------------------

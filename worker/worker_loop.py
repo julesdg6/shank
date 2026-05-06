@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -53,8 +54,19 @@ def process_pending_tasks() -> None:
         if task.get('status') != 'pending' or task.get('type') != 'url':
             continue
 
-        task_id = task['task_id']
-        url = task['source']
+        raw_task_id = task.get('task_id')
+        url = task.get('source')
+
+        if not raw_task_id or not url:
+            log.warning('Task file %s is missing required fields, skipping', task_file.name)
+            continue
+
+        try:
+            task_id = str(uuid.UUID(raw_task_id))
+        except ValueError:
+            log.warning('Task file %s has invalid task_id %r, skipping', task_file.name, raw_task_id)
+            continue
+
         log.info('Picked up task %s url=%s', task_id, url)
 
         _update_task(task_file, {
@@ -71,7 +83,7 @@ def process_pending_tasks() -> None:
             })
             log.info('Task %s done → %s', task_id, output_path)
         except Exception as exc:
-            log.error('Task %s failed: %s', task_id, exc)
+            log.exception('Task %s failed: %s', task_id, exc)
             _update_task(task_file, {
                 'status': 'failed',
                 'error': str(exc),
