@@ -1,4 +1,4 @@
-fastapi
-uvicorn
 librosa
+numpy
+soundfile
 yt-dlp

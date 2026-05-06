@@ -32,11 +32,11 @@ To provide users with an automated pipeline that transforms raw audio/URLs into 
 - [x] Basic API skeleton (Health check)
 
 ### Phase 2: Core API & Worker Development
-- [ ] Implement FastAPI endpoints for task submission (Upload/URL)
-- [ ] Implement Worker loop for task polling
+- [x] Implement FastAPI endpoints for task submission (Upload/URL)
+- [x] Implement Worker loop for task polling
 - [ ] Integrate `yt-dlp` for YouTube processing
 - [ ] Implement `ffmpeg` normalization pipeline
-- [ ] Implement `librosa` based analysis (BPM/Key)
+- [x] Implement `librosa` based analysis (BPM/Key)
 
 ### Phase 3: Advanced Analysis & UI
 - [ ] Implement Chord progression detection

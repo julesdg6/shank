@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from analyze import analyze_audio
 from downloader import download_youtube
 
 logging.basicConfig(
@@ -75,8 +76,9 @@ def normalize_audio(input_path: str, output_path: str) -> None:
 def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
     """Scan *tasks_dir* for pending tasks and process them.
 
-    - URL tasks: download audio via yt-dlp, then normalize to WAV.
-    - Upload tasks: normalize the already-saved file to WAV.
+    - ``url`` tasks: download audio via yt-dlp, normalize to WAV, then analyze BPM/key.
+    - ``upload`` tasks with ``file_path``: normalize to WAV, then analyze BPM/key.
+    - ``upload`` tasks without ``file_path``: skip (file not yet saved).
 
     Returns the number of tasks that were picked up.
     """
@@ -97,7 +99,7 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
         raw_task_id = task.get('task_id')
 
         if not raw_task_id:
-            log.warning('Task file %s is missing required fields, skipping', task_file.name)
+            log.warning('Task file %s is missing task_id, skipping', task_file.name)
             continue
 
         try:
@@ -138,7 +140,7 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
 
         elif task_type == 'upload':
             if not task.get('file_path'):
-                # File not yet present; nothing to normalize.
+                # File not yet present; nothing to process.
                 continue
 
             log.info('Picked up upload task %s', task_id)
@@ -154,20 +156,34 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
             log.warning('Task file %s has unknown type %r, skipping', task_file.name, task_type)
             continue
 
-        # Normalize to WAV (applies to both URL and upload tasks).
+        # Normalize to WAV, then run BPM/key analysis.
         input_path = task.get('file_path', '')
         normalized_path = str(NORMALIZED_DIR / f'{task_id}.wav')
 
         try:
             normalize_audio(input_path, normalized_path)
-            _update_task(task_file, {
-                'status': 'completed',
-                'normalized_path': normalized_path,
-                'completed_at': datetime.now(timezone.utc).isoformat(),
-            })
             log.info('Task %s normalized → %s', task_id, normalized_path)
         except Exception as exc:
             log.exception('Task %s normalization failed: %s', task_id, exc)
+            _update_task(task_file, {
+                'status': 'failed',
+                'error': str(exc),
+                'completed_at': datetime.now(timezone.utc).isoformat(),
+            })
+            continue
+
+        try:
+            results = analyze_audio(normalized_path)
+            _update_task(task_file, {
+                'status': 'done',
+                'normalized_path': normalized_path,
+                'bpm': results['bpm'],
+                'key': results['key'],
+                'completed_at': datetime.now(timezone.utc).isoformat(),
+            })
+            log.info('Task %s done: bpm=%s key=%s', task_id, results['bpm'], results['key'])
+        except Exception as exc:
+            log.exception('Task %s analysis failed: %s', task_id, exc)
             _update_task(task_file, {
                 'status': 'failed',
                 'error': str(exc),
@@ -184,3 +200,4 @@ if __name__ == '__main__':
         if count:
             log.info('Processed %d task(s) this cycle', count)
         time.sleep(POLL_INTERVAL)
+

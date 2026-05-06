@@ -44,21 +44,26 @@ def _make_task(data_dir: Path, *, task_type: str = 'url', status: str = 'pending
 # process_pending_tasks – happy path
 # ---------------------------------------------------------------------------
 
-def test_pending_url_task_is_downloaded_and_normalized(data_dir):
-    """A pending url task should be downloaded, normalized and marked completed."""
+def test_pending_url_task_is_downloaded_and_analyzed(data_dir):
+    """A pending url task should be downloaded, normalized, analyzed and marked done."""
     task_id, task_file = _make_task(data_dir)
     uploads_dir = data_dir / 'uploads'
     fake_output = uploads_dir / f'{task_id}.mp3'
+    fake_analysis = {'bpm': 120.0, 'key': 'C major'}
 
     with patch('worker_loop.download_youtube', return_value=fake_output) as mock_dl, \
-         patch('worker_loop.normalize_audio') as mock_norm:
+         patch('worker_loop.normalize_audio') as mock_norm, \
+         patch('worker_loop.analyze_audio', return_value=fake_analysis) as mock_analyze:
         worker_loop.process_pending_tasks()
 
     mock_dl.assert_called_once_with(YOUTUBE_URL, worker_loop.UPLOADS_DIR, task_id)
     mock_norm.assert_called_once()
+    mock_analyze.assert_called_once()
     task = json.loads(task_file.read_text())
-    assert task['status'] == 'completed'
+    assert task['status'] == 'done'
     assert task['file_path'] == str(fake_output)
+    assert task['bpm'] == 120.0
+    assert task['key'] == 'C major'
     assert 'normalized_path' in task
     assert 'completed_at' in task
 
@@ -111,8 +116,8 @@ def test_upload_type_task_without_file_path_is_skipped(data_dir):
     assert count == 0
 
 
-def test_upload_type_task_with_file_path_is_normalized(data_dir):
-    """Upload tasks with a file_path should be normalized (no download)."""
+def test_upload_type_task_with_file_path_is_normalized_and_analyzed(data_dir):
+    """Upload tasks with a file_path should be normalized and analyzed (no download)."""
     task_id = str(uuid.uuid4())
     tasks_dir = data_dir / 'tasks'
     tasks_dir.mkdir(parents=True, exist_ok=True)
@@ -125,16 +130,21 @@ def test_upload_type_task_with_file_path_is_normalized(data_dir):
         'file_path': str(fake_file),
         'status': 'pending',
     }))
+    fake_analysis = {'bpm': 100.0, 'key': 'D minor'}
 
     with patch('worker_loop.download_youtube') as mock_dl, \
-         patch('worker_loop.normalize_audio') as mock_norm:
+         patch('worker_loop.normalize_audio') as mock_norm, \
+         patch('worker_loop.analyze_audio', return_value=fake_analysis) as mock_analyze:
         count = worker_loop.process_pending_tasks()
 
     mock_dl.assert_not_called()
     mock_norm.assert_called_once()
+    mock_analyze.assert_called_once()
     assert count == 1
     task = json.loads(task_file.read_text())
-    assert task['status'] == 'completed'
+    assert task['status'] == 'done'
+    assert task['bpm'] == 100.0
+    assert task['key'] == 'D minor'
     assert 'normalized_path' in task
 
 
@@ -229,7 +239,8 @@ def test_task_status_set_to_processing_before_download(data_dir):
         return output_dir / f'{tid}.mp3'
 
     with patch('worker_loop.download_youtube', side_effect=fake_download), \
-         patch('worker_loop.normalize_audio'):
+         patch('worker_loop.normalize_audio'), \
+         patch('worker_loop.analyze_audio', return_value={'bpm': 120.0, 'key': 'C major'}):
         worker_loop.process_pending_tasks()
 
     assert observed_statuses == ['processing']
@@ -255,7 +266,8 @@ def test_multiple_pending_tasks_all_processed(data_dir):
         return output_dir / f'{task_id}.mp3'
 
     with patch('worker_loop.download_youtube', side_effect=fake_download) as mock_dl, \
-         patch('worker_loop.normalize_audio'):
+         patch('worker_loop.normalize_audio'), \
+         patch('worker_loop.analyze_audio', return_value={'bpm': 120.0, 'key': 'C major'}):
         count = worker_loop.process_pending_tasks()
 
     assert mock_dl.call_count == 3

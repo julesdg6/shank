@@ -100,17 +100,21 @@ def test_normalize_audio_raises_on_ffmpeg_failure(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_pending_upload_task_is_normalized(data_dir):
-    """process_pending_tasks must normalize a pending upload task and mark it completed."""
+    """process_pending_tasks must normalize and analyze a pending upload task and mark it done."""
     task, task_file = _make_upload_task(data_dir)
+    fake_analysis = {'bpm': 128.0, 'key': 'A minor'}
 
-    with patch('worker_loop.normalize_audio') as mock_norm:
+    with patch('worker_loop.normalize_audio') as mock_norm, \
+         patch('worker_loop.analyze_audio', return_value=fake_analysis):
         count = worker_loop.process_pending_tasks()
 
     assert count == 1
     updated = json.loads(task_file.read_text())
-    assert updated['status'] == 'completed'
+    assert updated['status'] == 'done'
     assert 'normalized_path' in updated
     assert updated['normalized_path'].endswith('.wav')
+    assert updated['bpm'] == 128.0
+    assert updated['key'] == 'A minor'
     mock_norm.assert_called_once()
 
 
@@ -160,7 +164,8 @@ def test_upload_task_sets_processing_before_normalization(data_dir):
     def capture_and_succeed(input_path, output_path):
         observed_statuses.append(json.loads(task_file.read_text())['status'])
 
-    with patch('worker_loop.normalize_audio', side_effect=capture_and_succeed):
+    with patch('worker_loop.normalize_audio', side_effect=capture_and_succeed), \
+         patch('worker_loop.analyze_audio', return_value={'bpm': 120.0, 'key': 'C major'}):
         worker_loop.process_pending_tasks()
 
     assert 'processing' in observed_statuses
