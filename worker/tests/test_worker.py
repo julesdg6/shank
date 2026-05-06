@@ -1,20 +1,28 @@
 """Tests for the SHANK worker ffmpeg normalization pipeline."""
+import importlib
 import json
 import subprocess
+import sys
+import uuid
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+# Make the worker package importable without installing it.
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+import worker_loop  # noqa: E402
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_task(tmp_path: Path, status: str = 'pending', include_file: bool = True) -> tuple[dict, Path]:
-    """Create a minimal task dict and write it as a JSON file."""
-    import uuid
+def _make_upload_task(data_dir: Path, status: str = 'pending', include_file: bool = True) -> tuple[dict, Path]:
+    """Create a minimal upload task dict and write it as a JSON file."""
     task_id = str(uuid.uuid4())
-    upload_file = tmp_path / 'uploads' / f'{task_id}.mp3'
+    upload_file = data_dir / 'uploads' / f'{task_id}.mp3'
     upload_file.parent.mkdir(parents=True, exist_ok=True)
     upload_file.write_bytes(b'\xff\xfb' + b'\x00' * 100)  # MP3 frame-sync header bytes
 
@@ -25,11 +33,19 @@ def _make_task(tmp_path: Path, status: str = 'pending', include_file: bool = Tru
         'file_path': str(upload_file) if include_file else None,
         'status': status,
     }
-    tasks_dir = tmp_path / 'tasks'
+    tasks_dir = data_dir / 'tasks'
     tasks_dir.mkdir(parents=True, exist_ok=True)
     task_file = tasks_dir / f'{task_id}.json'
     task_file.write_text(json.dumps(task))
     return task, task_file
+
+
+@pytest.fixture()
+def data_dir(tmp_path, monkeypatch):
+    """Point worker_loop at a temporary DATA_DIR and reload the module."""
+    monkeypatch.setenv('DATA_DIR', str(tmp_path))
+    importlib.reload(worker_loop)
+    return tmp_path
 
 
 # ---------------------------------------------------------------------------
@@ -38,8 +54,6 @@ def _make_task(tmp_path: Path, status: str = 'pending', include_file: bool = Tru
 
 def test_normalize_audio_calls_ffmpeg_with_correct_args(tmp_path, monkeypatch):
     """normalize_audio must invoke ffmpeg with the right WAV conversion flags."""
-    import worker.worker_loop as wl
-
     captured = {}
 
     def fake_run(cmd, **kwargs):
@@ -52,7 +66,7 @@ def test_normalize_audio_calls_ffmpeg_with_correct_args(tmp_path, monkeypatch):
 
     input_p = str(tmp_path / 'in.mp3')
     output_p = str(tmp_path / 'out.wav')
-    wl.normalize_audio(input_p, output_p)
+    worker_loop.normalize_audio(input_p, output_p)
 
     cmd = captured['cmd']
     assert cmd[0] == 'ffmpeg'
@@ -60,17 +74,15 @@ def test_normalize_audio_calls_ffmpeg_with_correct_args(tmp_path, monkeypatch):
     assert input_p in cmd
     assert output_p in cmd
     assert '-ar' in cmd
-    assert wl.WAV_SAMPLE_RATE in cmd
+    assert worker_loop.WAV_SAMPLE_RATE in cmd
     assert '-ac' in cmd
-    assert wl.WAV_CHANNELS in cmd
+    assert worker_loop.WAV_CHANNELS in cmd
     assert '-c:a' in cmd
-    assert wl.WAV_CODEC in cmd
+    assert worker_loop.WAV_CODEC in cmd
 
 
 def test_normalize_audio_raises_on_ffmpeg_failure(tmp_path, monkeypatch):
     """normalize_audio must raise RuntimeError when ffmpeg returns non-zero."""
-    import worker.worker_loop as wl
-
     def fake_run(cmd, **kwargs):
         result = MagicMock()
         result.returncode = 1
@@ -80,26 +92,21 @@ def test_normalize_audio_raises_on_ffmpeg_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(subprocess, 'run', fake_run)
 
     with pytest.raises(RuntimeError, match='ffmpeg failed'):
-        wl.normalize_audio('in.mp3', 'out.wav')
+        worker_loop.normalize_audio('in.mp3', 'out.wav')
 
 
 # ---------------------------------------------------------------------------
-# process_task
+# process_pending_tasks – upload tasks
 # ---------------------------------------------------------------------------
 
-def test_process_task_normalizes_pending_upload(tmp_path, monkeypatch):
-    """process_task must normalize a pending upload task and mark it completed."""
-    import importlib
-    import worker.worker_loop as wl
+def test_pending_upload_task_is_normalized(data_dir):
+    """process_pending_tasks must normalize a pending upload task and mark it completed."""
+    task, task_file = _make_upload_task(data_dir)
 
-    monkeypatch.setenv('DATA_DIR', str(tmp_path))
-    importlib.reload(wl)
+    with patch('worker_loop.normalize_audio') as mock_norm:
+        count = worker_loop.process_pending_tasks()
 
-    task, task_file = _make_task(tmp_path)
-
-    with patch.object(wl, 'normalize_audio') as mock_norm:
-        wl.process_task(task_file)
-
+    assert count == 1
     updated = json.loads(task_file.read_text())
     assert updated['status'] == 'completed'
     assert 'normalized_path' in updated
@@ -107,76 +114,53 @@ def test_process_task_normalizes_pending_upload(tmp_path, monkeypatch):
     mock_norm.assert_called_once()
 
 
-def test_process_task_marks_failed_on_ffmpeg_error(tmp_path, monkeypatch):
-    """process_task must mark the task as failed when ffmpeg raises."""
-    import importlib
-    import worker.worker_loop as wl
+def test_upload_task_normalization_failure_marks_failed(data_dir):
+    """If ffmpeg raises during upload normalization, the task must be marked failed."""
+    task, task_file = _make_upload_task(data_dir)
 
-    monkeypatch.setenv('DATA_DIR', str(tmp_path))
-    importlib.reload(wl)
-
-    task, task_file = _make_task(tmp_path)
-
-    with patch.object(wl, 'normalize_audio', side_effect=RuntimeError('ffmpeg failed: oops')):
-        wl.process_task(task_file)
+    with patch('worker_loop.normalize_audio', side_effect=RuntimeError('ffmpeg failed: oops')):
+        worker_loop.process_pending_tasks()
 
     updated = json.loads(task_file.read_text())
     assert updated['status'] == 'failed'
     assert 'error' in updated
 
 
-def test_process_task_skips_non_pending(tmp_path, monkeypatch):
-    """process_task must not touch tasks that are not in 'pending' status."""
-    import importlib
-    import worker.worker_loop as wl
+def test_upload_task_skips_non_pending(data_dir):
+    """Upload tasks not in 'pending' status must not be re-processed."""
+    task, task_file = _make_upload_task(data_dir, status='completed')
 
-    monkeypatch.setenv('DATA_DIR', str(tmp_path))
-    importlib.reload(wl)
-
-    task, task_file = _make_task(tmp_path, status='completed')
-
-    with patch.object(wl, 'normalize_audio') as mock_norm:
-        wl.process_task(task_file)
+    with patch('worker_loop.normalize_audio') as mock_norm:
+        count = worker_loop.process_pending_tasks()
 
     mock_norm.assert_not_called()
+    assert count == 0
     updated = json.loads(task_file.read_text())
     assert updated['status'] == 'completed'
 
 
-def test_process_task_skips_url_task_without_file_path(tmp_path, monkeypatch):
-    """URL tasks with no file_path should be skipped (yt-dlp not yet run)."""
-    import importlib
-    import worker.worker_loop as wl
+def test_upload_task_without_file_path_is_skipped(data_dir):
+    """Upload tasks with no file_path should be skipped (file not yet saved)."""
+    task, task_file = _make_upload_task(data_dir, include_file=False)
 
-    monkeypatch.setenv('DATA_DIR', str(tmp_path))
-    importlib.reload(wl)
-
-    task, task_file = _make_task(tmp_path, include_file=False)
-
-    with patch.object(wl, 'normalize_audio') as mock_norm:
-        wl.process_task(task_file)
+    with patch('worker_loop.normalize_audio') as mock_norm:
+        count = worker_loop.process_pending_tasks()
 
     mock_norm.assert_not_called()
-    # Status should remain unchanged
+    assert count == 0
     updated = json.loads(task_file.read_text())
     assert updated['status'] == 'pending'
 
 
-def test_process_task_sets_processing_before_normalization(tmp_path, monkeypatch):
+def test_upload_task_sets_processing_before_normalization(data_dir):
     """Task status must be written as 'processing' before ffmpeg is invoked."""
-    import importlib
-    import worker.worker_loop as wl
-
-    monkeypatch.setenv('DATA_DIR', str(tmp_path))
-    importlib.reload(wl)
-
-    task, task_file = _make_task(tmp_path)
+    task, task_file = _make_upload_task(data_dir)
     observed_statuses = []
 
     def capture_and_succeed(input_path, output_path):
         observed_statuses.append(json.loads(task_file.read_text())['status'])
 
-    with patch.object(wl, 'normalize_audio', side_effect=capture_and_succeed):
-        wl.process_task(task_file)
+    with patch('worker_loop.normalize_audio', side_effect=capture_and_succeed):
+        worker_loop.process_pending_tasks()
 
     assert 'processing' in observed_statuses
