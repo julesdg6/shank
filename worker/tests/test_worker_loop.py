@@ -272,4 +272,3 @@ def test_multiple_pending_tasks_all_processed(data_dir):
 
     assert mock_dl.call_count == 3
     assert count == 3
-
