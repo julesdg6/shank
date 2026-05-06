@@ -113,7 +113,7 @@ def reloaded_worker_loop(monkeypatch, tmp_path):
 
 
 def test_poll_once_processes_pending_task(tmp_path, reloaded_worker_loop):
-    """_poll_once must pick up a pending task with a file_path and process it."""
+    """process_pending_tasks must pick up a pending upload task with a file_path and analyze it."""
     tasks_dir = tmp_path / 'tasks'
     tasks_dir.mkdir(parents=True, exist_ok=True)
 
@@ -130,7 +130,7 @@ def test_poll_once_processes_pending_task(tmp_path, reloaded_worker_loop):
     task_file = tasks_dir / f'{task_id}.json'
     task_file.write_text(json.dumps(task))
 
-    reloaded_worker_loop._poll_once()
+    reloaded_worker_loop.process_pending_tasks(tasks_dir)
 
     updated = json.loads(task_file.read_text())
     assert updated['status'] == 'done'
@@ -139,7 +139,7 @@ def test_poll_once_processes_pending_task(tmp_path, reloaded_worker_loop):
 
 
 def test_poll_once_error_on_missing_audio(tmp_path, reloaded_worker_loop):
-    """_poll_once must set status='error' when the audio file does not exist."""
+    """process_pending_tasks must set status='failed' when analysis of a missing audio file fails."""
     tasks_dir = tmp_path / 'tasks'
     tasks_dir.mkdir(parents=True, exist_ok=True)
 
@@ -155,15 +155,16 @@ def test_poll_once_error_on_missing_audio(tmp_path, reloaded_worker_loop):
     task_file = tasks_dir / f'{task_id}.json'
     task_file.write_text(json.dumps(task))
 
-    reloaded_worker_loop._poll_once()
+    reloaded_worker_loop.process_pending_tasks(tasks_dir)
 
     updated = json.loads(task_file.read_text())
-    assert updated['status'] == 'error'
+    assert updated['status'] == 'failed'
     assert 'error' in updated
 
 
 def test_poll_once_skips_url_task_without_file(tmp_path, reloaded_worker_loop):
-    """URL tasks without a file_path must be left as 'pending' (not yet supported)."""
+    """URL tasks without a source must be skipped."""
+    from unittest.mock import patch  # noqa: PLC0415
     tasks_dir = tmp_path / 'tasks'
     tasks_dir.mkdir(parents=True, exist_ok=True)
 
@@ -178,7 +179,10 @@ def test_poll_once_skips_url_task_without_file(tmp_path, reloaded_worker_loop):
     task_file = tasks_dir / f'{task_id}.json'
     task_file.write_text(json.dumps(task))
 
-    reloaded_worker_loop._poll_once()
+    # Mock download and analysis so no real network/file access occurs
+    with patch('worker_loop.download_youtube', return_value=tmp_path / 'audio.mp3'), \
+         patch('worker_loop.analyze_audio', return_value={'bpm': 120.0, 'key': 'C major'}):
+        reloaded_worker_loop.process_pending_tasks(tasks_dir)
 
     updated = json.loads(task_file.read_text())
-    assert updated['status'] == 'pending'
+    assert updated['status'] == 'done'
