@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
 app = FastAPI(title='SHANK API')
@@ -141,3 +142,12 @@ def get_task(task_id: str):
     if not task_file.exists():
         raise HTTPException(status_code=404, detail='Task not found')
     return json.loads(task_file.read_text())
+
+
+# ---------------------------------------------------------------------------
+# Static UI — mount last so API routes take precedence
+# ---------------------------------------------------------------------------
+
+_UI_DIR = Path(__file__).parent / 'ui'
+if _UI_DIR.is_dir():
+    app.mount('/ui', StaticFiles(directory=str(_UI_DIR), html=True), name='ui')
