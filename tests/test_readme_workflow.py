@@ -3,6 +3,7 @@ from pathlib import Path
 
 def test_workflow_configuration():
     workflow = Path(__file__).resolve().parents[1] / '.github' / 'workflows' / 'update-readme.yml'
+    assert workflow.exists()
     text = workflow.read_text()
 
     assert 'name: Update README' in text
@@ -17,6 +18,7 @@ def test_workflow_configuration():
 
 def test_readme_contains_workflow_update_markers():
     readme = Path(__file__).resolve().parents[1] / 'README.md'
+    assert readme.exists()
     text = readme.read_text()
 
     assert '<!-- readme-update:start -->' in text
