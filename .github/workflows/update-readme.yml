@@ -36,7 +36,7 @@ jobs:
           commit_message = head_commit.get("message", "Manual workflow dispatch").strip()
           commit_message = " ".join(commit_message.splitlines()) or "Manual workflow dispatch"
           commit_message = html.escape(commit_message, quote=False)
-          updated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+          updated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
           replacement = "\n".join(
               [

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-def test_update_readme_workflow_exists_and_targets_readme():
+def test_workflow_configuration():
     workflow = Path(__file__).resolve().parents[1] / '.github' / 'workflows' / 'update-readme.yml'
     text = workflow.read_text()
 
