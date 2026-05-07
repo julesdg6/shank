@@ -22,6 +22,7 @@ To provide users with an automated pipeline that transforms raw audio/URLs into 
 - **Worker**: Python (Librosa, NumPy, Pandas, Scipy, yt-dlp, ffmpeg)
 - **Deployment**: Docker & Docker Compose
 - **Orchestration**: Asynchronous task queue via filesystem polling
+- **Runtime**: A single container runs both the FastAPI server and the background worker loop
 
 ## 🗺 Roadmap & Implementation Plan
 
