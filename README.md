@@ -1,32 +1,108 @@
 # 🎵 SHANK: AI Song Analyzer
 
-SHANK is a powerful, Dockerized, self-hosted tool designed to perform deep musical analysis on audio files and YouTube videos. It utilizes state-of-the-art AI models to extract technical and creative metadata from music.
+SHANK is a powerful, Dockerized, self-hosted tool designed to perform deep musical analysis on audio files and YouTube videos. It extracts technical and creative metadata from music, including BPM, musical key, and optionally separated stems.
 
 ## 🎯 Project Aim
 To provide users with an automated pipeline that transforms raw audio/URLs into structured musical intelligence, including tempo, key, chord progressions, and MIDI melodies.
 
-## 🚀 Key Features (Planned)
-- **Multi-Source Input**: Support for direct audio uploads (MP3, WAV, FLAC) and YouTube URLs (via `yt-dlp`).
-- **Advanced Musical Extraction**:
-    - **BPM & Tempo**: Precise beat tracking.
-    - **Musical Key**: Detection of the song's key.
-    - **Chord Progressions**: Identification of harmonic structure.
-    - **Melody to MIDI**: Extraction of melodic lines into MIDI format.
-    - **Song Structure**: Detection of intro, verse, chorus, etc., with waveform visualizations.
-- **Stem Separation**: Integration with **Ace-step 1.5** to separate vocals, drums, bass, and other instruments for specialized analysis.
-- **Automated Workflow**: A headless worker architecture that processes tasks asynchronously.
-- **Web Interface**: A clean, user-friendly Dashboard to manage uploads and view results.
+## 🚀 Key Features
+- **Multi-Source Input**: Direct audio uploads (MP3, WAV, FLAC) and YouTube URLs (via `yt-dlp`).
+- **Audio Normalization**: Automatic conversion to standard 44100 Hz stereo WAV using `ffmpeg`.
+- **Musical Extraction**:
+    - **BPM & Tempo**: Precise beat tracking via `librosa`.
+    - **Musical Key**: Krumhansl-Kessler key detection (e.g. `A minor`, `C major`).
+    - **Chord Progressions**: *(planned)*
+    - **Melody to MIDI**: *(planned)*
+    - **Song Structure**: Detection of intro, verse, chorus, etc. *(planned)*
+- **Optional Stem Separation**: Integration with **ACE-Step** to separate vocals, drums, bass, and other instruments.
+- **Asynchronous Workflow**: A background worker polls a filesystem task queue and processes jobs independently of the API.
+- **Web Dashboard**: A built-in UI at `/ui` to submit tasks, monitor progress, and inspect results.
 
 ## 🛠 Technical Stack
-- **Backend**: FastAPI (Python)
-- **Worker**: Python (Librosa, NumPy, Pandas, Scipy, yt-dlp, ffmpeg)
+- **Backend**: FastAPI (Python) served by Uvicorn
+- **Worker**: Python — `librosa`, `numpy`, `scipy`, `yt-dlp`, `ffmpeg`
+- **Process Management**: `supervisord` runs the API server and background worker in a single container
 - **Deployment**: Docker & Docker Compose
 - **Orchestration**: Asynchronous task queue via filesystem polling
-- **Runtime**: A single container runs both the FastAPI server and the background worker loop
+
+## 🚀 Quick Start
+
+### Prerequisites
+- [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/)
+
+### 1. Clone and configure
+```bash
+git clone https://github.com/julesdg6/shank.git
+cd shank
+cp .env.example .env   # edit as needed
+```
+
+### 2. Start the service
+```bash
+docker compose up --build -d
+```
+
+The API and Web UI are available at **http://localhost:8088**.
+
+### 3. Open the dashboard
+Navigate to **http://localhost:8088/ui** in your browser to upload audio files or submit YouTube URLs.
+
+### 4. Stop the service
+```bash
+docker compose down
+```
+
+## 📡 API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/` | Health check — returns `{"status": "online"}` |
+| `POST` | `/tasks/upload` | Upload an audio file (MP3, WAV, FLAC, max 200 MB) |
+| `POST` | `/tasks/url` | Submit a YouTube URL for download and analysis |
+| `GET` | `/tasks/{task_id}` | Retrieve the status and results of a task |
+| `GET` | `/ui` | Web dashboard (static HTML/JS) |
+
+### Example — submit a YouTube URL
+```bash
+curl -X POST http://localhost:8088/tasks/url \
+     -H 'Content-Type: application/json' \
+     -d '{"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}'
+```
+
+### Example — check task status
+```bash
+curl http://localhost:8088/tasks/<task_id>
+```
+
+A completed task response looks like:
+```json
+{
+  "task_id": "...",
+  "type": "url",
+  "source": "https://www.youtube.com/watch?v=...",
+  "status": "done",
+  "bpm": 113.45,
+  "key": "A minor",
+  "created_at": "2025-01-01T00:00:00+00:00",
+  "completed_at": "2025-01-01T00:01:00+00:00"
+}
+```
+
+## ⚙️ Configuration
+
+Environment variables (set in `.env` or `docker-compose.yml`):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DATA_DIR` | `/srv/shank/data` | Directory for uploads, task files, and normalized audio |
+| `POLL_INTERVAL` | `10` | Worker polling interval in seconds |
+| `ACE_STEP_API_URL` | *(empty)* | Base URL of an ACE-Step API for stem separation |
+| `ACE_STEP_API_KEY` | *(empty)* | Optional Bearer token for the ACE-Step API |
+| `ACE_STEP_STEMS` | `vocals,drums,bass,other` | Comma-separated list of stems to request |
 
 ## 🗺 Roadmap & Implementation Plan
 
-### Phase 1: Foundation (Current State)
+### Phase 1: Foundation
 - [x] Infrastructure setup (Docker, Docker Compose)
 - [x] Network configuration (Port 8088)
 - [x] Initialized Git repository and remote link
@@ -35,19 +111,18 @@ To provide users with an automated pipeline that transforms raw audio/URLs into 
 ### Phase 2: Core API & Worker Development
 - [x] Implement FastAPI endpoints for task submission (Upload/URL)
 - [x] Implement Worker loop for task polling
-- [ ] Integrate `yt-dlp` for YouTube processing
-- [ ] Implement `ffmpeg` normalization pipeline
+- [x] Integrate `yt-dlp` for YouTube processing
+- [x] Implement `ffmpeg` normalization pipeline
 - [x] Implement `librosa` based analysis (BPM/Key)
 
 ### Phase 3: Advanced Analysis & UI
 - [ ] Implement Chord progression detection
 - [ ] Implement Melody -> MIDI extraction
 - [ ] Implement Song structure/segmentation detection
-- [ ] Build Web UI (Dashboard, Progress bars, Result viewing)
+- [x] Build Web UI (Dashboard, task list, result viewing)
 
 ### Phase 4: Stem Separation & Optimization
-- [ ] Integrate Ace-step 1.5 for stem separation
-- [ ] Enable the option to use Ace-step for separating vocals, drums, bass, and others.
+- [x] Integrate ACE-Step for optional stem separation
 - [ ] Implement GPU support for faster processing
 
 ### Phase 5: Ecosystem Integration
@@ -66,10 +141,15 @@ This project is for research and personal use. Ensure you have the rights to any
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
-To enable stem separation in the worker (vocals, drums, bass, other), set:
+To enable stem separation in the worker (vocals, drums, bass, other), set `ACE_STEP_API_URL` in your environment:
 
-- `ACE_STEP_API_URL` (example: `http://ace-step:8001`)
-- `ACE_STEP_API_KEY` (optional, if your ACE-Step API requires auth)
-- `ACE_STEP_STEMS` (optional, defaults to `vocals,drums,bass,other`)
+```dotenv
+ACE_STEP_API_URL=http://ace-step:8001
+ACE_STEP_API_KEY=          # optional — Bearer token if your API requires auth
+ACE_STEP_STEMS=vocals,drums,bass,other   # optional — defaults shown
+```
 
-When `ACE_STEP_API_URL` is set, each normalized track is sent to ACE-Step (`/release_task` + `/query_result`) and task metadata includes returned stem references.
+When `ACE_STEP_API_URL` is set, each normalized track is submitted to ACE-Step (`/release_task`), the worker polls for completion (`/query_result`), and the returned stem references are stored in the task metadata.
+
+## ⚖️ Legal Note
+This project is for research and personal use. Ensure you have the rights to any audio content you process.
