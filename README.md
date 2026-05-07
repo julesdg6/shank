@@ -56,3 +56,12 @@ To provide users with an automated pipeline that transforms raw audio/URLs into 
 
 ## ⚖️ Legal Note
 This project is for research and personal use. Ensure you have the rights to any audio content you process.
+
+## 🎚 Optional ACE-Step Stem Separation
+To enable stem separation in the worker (vocals, drums, bass, other), set:
+
+- `ACE_STEP_API_URL` (example: `http://ace-step:8001`)
+- `ACE_STEP_API_KEY` (optional, if your ACE-Step API requires auth)
+- `ACE_STEP_STEMS` (optional, defaults to `vocals,drums,bass,other`)
+
+When `ACE_STEP_API_URL` is set, each normalized track is sent to ACE-Step (`/release_task` + `/query_result`) and task metadata includes returned stem references.

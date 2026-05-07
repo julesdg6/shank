@@ -169,3 +169,50 @@ def test_upload_task_sets_processing_before_normalization(data_dir):
         worker_loop.process_pending_tasks()
 
     assert 'processing' in observed_statuses
+
+
+def test_pending_upload_task_records_ace_step_stems_when_enabled(data_dir, monkeypatch):
+    """When configured, Ace-step stem extraction output should be saved to the task."""
+    monkeypatch.setenv('ACE_STEP_API_URL', 'http://ace-step:8001')
+    importlib.reload(worker_loop)
+    task, task_file = _make_upload_task(data_dir)
+
+    with patch('worker_loop.normalize_audio'), \
+         patch('worker_loop.separate_stems_with_ace_step', return_value={
+             'task_id': 'ace-task-1',
+             'tracks': {
+                 'vocals': '/v1/audio?path=/tmp/vocals.wav',
+                 'drums': '/v1/audio?path=/tmp/drums.wav',
+                 'bass': '/v1/audio?path=/tmp/bass.wav',
+                 'other': '/v1/audio?path=/tmp/other.wav',
+             },
+         }), \
+         patch('worker_loop.analyze_audio', return_value={'bpm': 128.0, 'key': 'A minor'}):
+        count = worker_loop.process_pending_tasks()
+
+    assert count == 1
+    updated = json.loads(task_file.read_text())
+    assert updated['status'] == 'done'
+    assert updated['ace_step_task_id'] == 'ace-task-1'
+    assert updated['stems']['vocals'].endswith('vocals.wav')
+    assert updated['stems']['drums'].endswith('drums.wav')
+    assert updated['stems']['bass'].endswith('bass.wav')
+    assert updated['stems']['other'].endswith('other.wav')
+
+
+def test_pending_upload_task_marks_failed_when_ace_step_fails(data_dir, monkeypatch):
+    """If Ace-step stem extraction fails, the task should be marked as failed."""
+    monkeypatch.setenv('ACE_STEP_API_URL', 'http://ace-step:8001')
+    importlib.reload(worker_loop)
+    task, task_file = _make_upload_task(data_dir)
+
+    with patch('worker_loop.normalize_audio'), \
+         patch('worker_loop.separate_stems_with_ace_step', side_effect=RuntimeError('ace-step unavailable')), \
+         patch('worker_loop.analyze_audio') as mock_analyze:
+        count = worker_loop.process_pending_tasks()
+
+    assert count == 1
+    mock_analyze.assert_not_called()
+    updated = json.loads(task_file.read_text())
+    assert updated['status'] == 'failed'
+    assert 'ace-step unavailable' in updated['error']

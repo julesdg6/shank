@@ -14,6 +14,9 @@ services:
     build: ./worker
     environment:
       - DATA_DIR=/srv/shank/data
+      - ACE_STEP_API_URL=${ACE_STEP_API_URL:-}
+      - ACE_STEP_API_KEY=${ACE_STEP_API_KEY:-}
+      - ACE_STEP_STEMS=${ACE_STEP_STEMS:-vocals,drums,bass,other}
     volumes:
       - ./data:/srv/shank/data
     networks:
