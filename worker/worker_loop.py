@@ -100,11 +100,11 @@ def _ace_step_post(path: str, payload: dict) -> dict:
         return json.loads(response.read().decode('utf-8'))
 
 
-def _ace_step_response_data(payload: dict[str, Any]) -> Any:
+def _ace_step_response_data(response_payload: dict[str, Any]) -> Any:
     """Unwrap Ace-step responses that use a top-level `data` envelope."""
-    if isinstance(payload, dict) and 'data' in payload:
-        return payload.get('data')
-    return payload
+    if isinstance(response_payload, dict) and 'data' in response_payload:
+        return response_payload.get('data')
+    return response_payload
 
 
 def _extract_track_files(data: Any) -> dict[str, str]:
@@ -128,7 +128,7 @@ def _extract_track_files(data: Any) -> dict[str, str]:
 
 
 def separate_stems_with_ace_step(src_audio_path: str) -> dict:
-    """Run Ace-step extract flow and return a dict with ``task_id`` and detected ``tracks``."""
+    """Run Ace-step extract flow and return ``{'task_id': str, 'tracks': dict[str, str]}``."""
     release_payload = {
         'task_type': 'extract',
         'src_audio_path': src_audio_path,
@@ -146,8 +146,8 @@ def separate_stems_with_ace_step(src_audio_path: str) -> dict:
         if isinstance(query_data, list) and query_data:
             task_data = query_data[0]
             status = task_data.get('status')
-            normalized_status = str(status).lower()
-            if normalized_status in ('1', 'succeeded', 'done'):
+            status_str = str(status).lower()
+            if status_str in ('1', 'succeeded', 'done'):
                 result = task_data.get('result')
                 if isinstance(result, str):
                     try:
@@ -158,7 +158,7 @@ def separate_stems_with_ace_step(src_audio_path: str) -> dict:
                     'task_id': ace_task_id,
                     'tracks': _extract_track_files(result),
                 }
-            if normalized_status in ('2', 'failed', 'error'):
+            if status_str in ('2', 'failed', 'error'):
                 raise RuntimeError(task_data.get('error') or 'Ace-step stem separation failed')
         time.sleep(ACE_STEP_POLL_INTERVAL)
 

@@ -207,7 +207,7 @@ def test_pending_upload_task_marks_failed_when_ace_step_fails(data_dir, monkeypa
     task, task_file = _make_upload_task(data_dir)
 
     with patch('worker_loop.normalize_audio'), \
-         patch('worker_loop.separate_stems_with_ace_step', side_effect=RuntimeError('ace-step unavailable')), \
+         patch('worker_loop.separate_stems_with_ace_step', side_effect=RuntimeError('Ace-step unavailable')), \
          patch('worker_loop.analyze_audio') as mock_analyze:
         count = worker_loop.process_pending_tasks()
 
@@ -215,4 +215,4 @@ def test_pending_upload_task_marks_failed_when_ace_step_fails(data_dir, monkeypa
     mock_analyze.assert_not_called()
     updated = json.loads(task_file.read_text())
     assert updated['status'] == 'failed'
-    assert 'ace-step unavailable' in updated['error']
+    assert 'Ace-step unavailable' in updated['error']
