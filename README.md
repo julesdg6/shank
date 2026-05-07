@@ -60,6 +60,7 @@ docker compose down
 | `POST` | `/tasks/upload` | Upload an audio file (MP3, WAV, FLAC, max 200 MB) |
 | `POST` | `/tasks/url` | Submit a YouTube URL for download and analysis |
 | `GET` | `/tasks/{task_id}` | Retrieve the status and results of a task |
+| `GET` | `/tasks/completed` | List all completed (`done`) tasks |
 | `GET` | `/ui` | Web dashboard (static HTML/JS) |
 
 ### Example — submit a YouTube URL
@@ -83,6 +84,7 @@ A completed task response looks like:
   "status": "done",
   "bpm": 113.45,
   "key": "A minor",
+  "duration_seconds": 245.31,
   "created_at": "2025-01-01T00:00:00+00:00",
   "completed_at": "2025-01-01T00:01:00+00:00"
 }

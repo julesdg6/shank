@@ -184,3 +184,56 @@ def test_upload_oversized_file_rejected(client, monkeypatch):
         files={'file': ('big.mp3', io.BytesIO(b'\xff\xfb' + b'\x00' * 20), 'audio/mpeg')},
     )
     assert response.status_code == 413
+
+
+# ---------------------------------------------------------------------------
+# GET /tasks/completed
+# ---------------------------------------------------------------------------
+
+def test_list_completed_tasks_returns_only_done_tasks(client, tmp_path):
+    done_old = str(uuid.uuid4())
+    done_new = str(uuid.uuid4())
+    pending = str(uuid.uuid4())
+
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+
+    (tasks_dir / f'{done_old}.json').write_text(json.dumps({
+        'task_id': done_old,
+        'status': 'done',
+        'source': 'older-song.mp3',
+        'bpm': 100.0,
+        'key': 'C major',
+        'duration_seconds': 120.5,
+        'completed_at': '2026-01-01T00:00:00+00:00',
+    }))
+    (tasks_dir / f'{done_new}.json').write_text(json.dumps({
+        'task_id': done_new,
+        'status': 'done',
+        'source': 'newer-song.mp3',
+        'bpm': 110.0,
+        'key': 'D minor',
+        'duration_seconds': 140.2,
+        'completed_at': '2026-01-02T00:00:00+00:00',
+    }))
+    (tasks_dir / f'{pending}.json').write_text(json.dumps({
+        'task_id': pending,
+        'status': 'pending',
+        'source': 'pending-song.mp3',
+    }))
+
+    response = client.get('/tasks/completed')
+    assert response.status_code == 200
+    tasks = response.json()['tasks']
+    assert [task['task_id'] for task in tasks] == [done_new, done_old]
+    assert all(task['status'] == 'done' for task in tasks)
+
+
+def test_list_completed_tasks_skips_invalid_json_files(client, tmp_path):
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / 'bad.json').write_text('{ not-valid-json')
+
+    response = client.get('/tasks/completed')
+    assert response.status_code == 200
+    assert response.json() == {'tasks': []}

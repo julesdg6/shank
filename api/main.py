@@ -124,6 +124,23 @@ def submit_url(body: URLRequest):
     return JSONResponse(status_code=202, content={'task_id': task_id, 'status': 'pending'})
 
 
+@app.get('/tasks/completed')
+def list_completed_tasks():
+    """Return all tasks with status='done', sorted by completion time desc."""
+    _ensure_dirs()
+    completed_tasks = []
+    for task_file in TASKS_DIR.glob('*.json'):
+        try:
+            task = json.loads(task_file.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if task.get('status') == 'done':
+            completed_tasks.append(task)
+
+    completed_tasks.sort(key=lambda task: task.get('completed_at') or '', reverse=True)
+    return {'tasks': completed_tasks}
+
+
 # ---------------------------------------------------------------------------
 # Get task status
 # ---------------------------------------------------------------------------

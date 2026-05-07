@@ -68,13 +68,14 @@ def _write_rhythmic_wav(path, bpm=120.0, frequency=440.0, duration=8.0, sr=SAMPL
 # ---------------------------------------------------------------------------
 
 def test_analyze_audio_returns_bpm_and_key(tmp_path):
-    """analyze_audio must return a dict with 'bpm' and 'key' keys."""
+    """analyze_audio must return a dict with 'bpm', 'key', and duration."""
     wav = _write_sine_wav(tmp_path / 'test.wav')
     result = analyze_audio(str(wav))
 
     assert isinstance(result, dict)
     assert 'bpm' in result
     assert 'key' in result
+    assert 'duration_seconds' in result
 
 
 def test_analyze_audio_bpm_is_positive(tmp_path):
@@ -92,6 +93,14 @@ def test_analyze_audio_key_is_valid(tmp_path):
     result = analyze_audio(str(wav))
 
     assert result['key'] in _VALID_KEYS, f"Unexpected key: {result['key']!r}"
+
+
+def test_analyze_audio_duration_is_positive(tmp_path):
+    """Duration should be reported as a positive float."""
+    wav = _write_sine_wav(tmp_path / 'test.wav', duration=3.5)
+    result = analyze_audio(str(wav))
+    assert isinstance(result['duration_seconds'], float)
+    assert result['duration_seconds'] > 0
 
 
 def test_analyze_audio_missing_file_raises(tmp_path):
@@ -147,6 +156,7 @@ def test_poll_once_processes_pending_task(tmp_path, reloaded_worker_loop):
     assert updated['status'] == 'done'
     assert isinstance(updated['bpm'], float)
     assert updated['key'] in _VALID_KEYS
+    assert updated['duration_seconds'] > 0
     assert 'normalized_path' in updated
 
 
