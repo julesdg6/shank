@@ -8,6 +8,7 @@ import urllib.request
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from analyze import analyze_audio
 from downloader import download_youtube
@@ -84,6 +85,7 @@ def normalize_audio(input_path: str, output_path: str) -> None:
 
 
 def _ace_step_post(path: str, payload: dict) -> dict:
+    """POST JSON payload to the configured Ace-step endpoint and return parsed JSON."""
     body = json.dumps(payload).encode('utf-8')
     request = urllib.request.Request(
         f'{ACE_STEP_API_URL}{path}',
@@ -98,13 +100,15 @@ def _ace_step_post(path: str, payload: dict) -> dict:
         return json.loads(response.read().decode('utf-8'))
 
 
-def _ace_step_response_data(payload: dict):
+def _ace_step_response_data(payload: dict[str, Any]) -> Any:
+    """Unwrap Ace-step responses that use a top-level `data` envelope."""
     if isinstance(payload, dict) and 'data' in payload:
         return payload.get('data')
     return payload
 
 
-def _extract_track_files(data) -> dict[str, str]:
+def _extract_track_files(data: Any) -> dict[str, str]:
+    """Collect ``track_name``/``file`` pairs from nested Ace-step result payloads."""
     tracks: dict[str, str] = {}
 
     def collect(node):
@@ -124,6 +128,7 @@ def _extract_track_files(data) -> dict[str, str]:
 
 
 def separate_stems_with_ace_step(src_audio_path: str) -> dict:
+    """Run Ace-step extract flow and return a dict with ``task_id`` and detected ``tracks``."""
     release_payload = {
         'task_type': 'extract',
         'src_audio_path': src_audio_path,
@@ -141,7 +146,8 @@ def separate_stems_with_ace_step(src_audio_path: str) -> dict:
         if isinstance(query_data, list) and query_data:
             task_data = query_data[0]
             status = task_data.get('status')
-            if status in (1, '1', 'succeeded', 'done'):
+            normalized_status = str(status).lower()
+            if normalized_status in ('1', 'succeeded', 'done'):
                 result = task_data.get('result')
                 if isinstance(result, str):
                     try:
@@ -152,7 +158,7 @@ def separate_stems_with_ace_step(src_audio_path: str) -> dict:
                     'task_id': ace_task_id,
                     'tracks': _extract_track_files(result),
                 }
-            if status in (2, '2', 'failed', 'error'):
+            if normalized_status in ('2', 'failed', 'error'):
                 raise RuntimeError(task_data.get('error') or 'Ace-step stem separation failed')
         time.sleep(ACE_STEP_POLL_INTERVAL)
 
