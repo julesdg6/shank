@@ -210,6 +210,7 @@
     tbody tr { border-bottom: 1px solid var(--border); }
     tbody tr:last-child { border-bottom: none; }
     tbody tr:hover { background: rgba(255,255,255,0.02); }
+    .clickable-row { cursor: pointer; }
     tbody td {
       padding: 0.65rem 0.75rem;
       vertical-align: middle;
@@ -319,6 +320,22 @@
       color: #a5f3fc;
     }
     .modal-close { float: right; background: none; border: none; color: var(--text-muted); font-size: 1.2rem; cursor: pointer; line-height: 1; }
+    .song-link { color: #93c5fd; text-decoration: none; }
+    .song-link:hover { text-decoration: underline; }
+    .detail-list {
+      list-style: none;
+      display: grid;
+      grid-template-columns: 180px 1fr;
+      gap: 0.6rem 1rem;
+      margin-bottom: 1.2rem;
+      font-size: 0.88rem;
+    }
+    .detail-list li { display: contents; }
+    .detail-list strong { color: var(--text-muted); }
+    @media (max-width: 700px) {
+      .detail-list { grid-template-columns: 1fr; }
+      .detail-list li { display: block; margin-bottom: 0.5rem; }
+    }
   </style>
 </head>
 <body>
@@ -331,77 +348,111 @@
 </header>
 
 <main>
-  <div class="grid">
+  <div id="dashboard-view">
+    <div class="grid">
 
-    <!-- ── Upload Card ── -->
-    <div class="card">
-      <h2><span class="icon">📁</span> Upload Audio File</h2>
-      <div class="dropzone" id="dropzone">
-        <input type="file" id="file-input" accept=".mp3,.wav,.flac" />
-        <span class="dz-icon">🎵</span>
-        <p>Drag &amp; drop an audio file here</p>
-        <p class="dz-hint">Supported: MP3, WAV, FLAC &nbsp;·&nbsp; Max 200 MB</p>
-        <div class="dz-selected" id="dz-selected"></div>
-      </div>
-      <div class="progress-wrap" id="upload-progress-wrap" style="display:none">
-        <div class="progress-bar" id="upload-progress-bar" style="width:0%"></div>
-      </div>
-      <div class="alert" id="upload-alert"></div>
-      <button class="btn btn-primary" id="upload-btn" style="margin-top:1rem;width:100%" disabled>
-        Upload &amp; Analyze
-      </button>
-    </div>
-
-    <!-- ── URL Card ── -->
-    <div class="card">
-      <h2><span class="icon">🔗</span> YouTube URL</h2>
-      <div class="input-group">
-        <input
-          type="url"
-          id="url-input"
-          placeholder="https://www.youtube.com/watch?v=…"
-          autocomplete="off"
-          spellcheck="false"
-        />
-        <div class="alert" id="url-alert"></div>
-        <button class="btn btn-primary" id="url-btn">
-          Submit &amp; Analyze
+      <!-- ── Upload Card ── -->
+      <div class="card">
+        <h2><span class="icon">📁</span> Upload Audio File</h2>
+        <div class="dropzone" id="dropzone">
+          <input type="file" id="file-input" accept=".mp3,.wav,.flac" />
+          <span class="dz-icon">🎵</span>
+          <p>Drag &amp; drop an audio file here</p>
+          <p class="dz-hint">Supported: MP3, WAV, FLAC &nbsp;·&nbsp; Max 200 MB</p>
+          <div class="dz-selected" id="dz-selected"></div>
+        </div>
+        <div class="progress-wrap" id="upload-progress-wrap" style="display:none">
+          <div class="progress-bar" id="upload-progress-bar" style="width:0%"></div>
+        </div>
+        <div class="alert" id="upload-alert"></div>
+        <button class="btn btn-primary" id="upload-btn" style="margin-top:1rem;width:100%" disabled>
+          Upload &amp; Analyze
         </button>
       </div>
+
+      <!-- ── URL Card ── -->
+      <div class="card">
+        <h2><span class="icon">🔗</span> YouTube URL</h2>
+        <div class="input-group">
+          <input
+            type="url"
+            id="url-input"
+            placeholder="https://www.youtube.com/watch?v=…"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <div class="alert" id="url-alert"></div>
+          <button class="btn btn-primary" id="url-btn">
+            Submit &amp; Analyze
+          </button>
+        </div>
+      </div>
+
     </div>
 
+    <!-- ── Tasks Card ── -->
+    <div class="card">
+      <div class="tasks-header">
+        <h2>
+          <span class="icon">📋</span> Tasks
+          <span id="tasks-count">0</span>
+        </h2>
+        <button class="btn btn-ghost btn-sm" id="clear-btn">Clear all</button>
+      </div>
+
+      <div id="empty-state">
+        <span class="es-icon">🎧</span>
+        <p>No tasks yet. Upload a file or submit a YouTube URL above to get started.</p>
+      </div>
+
+      <div class="table-wrap" id="table-wrap">
+        <table id="tasks-table">
+          <thead>
+            <tr>
+              <th>Task ID</th>
+              <th>Type</th>
+              <th>Source</th>
+              <th>Status</th>
+              <th>Created</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="tasks-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── Completed Songs Card ── -->
+    <div class="card" style="margin-top:1.5rem">
+      <div class="tasks-header">
+        <h2><span class="icon">✅</span> Processed Songs</h2>
+      </div>
+      <div id="completed-empty" style="color:var(--text-muted);font-size:0.88rem">No processed songs yet.</div>
+      <div class="table-wrap" id="completed-wrap" style="display:none">
+        <table id="completed-table">
+          <thead>
+            <tr>
+              <th>Song Title / Source</th>
+              <th>Length</th>
+              <th>BPM</th>
+              <th>Key</th>
+            </tr>
+          </thead>
+          <tbody id="completed-body"></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
-  <!-- ── Tasks Card ── -->
-  <div class="card">
-    <div class="tasks-header">
-      <h2>
-        <span class="icon">📋</span> Tasks
-        <span id="tasks-count">0</span>
-      </h2>
-      <button class="btn btn-ghost btn-sm" id="clear-btn">Clear all</button>
+  <div class="card" id="song-detail-view" style="display:none">
+    <div class="tasks-header" style="margin-bottom:0.5rem">
+      <h2><span class="icon">🎼</span> Song Analysis</h2>
+      <a href="/ui/" class="btn btn-ghost btn-sm">Back</a>
     </div>
-
-    <div id="empty-state">
-      <span class="es-icon">🎧</span>
-      <p>No tasks yet. Upload a file or submit a YouTube URL above to get started.</p>
-    </div>
-
-    <div class="table-wrap" id="table-wrap">
-      <table id="tasks-table">
-        <thead>
-          <tr>
-            <th>Task ID</th>
-            <th>Type</th>
-            <th>Source</th>
-            <th>Status</th>
-            <th>Created</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="tasks-body"></tbody>
-      </table>
-    </div>
+    <div class="alert" id="detail-alert"></div>
+    <ul class="detail-list" id="detail-list"></ul>
+    <h3 style="font-size:0.95rem;margin-bottom:0.5rem">Full Task JSON</h3>
+    <pre id="detail-pre"></pre>
   </div>
 </main>
 
@@ -421,7 +472,9 @@
 
   // ── State ───────────────────────────────────────────────────────────────
   let tasks = JSON.parse(localStorage.getItem('shank_tasks') || '[]');
+  let completedTasks = [];
   let pollTimer = null;
+  let completedPollTimer = null;
 
   // ── Utilities ────────────────────────────────────────────────────────────
   function saveTasks() { localStorage.setItem('shank_tasks', JSON.stringify(tasks)); }
@@ -431,6 +484,14 @@
     el.className = `alert show alert-${type}`;
   }
   function clearAlert(el) { el.className = 'alert'; el.textContent = ''; }
+  function escapeHtml(value) {
+    return String(value ?? '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
+  }
 
   function statusBadge(status) {
     const s = (status || 'unknown').toLowerCase();
@@ -448,6 +509,13 @@
     if (!iso) return '—';
     const d = new Date(iso);
     return d.toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
+  }
+  function fmtDuration(seconds) {
+    if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return '—';
+    const total = Math.round(seconds);
+    const mins = Math.floor(total / 60);
+    const secs = total % 60;
+    return `${mins}:${String(secs).padStart(2, '0')}`;
   }
 
   function needsPoll(status) {
@@ -477,7 +545,7 @@
       <tr data-i="${i}">
         <td class="td-id" title="${t.task_id}">${t.task_id.slice(0, TASK_ID_PREFIX_LEN)}…</td>
         <td>${typePill(t.type)}</td>
-        <td class="td-source" title="${t.source || ''}">${t.source || '—'}</td>
+        <td class="td-source" title="${escapeHtml(t.source || '')}">${escapeHtml(t.source || '—')}</td>
         <td>${statusBadge(t.status)}${needsPoll(t.status) ? ' <span class="spin"></span>' : ''}</td>
         <td style="white-space:nowrap;color:var(--text-muted);font-size:0.8rem">${fmtDate(t.created_at)}</td>
         <td>
@@ -489,6 +557,35 @@
     // Attach view buttons
     tbody.querySelectorAll('.view-btn').forEach(btn => {
       btn.addEventListener('click', () => openModal(parseInt(btn.dataset.i)));
+    });
+  }
+
+  function renderCompletedTasks() {
+    const tbody = document.getElementById('completed-body');
+    const empty = document.getElementById('completed-empty');
+    const wrap = document.getElementById('completed-wrap');
+
+    if (completedTasks.length === 0) {
+      empty.style.display = '';
+      wrap.style.display = 'none';
+      return;
+    }
+
+    empty.style.display = 'none';
+    wrap.style.display = '';
+    tbody.innerHTML = completedTasks.map((task) => `
+      <tr class="clickable-row" data-task-id="${task.task_id}">
+        <td class="td-source"><a class="song-link" href="/ui/?task_id=${encodeURIComponent(task.task_id)}">${escapeHtml(task.source || task.task_id)}</a></td>
+        <td>${fmtDuration(task.duration_seconds)}</td>
+        <td>${typeof task.bpm === 'number' ? task.bpm.toFixed(2) : '—'}</td>
+        <td>${escapeHtml(task.key || '—')}</td>
+      </tr>
+    `).join('');
+    tbody.querySelectorAll('tr').forEach((row) => {
+      row.addEventListener('click', () => {
+        const taskId = row.dataset.taskId;
+        if (taskId) window.location.href = `/ui/?task_id=${encodeURIComponent(taskId)}`;
+      });
     });
   }
 
@@ -535,6 +632,19 @@
   function maybeStartPolling() {
     if (tasks.some(t => needsPoll(t.status))) startPolling();
   }
+  async function refreshCompletedTasks() {
+    try {
+      const res = await fetch(`${API}/tasks/completed`, { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      completedTasks = Array.isArray(data.tasks) ? data.tasks : [];
+      renderCompletedTasks();
+    } catch (_) { /* network error; ignore */ }
+  }
+  function startCompletedPolling() {
+    if (completedPollTimer) return;
+    completedPollTimer = setInterval(refreshCompletedTasks, 5000);
+  }
 
   // ── Add task ─────────────────────────────────────────────────────────────
   function addTask(task) {
@@ -551,6 +661,44 @@
     stopPolling();
     render();
   });
+
+  async function loadSongDetail(taskId) {
+    const alert = document.getElementById('detail-alert');
+    const list = document.getElementById('detail-list');
+    const pre = document.getElementById('detail-pre');
+    clearAlert(alert);
+    list.innerHTML = '';
+    pre.textContent = '';
+    try {
+      const res = await fetch(`${API}/tasks/${encodeURIComponent(taskId)}`, { cache: 'no-store' });
+      const data = await res.json();
+      if (!res.ok) {
+        showAlert(alert, `❌ ${data?.detail || 'Task not found'}`, 'error');
+        return;
+      }
+      const item = (label, value) => `<li><strong>${label}</strong><span>${value}</span></li>`;
+      const fileValue = (path) => path
+        ? `<a class="song-link" href="${escapeHtml(path)}" target="_blank" rel="noopener noreferrer">${escapeHtml(path)}</a>`
+        : '—';
+      list.innerHTML = [
+        item('Task ID', escapeHtml(data.task_id || '—')),
+        item('Type', escapeHtml(data.type || '—')),
+        item('Status', escapeHtml(data.status || '—')),
+        item('Source', escapeHtml(data.source || '—')),
+        item('Length', fmtDuration(data.duration_seconds)),
+        item('BPM', typeof data.bpm === 'number' ? data.bpm.toFixed(2) : '—'),
+        item('Key', escapeHtml(data.key || '—')),
+        item('Created', fmtDate(data.created_at)),
+        item('Started', fmtDate(data.started_at)),
+        item('Completed', fmtDate(data.completed_at)),
+        item('Original File', fileValue(data.file_path)),
+        item('Normalized WAV', fileValue(data.normalized_path)),
+      ].join('');
+      pre.textContent = JSON.stringify(data, null, 2);
+    } catch (_) {
+      showAlert(alert, '❌ Failed to load task details.', 'error');
+    }
+  }
 
   // ── File Upload ──────────────────────────────────────────────────────────
   const dropzone  = document.getElementById('dropzone');
@@ -679,8 +827,18 @@
   setInterval(checkApiHealth, 30000);
 
   // ── Init ──────────────────────────────────────────────────────────────────
-  render();
-  maybeStartPolling();
+  const detailTaskId = new URLSearchParams(window.location.search).get('task_id');
+  if (detailTaskId) {
+    document.getElementById('dashboard-view').style.display = 'none';
+    document.getElementById('song-detail-view').style.display = '';
+    loadSongDetail(detailTaskId);
+  } else {
+    render();
+    maybeStartPolling();
+    renderCompletedTasks();
+    refreshCompletedTasks();
+    startCompletedPolling();
+  }
 </script>
 </body>
 </html>

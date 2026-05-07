@@ -49,7 +49,7 @@ def test_pending_url_task_is_downloaded_and_analyzed(data_dir):
     task_id, task_file = _make_task(data_dir)
     uploads_dir = data_dir / 'uploads'
     fake_output = uploads_dir / f'{task_id}.mp3'
-    fake_analysis = {'bpm': 120.0, 'key': 'C major'}
+    fake_analysis = {'bpm': 120.0, 'key': 'C major', 'duration_seconds': 180.2}
 
     with patch('worker_loop.download_youtube', return_value=fake_output) as mock_dl, \
          patch('worker_loop.normalize_audio') as mock_norm, \
@@ -64,6 +64,7 @@ def test_pending_url_task_is_downloaded_and_analyzed(data_dir):
     assert task['file_path'] == str(fake_output)
     assert task['bpm'] == 120.0
     assert task['key'] == 'C major'
+    assert task['duration_seconds'] == 180.2
     assert 'normalized_path' in task
     assert 'completed_at' in task
 
@@ -130,7 +131,7 @@ def test_upload_type_task_with_file_path_is_normalized_and_analyzed(data_dir):
         'file_path': str(fake_file),
         'status': 'pending',
     }))
-    fake_analysis = {'bpm': 100.0, 'key': 'D minor'}
+    fake_analysis = {'bpm': 100.0, 'key': 'D minor', 'duration_seconds': 240.0}
 
     with patch('worker_loop.download_youtube') as mock_dl, \
          patch('worker_loop.normalize_audio') as mock_norm, \
@@ -145,6 +146,7 @@ def test_upload_type_task_with_file_path_is_normalized_and_analyzed(data_dir):
     assert task['status'] == 'done'
     assert task['bpm'] == 100.0
     assert task['key'] == 'D minor'
+    assert task['duration_seconds'] == 240.0
     assert 'normalized_path' in task
 
 

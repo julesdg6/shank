@@ -102,7 +102,7 @@ def test_normalize_audio_raises_on_ffmpeg_failure(tmp_path, monkeypatch):
 def test_pending_upload_task_is_normalized(data_dir):
     """process_pending_tasks must normalize and analyze a pending upload task and mark it done."""
     task, task_file = _make_upload_task(data_dir)
-    fake_analysis = {'bpm': 128.0, 'key': 'A minor'}
+    fake_analysis = {'bpm': 128.0, 'key': 'A minor', 'duration_seconds': 95.75}
 
     with patch('worker_loop.normalize_audio') as mock_norm, \
          patch('worker_loop.analyze_audio', return_value=fake_analysis):
@@ -115,6 +115,7 @@ def test_pending_upload_task_is_normalized(data_dir):
     assert updated['normalized_path'].endswith('.wav')
     assert updated['bpm'] == 128.0
     assert updated['key'] == 'A minor'
+    assert updated['duration_seconds'] == 95.75
     mock_norm.assert_called_once()
 
 

@@ -287,6 +287,7 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                 'normalized_path': normalized_path,
                 'bpm': results['bpm'],
                 'key': results['key'],
+                **({'duration_seconds': results.get('duration_seconds')} if results.get('duration_seconds') is not None else {}),
                 'completed_at': datetime.now(timezone.utc).isoformat(),
             })
             log.info('Task %s done: bpm=%s key=%s', task_id, results['bpm'], results['key'])

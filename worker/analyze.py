@@ -51,14 +51,16 @@ def analyze_audio(file_path: str) -> dict:
     Returns
     -------
     dict with keys:
-        ``bpm``  – estimated beats-per-minute (float, rounded to 2 decimal places).
-        ``key``  – detected musical key string, e.g. ``'A minor'``.
+        ``bpm``               – estimated beats-per-minute (float, rounded to 2 decimal places).
+        ``key``               – detected musical key string, e.g. ``'A minor'``.
+        ``duration_seconds``  – audio duration in seconds (float, rounded to 2 decimal places).
     """
     y, sr = librosa.load(file_path, mono=True)
 
     tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
     bpm = round(float(np.atleast_1d(tempo)[0]), 2)
+    duration_seconds = round(float(librosa.get_duration(y=y, sr=sr)), 2)
 
     key = _detect_key(y, sr)
 
-    return {'bpm': bpm, 'key': key}
+    return {'bpm': bpm, 'key': key, 'duration_seconds': duration_seconds}
