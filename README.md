@@ -137,9 +137,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-07T12:14:34Z
-- Latest commit: `e7bd274`
-- Commit message: Merge pull request #21 from julesdg6/copilot/add-workflow-update-readme  [WIP] Add workflow to update README.md on commits
+- Last automated update: 2026-05-07T23:57:09Z
+- Latest commit: `2b2abed`
+- Commit message: Merge pull request #23 from julesdg6/copilot/add-processed-songs-list  Add completed-song discovery API and Song Analysis UI for finished tasks
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
