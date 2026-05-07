@@ -135,9 +135,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: pending first workflow run
-- Latest commit: n/a
-- Commit message: n/a
+- Last automated update: 2026-05-07T12:14:34Z
+- Latest commit: `e7bd274`
+- Commit message: Merge pull request #21 from julesdg6/copilot/add-workflow-update-readme  [WIP] Add workflow to update README.md on commits
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
