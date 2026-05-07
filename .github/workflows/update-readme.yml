@@ -1,0 +1,71 @@
+name: Update README
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-readme:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Update README metadata
+        run: |
+          python - <<'PY'
+          import html
+          import json
+          import os
+          import re
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          readme_path = Path("README.md")
+          text = readme_path.read_text()
+          event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+          head_commit = event.get("head_commit") or {}
+          commit_sha = os.environ["GITHUB_SHA"][:7]
+          commit_message = head_commit.get("message", "Manual workflow dispatch").strip()
+          commit_message = " ".join(commit_message.splitlines()) or "Manual workflow dispatch"
+          commit_message = html.escape(commit_message, quote=False)
+          updated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+
+          replacement = "\n".join(
+              [
+                  "<!-- readme-update:start -->",
+                  f"- Last automated update: {updated_at}",
+                  f"- Latest commit: `{commit_sha}`",
+                  f"- Commit message: {commit_message}",
+                  "<!-- readme-update:end -->",
+              ]
+          )
+
+          text = re.sub(
+              r"<!-- readme-update:start -->.*?<!-- readme-update:end -->",
+              replacement,
+              text,
+              flags=re.DOTALL,
+          )
+          readme_path.write_text(text)
+          PY
+
+      - name: Commit README changes
+        run: |
+          if git diff --quiet -- README.md; then
+            echo "README.md is already up to date."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git commit -m "docs: update README metadata [skip readme-update]"
+          git push
