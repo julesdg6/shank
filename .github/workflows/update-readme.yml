@@ -33,7 +33,7 @@ jobs:
           event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
           head_commit = event.get("head_commit") or {}
           fallback_message = "Manual workflow dispatch"
-          commit_sha = os.environ["GITHUB_SHA"][:7]
+          commit_sha = os.environ.get("GITHUB_SHA", "manual")[:7]
           commit_message = head_commit.get("message", fallback_message).strip()
           commit_message = " ".join(commit_message.splitlines()) or fallback_message
           commit_message = html.escape(commit_message, quote=False)
