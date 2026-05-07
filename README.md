@@ -130,6 +130,16 @@ Environment variables (set in `.env` or `docker-compose.yml`):
 - [ ] GitHub Repository/Issue automation
 - [ ] Final Deployment & Documentation
 
+## ⚖️ Legal Note
+This project is for research and personal use. Ensure you have the rights to any audio content you process.
+
+## 🤖 Automated README Updates
+<!-- readme-update:start -->
+- Last automated update: pending first workflow run
+- Latest commit: n/a
+- Commit message: n/a
+<!-- readme-update:end -->
+
 ## 🎚 Optional ACE-Step Stem Separation
 To enable stem separation in the worker (vocals, drums, bass, other), set `ACE_STEP_API_URL` in your environment:
 
