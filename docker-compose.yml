@@ -1,19 +1,11 @@
 services:
-  shank-api:
-    build: ./api
+  shank:
+    build: .
     ports:
       - "8088:8080"
     environment:
       - DATA_DIR=/srv/shank/data
-    volumes:
-      - ./data:/srv/shank/data
-    networks:
-      - shank-net
-
-  shank-worker:
-    build: ./worker
-    environment:
-      - DATA_DIR=/srv/shank/data
+      - POLL_INTERVAL=10
       - ACE_STEP_API_URL=${ACE_STEP_API_URL:-}
       - ACE_STEP_API_KEY=${ACE_STEP_API_KEY:-}
       - ACE_STEP_STEMS=${ACE_STEP_STEMS:-vocals,drums,bass,other}
