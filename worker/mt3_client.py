@@ -3,6 +3,7 @@ import base64
 import json
 import re
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -90,5 +91,7 @@ def transcribe_with_service(
     warnings = payload.get('warnings')
     if isinstance(warnings, list):
         result['warnings'] = [str(w) for w in warnings]
+
+    result['completed_at'] = datetime.now(timezone.utc).isoformat()
 
     return result
