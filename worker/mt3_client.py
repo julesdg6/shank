@@ -39,7 +39,7 @@ def _decode_midi_bytes(payload: dict[str, Any]) -> bytes | None:
 
 def _note_stats(notes: list[dict[str, Any]]) -> dict[str, Any]:
     pitches = [
-        int(note.get('pitch'))
+        int(round(float(note.get('pitch'))))
         for note in notes
         if isinstance(note.get('pitch'), (int, float))
     ]
@@ -125,7 +125,7 @@ def transcribe_with_service(
         notes_file.write_text(json.dumps(notes, indent=2))
         result['notes_path'] = str(notes_file)
         if isinstance(notes, list):
-            stats = _note_stats([note for note in notes if isinstance(note, dict)])
+            stats = _note_stats(notes)
             result['note_count'] = stats['note_count']
             result['pitch_range'] = stats['pitch_range']
             result['duration_seconds'] = stats['duration_seconds']

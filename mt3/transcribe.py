@@ -226,7 +226,7 @@ def _decode_midi(payload: dict[str, Any]) -> bytes | None:
 
 def _compute_note_stats(notes: list) -> dict[str, Any]:
     pitches = [
-        int(note.get('pitch'))
+        int(round(float(note.get('pitch'))))
         for note in notes
         if isinstance(note, dict) and isinstance(note.get('pitch'), (int, float))
     ]

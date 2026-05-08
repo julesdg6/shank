@@ -609,8 +609,8 @@ def test_transcribe_with_service_includes_note_stats(tmp_path):
         'midi_base64': __import__('base64').b64encode(b'MThd').decode(),
         'model': 'multi_instrument',
         'notes': [
-            {'pitch': 48, 'start': 0.0, 'end': 0.5, 'program': 32},
-            {'pitch': 72, 'start': 1.0, 'end': 2.5, 'program': 40},
+            {'pitch': 48, 'start': 1.0, 'end': 1.5, 'program': 32},
+            {'pitch': 72, 'start': 2.0, 'end': 3.5, 'program': 40},
         ],
     }
 

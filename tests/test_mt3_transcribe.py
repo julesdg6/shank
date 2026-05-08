@@ -160,7 +160,7 @@ def test_transcribe_calls_http_service(tmp_path):
         'status': 'completed',
         'model': 'svc_model',
         'midi_base64': empty_midi_b64,
-        'notes': [{'pitch': 60, 'start': 0.0, 'end': 1.0, 'program': 5}],
+        'notes': [{'pitch': 60, 'start': 1.0, 'end': 4.0, 'program': 5}],
         'warnings': [],
     }
 
@@ -178,7 +178,7 @@ def test_transcribe_calls_http_service(tmp_path):
     assert result['model'] == 'svc_model'
     assert result['note_count'] == 1
     assert result['pitch_range'] == {'min': 60, 'max': 60}
-    assert result['duration_seconds'] == 1.0
+    assert result['duration_seconds'] == 3.0
     assert result['program_count'] == 1
 
 
