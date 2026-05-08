@@ -149,9 +149,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-08T08:41:29Z
-- Latest commit: `47fe68f`
-- Commit message: Merge pull request #39 from julesdg6/copilot/implement-mt3-transcription-wrapper  Add mt3/transcribe.py standalone MT3 transcription wrapper
+- Last automated update: 2026-05-08T09:32:22Z
+- Latest commit: `2d7eba7`
+- Commit message: Merge pull request #40 from julesdg6/copilot/add-mt3-worker-integration  Wire SHANK worker to call MT3 after normalization
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
