@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 import uuid
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -177,15 +178,22 @@ def test_pending_upload_task_records_ace_step_stems_when_enabled(data_dir, monke
     monkeypatch.setenv('ACE_STEP_API_URL', 'http://ace-step:8001')
     importlib.reload(worker_loop)
     task, task_file = _make_upload_task(data_dir)
+    vocals = data_dir / 'stems' / 'vocals.wav'
+    drums = data_dir / 'stems' / 'drums.wav'
+    bass = data_dir / 'stems' / 'bass.wav'
+    other = data_dir / 'stems' / 'other.wav'
+    for stem_file in (vocals, drums, bass, other):
+        stem_file.parent.mkdir(parents=True, exist_ok=True)
+        stem_file.write_bytes(b'fake-wav')
 
     with patch('worker_loop.normalize_audio'), \
          patch('worker_loop.separate_stems_with_ace_step', return_value={
              'task_id': 'ace-task-1',
              'tracks': {
-                 'vocals': '/v1/audio?path=/tmp/vocals.wav',
-                 'drums': '/v1/audio?path=/tmp/drums.wav',
-                 'bass': '/v1/audio?path=/tmp/bass.wav',
-                 'other': '/v1/audio?path=/tmp/other.wav',
+                 'vocals': str(vocals),
+                 'drums': str(drums),
+                 'bass': str(bass),
+                 'other': str(other),
              },
          }), \
          patch('worker_loop.analyze_audio', return_value={'bpm': 128.0, 'key': 'A minor'}):
@@ -246,6 +254,67 @@ def test_pending_upload_task_records_mt3_results_when_enabled(data_dir, monkeypa
     assert updated['status'] == 'done'
     assert updated['mt3']['status'] == 'completed'
     assert updated['mt3']['full_mix']['midi_path'].endswith('.mid')
+
+
+def test_pending_upload_task_caches_ace_step_url_stems_for_mt3(data_dir, monkeypatch):
+    """Ace-step URL stems should be downloaded to local cache paths before MT3."""
+    monkeypatch.setenv('ACE_STEP_API_URL', 'http://ace-step:8001')
+    monkeypatch.setenv('MT3_ENABLED', 'true')
+    monkeypatch.setenv('MT3_SERVICE_URL', 'http://shank-mt3:8001')
+    monkeypatch.setenv('ACE_STEP_STEMS', 'vocals,drums')
+    importlib.reload(worker_loop)
+    task, task_file = _make_upload_task(data_dir)
+    task_id = task['task_id']
+
+    class _FakeResponse:
+        def __init__(self, payload: bytes):
+            self._buf = BytesIO(payload)
+
+        def read(self, size=-1):
+            return self._buf.read(size)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    with patch('worker_loop.normalize_audio'), \
+         patch('worker_loop.separate_stems_with_ace_step', return_value={
+             'task_id': 'ace-task-1',
+             'tracks': {
+                 'vocals': '/v1/audio?path=/tmp/vocals.wav',
+                 'drums': 'http://ace-step:8001/v1/audio?path=/tmp/drums.wav',
+                 'bass': '/v1/audio?path=/tmp/bass.wav',
+             },
+         }), \
+         patch('worker_loop.urllib.request.urlopen', side_effect=[
+             _FakeResponse(b'vocals-wav-bytes'),
+             _FakeResponse(b'drums-wav-bytes'),
+         ]) as mock_urlopen, \
+         patch('worker_loop.run_mt3_transcription', return_value={
+             'enabled': True,
+             'status': 'completed',
+             'model': 'mt3',
+             'output_paths': [],
+             'warnings': [],
+             'errors': [],
+             'full_mix': {'midi_path': '/srv/shank/data/mt3/song.mid', 'model': 'mt3'},
+             'stems': {},
+         }) as mock_run_mt3, \
+         patch('worker_loop.analyze_audio', return_value={'bpm': 128.0, 'key': 'A minor'}):
+        count = worker_loop.process_pending_tasks()
+
+    assert count == 1
+    assert mock_urlopen.call_count == 2
+    stems_arg = mock_run_mt3.call_args.kwargs['stems']
+    assert set(stems_arg.keys()) == {'vocals', 'drums'}
+    assert stems_arg['vocals'].startswith(str(data_dir / 'stems' / task_id))
+    assert stems_arg['drums'].startswith(str(data_dir / 'stems' / task_id))
+    assert Path(stems_arg['vocals']).read_bytes() == b'vocals-wav-bytes'
+    assert Path(stems_arg['drums']).read_bytes() == b'drums-wav-bytes'
+    updated = json.loads(task_file.read_text())
+    assert set(updated['stems'].keys()) == {'vocals', 'drums'}
 
 
 def test_mt3_failure_is_non_fatal_by_default(data_dir, monkeypatch):
@@ -396,6 +465,106 @@ def test_run_mt3_transcription_no_error_field_on_success(tmp_path, monkeypatch):
     assert 'error' not in result
 
 
+def test_run_mt3_transcription_uses_only_configured_stems(tmp_path, monkeypatch):
+    """run_mt3_transcription should process only configured stem names."""
+    monkeypatch.setenv('MT3_ENABLED', 'true')
+    monkeypatch.setenv('MT3_SERVICE_URL', 'http://shank-mt3:8001')
+    monkeypatch.setenv('ACE_STEP_STEMS', 'vocals,drums')
+    monkeypatch.setenv('DATA_DIR', str(tmp_path))
+    importlib.reload(worker_loop)
+
+    task_id = str(uuid.uuid4())
+    sources_seen: list[str] = []
+
+    def _fake_transcribe(path, _task_id, source_name='full_mix'):
+        sources_seen.append(source_name)
+        return {
+            'source': source_name,
+            'model': 'multi_instrument',
+            'midi_path': f'/tmp/{source_name}.mid',
+            'completed_at': '2026-01-01T00:00:00+00:00',
+        }
+
+    with patch('worker_loop.transcribe_with_mt3', side_effect=_fake_transcribe):
+        result = worker_loop.run_mt3_transcription(task_id, '/tmp/audio.wav', stems={
+            'vocals': '/tmp/vocals.wav',
+            'drums': '/tmp/drums.wav',
+            'bass': '/tmp/bass.wav',
+        })
+
+    assert result['status'] == 'completed'
+    assert sources_seen == ['full_mix', 'vocals', 'drums']
+    assert set(result['stems'].keys()) == {'vocals', 'drums'}
+
+
+def test_resolve_ace_step_stem_file_does_not_send_auth_to_third_party(tmp_path, monkeypatch):
+    """Authorization headers should only be sent to the configured Ace-Step host."""
+    monkeypatch.setenv('DATA_DIR', str(tmp_path))
+    monkeypatch.setenv('ACE_STEP_API_URL', 'http://ace-step:8001')
+    monkeypatch.setenv('ACE_STEP_API_KEY', 'super-secret')
+    importlib.reload(worker_loop)
+
+    class _FakeResponse:
+        def __init__(self):
+            self._sent = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, size=-1):
+            if not self._sent:
+                self._sent = True
+                return b'abc'
+            return b''
+
+    seen_auth_headers: list[str | None] = []
+
+    def _fake_urlopen(request, timeout=60):
+        seen_auth_headers.append(request.headers.get('Authorization'))
+        return _FakeResponse()
+
+    task_id = str(uuid.uuid4())
+    with patch('worker_loop.urllib.request.urlopen', side_effect=_fake_urlopen):
+        worker_loop._resolve_ace_step_stem_file(task_id, 'vocals', 'http://example.com/vocals.wav')
+
+    assert seen_auth_headers == [None]
+
+
+def test_resolve_ace_step_stem_file_rejects_oversized_download(tmp_path, monkeypatch):
+    """Stem download should fail when the response exceeds ACE_STEP_MAX_DOWNLOAD_BYTES."""
+    monkeypatch.setenv('DATA_DIR', str(tmp_path))
+    monkeypatch.setenv('ACE_STEP_API_URL', 'http://ace-step:8001')
+    monkeypatch.setenv('ACE_STEP_MAX_DOWNLOAD_BYTES', '4')
+    importlib.reload(worker_loop)
+
+    class _FakeResponse:
+        def __init__(self):
+            self._chunks = [b'ab', b'cde', b'']
+            self._idx = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, size=-1):
+            if self._idx >= len(self._chunks):
+                return b''
+            chunk = self._chunks[self._idx]
+            self._idx += 1
+            return chunk
+
+    task_id = str(uuid.uuid4())
+    with patch('worker_loop.urllib.request.urlopen', return_value=_FakeResponse()):
+        with pytest.raises(RuntimeError, match='exceeded 4 bytes'):
+            worker_loop._resolve_ace_step_stem_file(task_id, 'vocals', 'http://ace-step:8001/vocals.wav')
+    assert not (tmp_path / 'stems' / task_id / 'vocals.wav').exists()
+
+
 def test_full_mix_result_contains_completed_at(tmp_path):
     """transcribe_with_service should include completed_at in the result."""
     import mt3_client
@@ -426,4 +595,3 @@ def test_full_mix_result_contains_completed_at(tmp_path):
     ts = datetime.fromisoformat(result['completed_at'])
     assert ts.tzinfo is not None
     assert abs((ts - datetime.now(timezone.utc)).total_seconds()) < 5
-
