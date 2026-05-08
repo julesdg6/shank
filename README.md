@@ -149,9 +149,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-08T11:19:55Z
-- Latest commit: `62e4fe6`
-- Commit message: Merge pull request #41 from julesdg6/copilot/add-api-endpoints-mt3-results  Add task artifact discovery/download endpoints for MT3 outputs with DATA_DIR-safe file serving
+- Last automated update: 2026-05-08T11:57:23Z
+- Latest commit: `8ff6b9e`
+- Commit message: Merge pull request #42 from julesdg6/copilot/support-mt3-transcription-ace-step-stems  Support MT3 transcription for Ace-Step stems via local stem resolution and caching
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
