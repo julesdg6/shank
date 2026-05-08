@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin, urlparse
 
 from analyze import analyze_audio
 from downloader import download_youtube
@@ -46,12 +47,14 @@ WAV_SAMPLE_RATE = '44100'
 WAV_CHANNELS = '2'
 WAV_CODEC = 'pcm_s16le'
 MT3_OUTPUTS_DIR = DATA_DIR / 'mt3'
+STEMS_CACHE_DIR = DATA_DIR / 'stems'
 
 
 def _ensure_dirs() -> None:
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     TASKS_DIR.mkdir(parents=True, exist_ok=True)
     NORMALIZED_DIR.mkdir(parents=True, exist_ok=True)
+    STEMS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     if MT3_ENABLED:
         MT3_OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -135,6 +138,58 @@ def _extract_track_files(data: Any) -> dict[str, str]:
 
     collect(data)
     return tracks
+
+
+def _resolve_ace_step_stem_file(task_id: str, stem_name: str, stem_ref: str) -> str:
+    """Return a local file path for an Ace-step stem reference (path or URL)."""
+    parsed = urlparse(stem_ref)
+    scheme = parsed.scheme.lower()
+    if not scheme:
+        local_candidate = Path(stem_ref)
+        if local_candidate.exists():
+            return str(local_candidate)
+        if stem_ref.startswith('/'):
+            stem_ref = urljoin(f'{ACE_STEP_API_URL}/', stem_ref.lstrip('/'))
+            parsed = urlparse(stem_ref)
+            scheme = parsed.scheme.lower()
+    if scheme == 'file':
+        local_candidate = Path(parsed.path)
+        if local_candidate.exists():
+            return str(local_candidate)
+        raise RuntimeError(f'Ace-step stem for {stem_name} is not accessible: {stem_ref}')
+
+    if scheme not in ('http', 'https'):
+        raise RuntimeError(f'Ace-step stem for {stem_name} is not accessible: {stem_ref}')
+
+    ext = Path(parsed.path).suffix or '.wav'
+    cache_path = STEMS_CACHE_DIR / task_id / f'{stem_name}{ext}'
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    request = urllib.request.Request(
+        stem_ref,
+        headers=({'Authorization': f'Bearer {ACE_STEP_API_KEY}'} if ACE_STEP_API_KEY else {}),
+    )
+    with urllib.request.urlopen(request, timeout=60) as response:
+        cache_path.write_bytes(response.read())
+    return str(cache_path)
+
+
+def _prepare_ace_step_stems_for_mt3(task_id: str, tracks: dict[str, str] | None) -> dict[str, str]:
+    """Return local file paths for configured Ace-step stems."""
+    if not tracks:
+        return {}
+
+    normalized = {
+        stem_name.strip().lower(): stem_ref
+        for stem_name, stem_ref in tracks.items()
+        if isinstance(stem_name, str) and isinstance(stem_ref, str)
+    }
+    prepared: dict[str, str] = {}
+    for configured_stem in ACE_STEP_STEMS:
+        stem_ref = normalized.get(configured_stem.lower())
+        if not stem_ref:
+            continue
+        prepared[configured_stem] = _resolve_ace_step_stem_file(task_id, configured_stem, stem_ref)
+    return prepared
 
 
 def separate_stems_with_ace_step(src_audio_path: str) -> dict:
@@ -227,12 +282,15 @@ def run_mt3_transcription(task_id: str, normalized_path: str, stems: dict[str, s
 
     if stems:
         if MT3_TRANSCRIBE_STEMS:
-            for stem_name, stem_path in stems.items():
+            for configured_stem in ACE_STEP_STEMS:
+                stem_path = stems.get(configured_stem)
+                if not stem_path:
+                    continue
                 try:
-                    result['stems'][stem_name] = transcribe_one(stem_name, stem_path)
+                    result['stems'][configured_stem] = transcribe_one(configured_stem, stem_path)
                 except Exception as exc:
-                    log.exception('Task %s MT3 stem transcription failed for %s: %s', task_id, stem_name, exc)
-                    result['errors'].append(f'{stem_name}: {exc}')
+                    log.exception('Task %s MT3 stem transcription failed for %s: %s', task_id, configured_stem, exc)
+                    result['errors'].append(f'{configured_stem}: {exc}')
         else:
             result['warnings'].append('Stem transcription skipped because MT3_TRANSCRIBE_STEMS is disabled')
 
@@ -354,8 +412,8 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                 stem_data = separate_stems_with_ace_step(normalized_path)
                 task_updates = {'ace_step_task_id': stem_data['task_id']}
                 if stem_data.get('tracks'):
-                    task_updates['stems'] = stem_data['tracks']
-                    stem_tracks = stem_data['tracks']
+                    stem_tracks = _prepare_ace_step_stems_for_mt3(task_id, stem_data['tracks'])
+                    task_updates['stems'] = stem_tracks
                 _update_task(task_file, task_updates)
             except Exception as exc:
                 log.exception('Task %s stem separation failed: %s', task_id, exc)
