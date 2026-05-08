@@ -149,9 +149,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-08T14:21:51Z
-- Latest commit: `0ae7a32`
-- Commit message: Merge pull request #43 from julesdg6/copilot/update-ui-show-download-mt3-midi-outputs  Expose MT3 outputs and note stats in task results UI
+- Last automated update: 2026-05-08T14:44:59Z
+- Latest commit: `862ca18`
+- Commit message: Merge pull request #44 from julesdg6/copilot/add-tests-for-mt3-integration  Add tests for MT3 integration plumbing
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
