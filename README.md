@@ -105,7 +105,7 @@ Environment variables (set in `.env` or `docker-compose.yml`):
 | `ACE_STEP_API_KEY` | *(empty)* | Optional Bearer token for the ACE-Step API |
 | `ACE_STEP_STEMS` | `vocals,drums,bass,other` | Comma-separated list of stems to request |
 | `MT3_ENABLED` | `true` | Enable MT3 transcription in worker |
-| `MT3_SERVICE_URL` | `http://shank-mt3:8090` | Base URL for the MT3 FastAPI service inside the unified container |
+| `MT3_SERVICE_URL` | `http://127.0.0.1:8090` | Base URL for the MT3 FastAPI service inside the unified container |
 | `MT3_MODEL` | `multi_instrument` | Requested model identifier to send to MT3 service |
 | `MT3_TIMEOUT` | `900` | MT3 HTTP timeout in seconds |
 | `MT3_TRANSCRIBE_STEMS` | `true` | Also transcribe Ace-Step stems when present |
