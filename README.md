@@ -149,9 +149,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-08T01:50:51Z
-- Latest commit: `9d2a0c5`
-- Commit message: Merge pull request #36 from julesdg6/copilot/research-mt3-runtime-integration  Document MT3 runtime requirements and integration strategy for SHANK
+- Last automated update: 2026-05-08T02:03:36Z
+- Latest commit: `7267d93`
+- Commit message: Merge pull request #37 from julesdg6/copilot/integrate-magenta-mt3-transcription  Add optional MT3 transcription pipeline (worker + API/UI + compose profiles) without impacting core BPM/key flow
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
