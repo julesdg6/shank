@@ -166,14 +166,18 @@ def _resolve_ace_step_stem_file(task_id: str, stem_name: str, stem_ref: str) -> 
 
     ext = Path(parsed.path).suffix or '.wav'
     cache_path = STEMS_CACHE_DIR / task_id / f'{stem_name}{ext}'
+    if cache_path.exists():
+        return str(cache_path)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    request = urllib.request.Request(
-        stem_ref,
-        headers=({'Authorization': f'Bearer {ACE_STEP_API_KEY}'} if ACE_STEP_API_KEY else {}),
-    )
+    request_kwargs = {'headers': {'Authorization': f'Bearer {ACE_STEP_API_KEY}'}} if ACE_STEP_API_KEY else {}
+    request = urllib.request.Request(stem_ref, **request_kwargs)
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            cache_path.write_bytes(response.read())
+        with urllib.request.urlopen(request, timeout=60) as response, cache_path.open('wb') as output_file:
+            while True:
+                chunk = response.read(64 * 1024)
+                if not chunk:
+                    break
+                output_file.write(chunk)
     except Exception as exc:
         raise RuntimeError(f'Failed to download Ace-Step stem {stem_name} from {stem_ref}: {exc}') from exc
     return str(cache_path)

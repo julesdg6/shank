@@ -270,8 +270,8 @@ def test_pending_upload_task_caches_ace_step_url_stems_for_mt3(data_dir, monkeyp
         def __init__(self, payload: bytes):
             self._buf = BytesIO(payload)
 
-        def read(self):
-            return self._buf.read()
+        def read(self, size=-1):
+            return self._buf.read(size)
 
         def __enter__(self):
             return self
