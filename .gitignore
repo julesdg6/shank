@@ -9,4 +9,5 @@ data/
 *.json
 *.csv
 *.md
+!docs/*.md
 !docs/**/*.md
