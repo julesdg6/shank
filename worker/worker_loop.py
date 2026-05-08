@@ -52,7 +52,8 @@ def _ensure_dirs() -> None:
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     TASKS_DIR.mkdir(parents=True, exist_ok=True)
     NORMALIZED_DIR.mkdir(parents=True, exist_ok=True)
-    MT3_OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+    if MT3_ENABLED:
+        MT3_OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _read_task(task_file: Path) -> dict | None:
@@ -180,7 +181,6 @@ def run_mt3_transcription(task_id: str, normalized_path: str, stems: dict[str, s
         'enabled': MT3_ENABLED,
         'status': 'disabled',
         'model': MT3_MODEL,
-        'service_url': MT3_SERVICE_URL or None,
         'output_paths': [],
         'warnings': [],
         'errors': [],
