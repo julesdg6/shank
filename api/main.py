@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
@@ -30,6 +30,40 @@ def _write_task(task: dict) -> None:
     safe_task_id = str(uuid.UUID(task['task_id']))
     task_file = TASKS_DIR / f'{safe_task_id}.json'
     task_file.write_text(json.dumps(task, indent=2))
+
+
+def _safe_task_file(task_id: str) -> Path:
+    try:
+        safe_task_id = str(uuid.UUID(task_id))
+    except ValueError:
+        raise HTTPException(status_code=404, detail='Task not found')
+    _ensure_dirs()
+    return TASKS_DIR / f'{safe_task_id}.json'
+
+
+def _load_task(task_id: str) -> dict:
+    task_file = _safe_task_file(task_id)
+    if not task_file.exists():
+        raise HTTPException(status_code=404, detail='Task not found')
+    try:
+        return json.loads(task_file.read_text())
+    except (OSError, json.JSONDecodeError):
+        raise HTTPException(status_code=500, detail='Task file is unreadable')
+
+
+def _resolve_data_path(path_value: str) -> Path | None:
+    base_dir = DATA_DIR.resolve()
+    candidate = Path(path_value)
+    if not candidate.is_absolute():
+        candidate = DATA_DIR / candidate
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(base_dir)
+    except ValueError:
+        return None
+    if not resolved.is_file():
+        return None
+    return resolved
 
 
 # ---------------------------------------------------------------------------
@@ -148,17 +182,52 @@ def list_completed_tasks():
 @app.get('/tasks/{task_id}')
 def get_task(task_id: str):
     """Return the current status of a queued task."""
-    # Parse the task_id as a UUID; this validates and produces a canonical,
-    # safe string that cannot contain path-traversal characters.
+    return _load_task(task_id)
+
+
+def _mt3_track(task: dict, track_name: str) -> dict | None:
+    mt3_data = task.get('mt3')
+    if not isinstance(mt3_data, dict):
+        return None
+    if track_name == 'full_mix':
+        track = mt3_data.get('full_mix')
+        return track if isinstance(track, dict) else None
+    stems = mt3_data.get('stems')
+    if isinstance(stems, dict):
+        track = stems.get(track_name)
+        return track if isinstance(track, dict) else None
+    return None
+
+
+@app.get('/tasks/{task_id}/mt3/midi/{track_name}')
+def download_mt3_midi(task_id: str, track_name: str):
+    """Download an MT3 MIDI artifact for full mix or a specific stem."""
+    task = _load_task(task_id)
+    track = _mt3_track(task, track_name)
+    midi_path = track.get('midi_path') if isinstance(track, dict) else None
+    if not isinstance(midi_path, str) or not midi_path:
+        raise HTTPException(status_code=404, detail='MT3 MIDI not found')
+    resolved = _resolve_data_path(midi_path)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail='MT3 MIDI not found')
+    return FileResponse(path=resolved, media_type='audio/midi', filename=resolved.name)
+
+
+@app.get('/tasks/{task_id}/mt3/notes/{track_name}')
+def get_mt3_notes(task_id: str, track_name: str):
+    """Return note metadata JSON for full mix or a specific stem."""
+    task = _load_task(task_id)
+    track = _mt3_track(task, track_name)
+    notes_path = track.get('notes_path') if isinstance(track, dict) else None
+    if not isinstance(notes_path, str) or not notes_path:
+        raise HTTPException(status_code=404, detail='MT3 note metadata not found')
+    resolved = _resolve_data_path(notes_path)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail='MT3 note metadata not found')
     try:
-        safe_task_id = str(uuid.UUID(task_id))
-    except ValueError:
-        raise HTTPException(status_code=404, detail='Task not found')
-    _ensure_dirs()
-    task_file = TASKS_DIR / f'{safe_task_id}.json'
-    if not task_file.exists():
-        raise HTTPException(status_code=404, detail='Task not found')
-    return json.loads(task_file.read_text())
+        return json.loads(resolved.read_text())
+    except (OSError, json.JSONDecodeError):
+        raise HTTPException(status_code=500, detail='MT3 note metadata is unreadable')
 
 
 # ---------------------------------------------------------------------------

@@ -21,3 +21,14 @@ def test_supervisord_runs_api_and_worker():
 
     assert '[program:api]' in text
     assert '[program:worker]' in text
+
+
+def test_compose_includes_optional_mt3_profiles():
+    compose = Path(__file__).resolve().parents[1] / 'docker-compose.yml'
+    text = compose.read_text()
+
+    assert 'shank-mt3:' in text
+    assert 'profiles: ["mt3"]' in text
+    assert 'shank-mt3-gpu:' in text
+    assert 'profiles: ["mt3-gpu"]' in text
+    assert 'gpus: all' in text

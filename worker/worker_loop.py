@@ -12,6 +12,7 @@ from typing import Any
 
 from analyze import analyze_audio
 from downloader import download_youtube
+from mt3_client import transcribe_with_service
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,17 +34,26 @@ ACE_STEP_STEMS = tuple(
 )
 ACE_STEP_POLL_INTERVAL = float(os.getenv('ACE_STEP_POLL_INTERVAL', '2'))
 ACE_STEP_TIMEOUT = int(os.getenv('ACE_STEP_TIMEOUT', '300'))
+MT3_ENABLED = os.getenv('MT3_ENABLED', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
+MT3_SERVICE_URL = os.getenv('MT3_SERVICE_URL', '').strip().rstrip('/')
+MT3_MODEL = os.getenv('MT3_MODEL', 'mt3').strip() or 'mt3'
+MT3_TIMEOUT = int(os.getenv('MT3_TIMEOUT', '300'))
+MT3_TRANSCRIBE_STEMS = os.getenv('MT3_TRANSCRIBE_STEMS', 'true').strip().lower() in ('1', 'true', 'yes', 'on')
+MT3_FAIL_TASK_ON_ERROR = os.getenv('MT3_FAIL_TASK_ON_ERROR', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
 
 # Standard WAV output format
 WAV_SAMPLE_RATE = '44100'
 WAV_CHANNELS = '2'
 WAV_CODEC = 'pcm_s16le'
+MT3_OUTPUTS_DIR = DATA_DIR / 'mt3'
 
 
 def _ensure_dirs() -> None:
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     TASKS_DIR.mkdir(parents=True, exist_ok=True)
     NORMALIZED_DIR.mkdir(parents=True, exist_ok=True)
+    if MT3_ENABLED:
+        MT3_OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _read_task(task_file: Path) -> dict | None:
@@ -165,6 +175,71 @@ def separate_stems_with_ace_step(src_audio_path: str) -> dict:
     raise RuntimeError('Ace-step stem separation timed out')
 
 
+def run_mt3_transcription(task_id: str, normalized_path: str, stems: dict[str, str] | None = None) -> dict:
+    """Run MT3 transcription (full mix first, then optional stems)."""
+    result: dict[str, Any] = {
+        'enabled': MT3_ENABLED,
+        'status': 'disabled',
+        'model': MT3_MODEL,
+        'output_paths': [],
+        'warnings': [],
+        'errors': [],
+        'full_mix': None,
+        'stems': {},
+    }
+
+    if not MT3_ENABLED:
+        return result
+    if not MT3_SERVICE_URL:
+        result['status'] = 'failed'
+        result['errors'].append('MT3 is enabled but MT3_SERVICE_URL is not configured')
+        return result
+
+    output_dir = MT3_OUTPUTS_DIR / task_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    def transcribe_one(source: str, audio_path: str) -> dict[str, Any]:
+        transcription = transcribe_with_service(
+            service_url=MT3_SERVICE_URL,
+            audio_path=audio_path,
+            output_dir=output_dir,
+            task_id=task_id,
+            model=MT3_MODEL,
+            source=source,
+            timeout=MT3_TIMEOUT,
+        )
+        if isinstance(transcription.get('midi_path'), str):
+            result['output_paths'].append(transcription['midi_path'])
+        if isinstance(transcription.get('warnings'), list):
+            result['warnings'].extend(str(w) for w in transcription['warnings'])
+        return transcription
+
+    try:
+        result['full_mix'] = transcribe_one('full_mix', normalized_path)
+    except Exception as exc:
+        log.exception('Task %s MT3 full-mix transcription failed: %s', task_id, exc)
+        result['errors'].append(f'full_mix: {exc}')
+
+    if stems:
+        if MT3_TRANSCRIBE_STEMS:
+            for stem_name, stem_path in stems.items():
+                try:
+                    result['stems'][stem_name] = transcribe_one(stem_name, stem_path)
+                except Exception as exc:
+                    log.exception('Task %s MT3 stem transcription failed for %s: %s', task_id, stem_name, exc)
+                    result['errors'].append(f'{stem_name}: {exc}')
+        else:
+            result['warnings'].append('Stem transcription skipped because MT3_TRANSCRIBE_STEMS is disabled')
+
+    if result['errors'] and result['output_paths']:
+        result['status'] = 'partial'
+    elif result['errors']:
+        result['status'] = 'failed'
+    else:
+        result['status'] = 'completed'
+    return result
+
+
 def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
     """Scan *tasks_dir* for pending tasks and process them.
 
@@ -264,12 +339,14 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
             })
             continue
 
+        stem_tracks: dict[str, str] | None = None
         if ACE_STEP_API_URL:
             try:
                 stem_data = separate_stems_with_ace_step(normalized_path)
                 task_updates = {'ace_step_task_id': stem_data['task_id']}
                 if stem_data.get('tracks'):
                     task_updates['stems'] = stem_data['tracks']
+                    stem_tracks = stem_data['tracks']
                 _update_task(task_file, task_updates)
             except Exception as exc:
                 log.exception('Task %s stem separation failed: %s', task_id, exc)
@@ -279,6 +356,18 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                     'completed_at': datetime.now(timezone.utc).isoformat(),
                 })
                 continue
+
+        mt3_result = run_mt3_transcription(task_id, normalized_path, stems=stem_tracks)
+        _update_task(task_file, {'mt3': mt3_result})
+        if MT3_FAIL_TASK_ON_ERROR and mt3_result.get('status') in ('failed', 'partial'):
+            error_msg = '; '.join(mt3_result.get('errors') or []) or 'MT3 transcription failed'
+            _update_task(task_file, {
+                'status': 'failed',
+                'error': error_msg,
+                'normalized_path': normalized_path,
+                'completed_at': datetime.now(timezone.utc).isoformat(),
+            })
+            continue
 
         try:
             results = analyze_audio(normalized_path)

@@ -217,3 +217,88 @@ def test_pending_upload_task_marks_failed_when_ace_step_fails(data_dir, monkeypa
     updated = json.loads(task_file.read_text())
     assert updated['status'] == 'failed'
     assert 'Ace-step unavailable' in updated['error']
+
+
+def test_pending_upload_task_records_mt3_results_when_enabled(data_dir, monkeypatch):
+    """When MT3 is enabled, transcription metadata should be persisted on the task."""
+    monkeypatch.setenv('MT3_ENABLED', 'true')
+    monkeypatch.setenv('MT3_SERVICE_URL', 'http://shank-mt3:8001')
+    importlib.reload(worker_loop)
+    task, task_file = _make_upload_task(data_dir)
+
+    fake_mt3 = {
+        'enabled': True,
+        'status': 'completed',
+        'model': 'mt3',
+        'output_paths': ['/srv/shank/data/mt3/song.mid'],
+        'warnings': [],
+        'errors': [],
+        'full_mix': {'midi_path': '/srv/shank/data/mt3/song.mid', 'model': 'mt3'},
+        'stems': {},
+    }
+    with patch('worker_loop.normalize_audio'), \
+         patch('worker_loop.run_mt3_transcription', return_value=fake_mt3), \
+         patch('worker_loop.analyze_audio', return_value={'bpm': 128.0, 'key': 'A minor'}):
+        count = worker_loop.process_pending_tasks()
+
+    assert count == 1
+    updated = json.loads(task_file.read_text())
+    assert updated['status'] == 'done'
+    assert updated['mt3']['status'] == 'completed'
+    assert updated['mt3']['full_mix']['midi_path'].endswith('.mid')
+
+
+def test_mt3_failure_is_non_fatal_by_default(data_dir, monkeypatch):
+    """MT3 errors should not fail the task unless strict mode is enabled."""
+    monkeypatch.setenv('MT3_ENABLED', 'true')
+    monkeypatch.setenv('MT3_SERVICE_URL', 'http://shank-mt3:8001')
+    monkeypatch.delenv('MT3_FAIL_TASK_ON_ERROR', raising=False)
+    importlib.reload(worker_loop)
+    task, task_file = _make_upload_task(data_dir)
+
+    with patch('worker_loop.normalize_audio'), \
+         patch('worker_loop.run_mt3_transcription', return_value={
+             'enabled': True,
+             'status': 'failed',
+             'model': 'mt3',
+             'output_paths': [],
+             'warnings': [],
+             'errors': ['full_mix: MT3 timeout'],
+             'full_mix': None,
+             'stems': {},
+         }), \
+         patch('worker_loop.analyze_audio', return_value={'bpm': 120.0, 'key': 'C major'}):
+        worker_loop.process_pending_tasks()
+
+    updated = json.loads(task_file.read_text())
+    assert updated['status'] == 'done'
+    assert updated['mt3']['status'] == 'failed'
+    assert 'MT3 timeout' in updated['mt3']['errors'][0]
+
+
+def test_mt3_failure_can_fail_task_when_strict_mode_enabled(data_dir, monkeypatch):
+    """Strict mode should mark task failed if MT3 fails."""
+    monkeypatch.setenv('MT3_ENABLED', 'true')
+    monkeypatch.setenv('MT3_SERVICE_URL', 'http://shank-mt3:8001')
+    monkeypatch.setenv('MT3_FAIL_TASK_ON_ERROR', 'true')
+    importlib.reload(worker_loop)
+    task, task_file = _make_upload_task(data_dir)
+
+    with patch('worker_loop.normalize_audio'), \
+         patch('worker_loop.run_mt3_transcription', return_value={
+             'enabled': True,
+             'status': 'failed',
+             'model': 'mt3',
+             'output_paths': [],
+             'warnings': [],
+             'errors': ['full_mix: bad model load'],
+             'full_mix': None,
+             'stems': {},
+         }), \
+         patch('worker_loop.analyze_audio') as mock_analyze:
+        worker_loop.process_pending_tasks()
+
+    mock_analyze.assert_not_called()
+    updated = json.loads(task_file.read_text())
+    assert updated['status'] == 'failed'
+    assert 'bad model load' in updated['error']
