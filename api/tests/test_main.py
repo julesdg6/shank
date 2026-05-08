@@ -279,3 +279,82 @@ def test_download_mt3_midi_rejects_path_outside_data_dir(client, tmp_path):
 
     response = client.get(f'/tasks/{task_id}/mt3/midi/full_mix')
     assert response.status_code == 404
+
+
+def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_path):
+    task_id = str(uuid.uuid4())
+    normalized = tmp_path / 'normalized' / f'{task_id}.wav'
+    midi_file = tmp_path / 'mt3' / task_id / 'full_mix.mid'
+    notes_file = tmp_path / 'mt3' / task_id / 'full_mix_notes.json'
+    stem_midi = tmp_path / 'mt3' / task_id / 'vocals.mid'
+
+    normalized.parent.mkdir(parents=True, exist_ok=True)
+    midi_file.parent.mkdir(parents=True, exist_ok=True)
+    normalized.write_bytes(b'RIFF' + b'\x00' * 36)
+    midi_file.write_bytes(b'MThd\x00\x00\x00\x06\x00\x00\x00\x01\x00`MTrk\x00\x00\x00\x04\x00\xff/\x00')
+    notes_file.write_text(json.dumps({'notes': []}))
+    stem_midi.write_bytes(b'MThd\x00\x00\x00\x06\x00\x00\x00\x01\x00`MTrk\x00\x00\x00\x04\x00\xff/\x00')
+
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'normalized_path': str(normalized),
+        'mt3': {
+            'status': 'completed',
+            'full_mix': {
+                'midi_path': str(midi_file),
+                'notes_path': str(notes_file),
+            },
+            'stems': {
+                'vocals': {'midi_path': str(stem_midi)},
+            },
+        },
+    }))
+
+    response = client.get(f'/tasks/{task_id}/artifacts')
+    assert response.status_code == 200
+    assert response.json() == {
+        'artifacts': ['midi', 'normalized_wav', 'notes_json', 'stem_vocals_midi'],
+    }
+
+
+def test_download_task_artifact_by_name(client, tmp_path):
+    task_id = str(uuid.uuid4())
+    normalized = tmp_path / 'normalized' / f'{task_id}.wav'
+    normalized.parent.mkdir(parents=True, exist_ok=True)
+    normalized.write_bytes(b'RIFF' + b'\x00' * 36)
+
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'normalized_path': str(normalized),
+    }))
+
+    response = client.get(f'/tasks/{task_id}/artifacts/normalized_wav')
+    assert response.status_code == 200
+    assert response.content.startswith(b'RIFF')
+
+
+def test_artifacts_endpoints_reject_outside_data_dir_paths(client, tmp_path):
+    task_id = str(uuid.uuid4())
+    outside = tmp_path.parent / 'outside.wav'
+    outside.write_bytes(b'RIFF' + b'\x00' * 36)
+
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'normalized_path': str(outside),
+    }))
+
+    list_response = client.get(f'/tasks/{task_id}/artifacts')
+    assert list_response.status_code == 200
+    assert list_response.json() == {'artifacts': []}
+
+    download_response = client.get(f'/tasks/{task_id}/artifacts/normalized_wav')
+    assert download_response.status_code == 404

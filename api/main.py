@@ -199,6 +199,64 @@ def _mt3_track(task: dict, track_name: str) -> dict | None:
     return None
 
 
+def _task_artifacts(task: dict) -> dict[str, Path]:
+    artifacts: dict[str, Path] = {}
+
+    normalized_path = task.get('normalized_path')
+    if isinstance(normalized_path, str) and normalized_path:
+        resolved = _resolve_data_path(normalized_path)
+        if resolved is not None:
+            artifacts['normalized_wav'] = resolved
+
+    mt3_data = task.get('mt3')
+    if isinstance(mt3_data, dict):
+        full_mix = mt3_data.get('full_mix')
+        if isinstance(full_mix, dict):
+            midi_path = full_mix.get('midi_path')
+            if isinstance(midi_path, str) and midi_path:
+                resolved = _resolve_data_path(midi_path)
+                if resolved is not None:
+                    artifacts['midi'] = resolved
+
+            notes_path = full_mix.get('notes_path')
+            if isinstance(notes_path, str) and notes_path:
+                resolved = _resolve_data_path(notes_path)
+                if resolved is not None:
+                    artifacts['notes_json'] = resolved
+
+        stems = mt3_data.get('stems')
+        if isinstance(stems, dict):
+            for stem_name, stem_data in stems.items():
+                if not isinstance(stem_name, str) or not isinstance(stem_data, dict):
+                    continue
+                midi_path = stem_data.get('midi_path')
+                if not isinstance(midi_path, str) or not midi_path:
+                    continue
+                resolved = _resolve_data_path(midi_path)
+                if resolved is None:
+                    continue
+                artifacts[f'stem_{stem_name}_midi'] = resolved
+
+    return artifacts
+
+
+@app.get('/tasks/{task_id}/artifacts')
+def list_task_artifacts(task_id: str):
+    task = _load_task(task_id)
+    artifacts = _task_artifacts(task)
+    return {'artifacts': sorted(artifacts.keys())}
+
+
+@app.get('/tasks/{task_id}/artifacts/{artifact_name}')
+def download_task_artifact(task_id: str, artifact_name: str):
+    task = _load_task(task_id)
+    artifacts = _task_artifacts(task)
+    artifact = artifacts.get(artifact_name)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail='Artifact not found')
+    return FileResponse(path=artifact, filename=artifact.name)
+
+
 @app.get('/tasks/{task_id}/mt3/midi/{track_name}')
 def download_mt3_midi(task_id: str, track_name: str):
     """Download an MT3 MIDI artifact for full mix or a specific stem."""
