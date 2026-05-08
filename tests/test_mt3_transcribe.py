@@ -100,6 +100,7 @@ def test_transcribe_returns_expected_keys(tmp_path):
     result = mt3_transcribe.transcribe(wav, output_dir=tmp_path / 'out', service_url='')
 
     for key in ('wav_path', 'midi_path', 'notes_path', 'note_count',
+                'pitch_range', 'duration_seconds', 'program_count',
                 'model', 'task_id', 'output_dir', 'transcribed_at', 'warnings'):
         assert key in result, f'Missing key: {key}'
 
@@ -159,7 +160,7 @@ def test_transcribe_calls_http_service(tmp_path):
         'status': 'completed',
         'model': 'svc_model',
         'midi_base64': empty_midi_b64,
-        'notes': [{'pitch': 60, 'start': 0.0, 'end': 1.0}],
+        'notes': [{'pitch': 60, 'start': 1.0, 'end': 4.0, 'program': 5}],
         'warnings': [],
     }
 
@@ -176,6 +177,9 @@ def test_transcribe_calls_http_service(tmp_path):
     )
     assert result['model'] == 'svc_model'
     assert result['note_count'] == 1
+    assert result['pitch_range'] == {'min': 60, 'max': 60}
+    assert result['duration_seconds'] == 3.0
+    assert result['program_count'] == 1
 
 
 def test_transcribe_service_warnings_forwarded(tmp_path):
