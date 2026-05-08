@@ -149,9 +149,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-08T02:03:36Z
-- Latest commit: `7267d93`
-- Commit message: Merge pull request #37 from julesdg6/copilot/integrate-magenta-mt3-transcription  Add optional MT3 transcription pipeline (worker + API/UI + compose profiles) without impacting core BPM/key flow
+- Last automated update: 2026-05-08T08:31:48Z
+- Latest commit: `7161496`
+- Commit message: Merge pull request #38 from julesdg6/copilot/add-mt3-service-container  [WIP] Add MT3 service container with FastAPI endpoints
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
