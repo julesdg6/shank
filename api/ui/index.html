@@ -698,6 +698,19 @@
         item('Normalized WAV', fileValue(data.normalized_path)),
       ].join('');
       if (mt3) {
+        const mt3TrackStats = (track) => {
+          if (!track || typeof track !== 'object') return '—';
+          const stats = [];
+          if (typeof track.note_count === 'number') stats.push(`notes=${track.note_count}`);
+          const range = track.pitch_range;
+          if (range && typeof range === 'object'
+            && typeof range.min === 'number' && typeof range.max === 'number') {
+            stats.push(`pitch=${range.min}-${range.max}`);
+          }
+          if (typeof track.duration_seconds === 'number') stats.push(`duration=${track.duration_seconds.toFixed(2)}s`);
+          if (typeof track.program_count === 'number') stats.push(`programs=${track.program_count}`);
+          return stats.length ? escapeHtml(stats.join(', ')) : '—';
+        };
         const stems = mt3.stems && typeof mt3.stems === 'object' ? mt3.stems : {};
         const stemMidiLinks = Object.entries(stems)
           .filter(([, stem]) => stem && typeof stem === 'object' && stem.midi_path)
@@ -707,13 +720,22 @@
           .filter(([, stem]) => stem && typeof stem === 'object' && stem.notes_path)
           .map(([name]) => mt3NotesLink(name, name))
           .join(', ') || '—';
+        const stemNoteStats = Object.entries(stems)
+          .map(([name, stem]) => {
+            const formatted = mt3TrackStats(stem);
+            return formatted === '—' ? null : `${escapeHtml(name)}: ${formatted}`;
+          })
+          .filter(Boolean)
+          .join('; ') || '—';
         list.innerHTML += [
           item('MT3 Status', escapeHtml(mt3.status || '—')),
           item('MT3 Model', escapeHtml(mt3.model || '—')),
           item('MT3 Full Mix MIDI', mt3.full_mix && mt3.full_mix.midi_path ? mt3MidiLink('full_mix', 'download') : '—'),
           item('MT3 Full Mix Notes', mt3.full_mix && mt3.full_mix.notes_path ? mt3NotesLink('full_mix', 'view') : '—'),
+          item('MT3 Full Mix Stats', mt3TrackStats(mt3.full_mix)),
           item('MT3 Stem MIDIs', stemMidiLinks),
           item('MT3 Stem Notes', stemNotesLinks),
+          item('MT3 Stem Stats', stemNoteStats),
           item('MT3 Warnings', Array.isArray(mt3.warnings) && mt3.warnings.length ? escapeHtml(mt3.warnings.join('; ')) : '—'),
           item('MT3 Errors', Array.isArray(mt3.errors) && mt3.errors.length ? escapeHtml(mt3.errors.join('; ')) : '—'),
         ].join('');

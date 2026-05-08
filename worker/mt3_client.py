@@ -37,6 +37,47 @@ def _decode_midi_bytes(payload: dict[str, Any]) -> bytes | None:
     return None
 
 
+def _note_stats(notes: list[dict[str, Any]]) -> dict[str, Any]:
+    pitches = [
+        int(note.get('pitch'))
+        for note in notes
+        if isinstance(note.get('pitch'), (int, float))
+    ]
+    starts = [
+        float(note.get('start'))
+        for note in notes
+        if isinstance(note.get('start'), (int, float))
+    ]
+    ends = [
+        float(note.get('end'))
+        for note in notes
+        if isinstance(note.get('end'), (int, float))
+    ]
+    programs = {
+        int(note.get('program'))
+        for note in notes
+        if isinstance(note.get('program'), (int, float))
+    }
+
+    duration_seconds: float | None = None
+    if starts and ends:
+        start_min = min(starts)
+        end_max = max(ends)
+        if end_max >= start_min:
+            duration_seconds = end_max - start_min
+
+    pitch_range = None
+    if pitches:
+        pitch_range = {'min': min(pitches), 'max': max(pitches)}
+
+    return {
+        'note_count': len(notes),
+        'pitch_range': pitch_range,
+        'duration_seconds': duration_seconds,
+        'program_count': len(programs),
+    }
+
+
 def transcribe_with_service(
     service_url: str,
     audio_path: str,
@@ -84,7 +125,11 @@ def transcribe_with_service(
         notes_file.write_text(json.dumps(notes, indent=2))
         result['notes_path'] = str(notes_file)
         if isinstance(notes, list):
-            result['note_count'] = len(notes)
+            stats = _note_stats([note for note in notes if isinstance(note, dict)])
+            result['note_count'] = stats['note_count']
+            result['pitch_range'] = stats['pitch_range']
+            result['duration_seconds'] = stats['duration_seconds']
+            result['program_count'] = stats['program_count']
     elif isinstance(payload.get('notes_path'), str) and payload['notes_path']:
         result['notes_path'] = payload['notes_path']
 

@@ -153,11 +153,15 @@ def transcribe(
     # ------------------------------------------------------------------
     # Persist summary metadata
     # ------------------------------------------------------------------
+    note_stats = _compute_note_stats(notes)
     metadata: dict[str, Any] = {
         'wav_path': str(wav_path),
         'midi_path': str(midi_file),
         'notes_path': str(notes_file) if notes_file is not None else None,
-        'note_count': len(notes),
+        'note_count': note_stats['note_count'],
+        'pitch_range': note_stats['pitch_range'],
+        'duration_seconds': note_stats['duration_seconds'],
+        'program_count': note_stats['program_count'],
         'model': effective_model,
         'task_id': effective_task_id,
         'output_dir': str(out_dir),
@@ -218,6 +222,47 @@ def _decode_midi(payload: dict[str, Any]) -> bytes | None:
         if isinstance(raw, str) and raw:
             return base64.b64decode(raw)
     return None
+
+
+def _compute_note_stats(notes: list) -> dict[str, Any]:
+    pitches = [
+        int(note.get('pitch'))
+        for note in notes
+        if isinstance(note, dict) and isinstance(note.get('pitch'), (int, float))
+    ]
+    starts = [
+        float(note.get('start'))
+        for note in notes
+        if isinstance(note, dict) and isinstance(note.get('start'), (int, float))
+    ]
+    ends = [
+        float(note.get('end'))
+        for note in notes
+        if isinstance(note, dict) and isinstance(note.get('end'), (int, float))
+    ]
+    programs = {
+        int(note.get('program'))
+        for note in notes
+        if isinstance(note, dict) and isinstance(note.get('program'), (int, float))
+    }
+
+    duration_seconds: float | None = None
+    if starts and ends:
+        start_min = min(starts)
+        end_max = max(ends)
+        if end_max >= start_min:
+            duration_seconds = end_max - start_min
+
+    pitch_range = None
+    if pitches:
+        pitch_range = {'min': min(pitches), 'max': max(pitches)}
+
+    return {
+        'note_count': len(notes),
+        'pitch_range': pitch_range,
+        'duration_seconds': duration_seconds,
+        'program_count': len(programs),
+    }
 
 
 def _transcribe_inline(

@@ -595,3 +595,37 @@ def test_full_mix_result_contains_completed_at(tmp_path):
     ts = datetime.fromisoformat(result['completed_at'])
     assert ts.tzinfo is not None
     assert abs((ts - datetime.now(timezone.utc)).total_seconds()) < 5
+
+
+def test_transcribe_with_service_includes_note_stats(tmp_path):
+    """Note statistics should be included when MT3 service returns inline notes."""
+    import mt3_client
+
+    task_id = str(uuid.uuid4())
+    output_dir = tmp_path / 'mt3' / task_id
+    output_dir.mkdir(parents=True)
+
+    fake_payload = {
+        'midi_base64': __import__('base64').b64encode(b'MThd').decode(),
+        'model': 'multi_instrument',
+        'notes': [
+            {'pitch': 48, 'start': 0.0, 'end': 0.5, 'program': 32},
+            {'pitch': 72, 'start': 1.0, 'end': 2.5, 'program': 40},
+        ],
+    }
+
+    with patch('mt3_client._post_json', return_value=fake_payload):
+        result = mt3_client.transcribe_with_service(
+            service_url='http://localhost:8090',
+            audio_path='/tmp/audio.wav',
+            output_dir=output_dir,
+            task_id=task_id,
+            model='multi_instrument',
+            source='full_mix',
+            timeout=60,
+        )
+
+    assert result['note_count'] == 2
+    assert result['pitch_range'] == {'min': 48, 'max': 72}
+    assert result['duration_seconds'] == 2.5
+    assert result['program_count'] == 2
