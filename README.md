@@ -149,9 +149,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-08T09:32:22Z
-- Latest commit: `2d7eba7`
-- Commit message: Merge pull request #40 from julesdg6/copilot/add-mt3-worker-integration  Wire SHANK worker to call MT3 after normalization
+- Last automated update: 2026-05-08T11:19:55Z
+- Latest commit: `62e4fe6`
+- Commit message: Merge pull request #41 from julesdg6/copilot/add-api-endpoints-mt3-results  Add task artifact discovery/download endpoints for MT3 outputs with DATA_DIR-safe file serving
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
