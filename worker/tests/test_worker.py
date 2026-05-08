@@ -292,6 +292,7 @@ def test_mt3_failure_can_fail_task_when_strict_mode_enabled(data_dir, monkeypatc
              'output_paths': [],
              'warnings': [],
              'errors': ['full_mix: bad model load'],
+             'error': 'full_mix: bad model load',
              'full_mix': None,
              'stems': {},
          }), \
@@ -302,3 +303,127 @@ def test_mt3_failure_can_fail_task_when_strict_mode_enabled(data_dir, monkeypatc
     updated = json.loads(task_file.read_text())
     assert updated['status'] == 'failed'
     assert 'bad model load' in updated['error']
+
+
+# ---------------------------------------------------------------------------
+# transcribe_with_mt3 helper
+# ---------------------------------------------------------------------------
+
+def test_transcribe_with_mt3_calls_transcribe_with_service(tmp_path, monkeypatch):
+    """transcribe_with_mt3 should call transcribe_with_service with the right args."""
+    monkeypatch.setenv('MT3_SERVICE_URL', 'http://shank-mt3:8001')
+    monkeypatch.setenv('MT3_MODEL', 'multi_instrument')
+    monkeypatch.setenv('MT3_TIMEOUT', '600')
+    monkeypatch.setenv('DATA_DIR', str(tmp_path))
+    importlib.reload(worker_loop)
+
+    fake_result = {
+        'source': 'full_mix',
+        'model': 'multi_instrument',
+        'midi_path': '/srv/data/mt3/task1/task1__full_mix.mid',
+        'completed_at': '2026-01-01T00:00:00+00:00',
+    }
+    task_id = str(uuid.uuid4())
+    audio_path = str(tmp_path / f'{task_id}.wav')
+
+    with patch('worker_loop.transcribe_with_service', return_value=fake_result) as mock_svc:
+        result = worker_loop.transcribe_with_mt3(audio_path, task_id)
+
+    mock_svc.assert_called_once()
+    call_kwargs = mock_svc.call_args
+    assert call_kwargs.kwargs['audio_path'] == audio_path
+    assert call_kwargs.kwargs['task_id'] == task_id
+    assert call_kwargs.kwargs['source'] == 'full_mix'
+    assert result == fake_result
+
+
+def test_transcribe_with_mt3_passes_custom_source_name(tmp_path, monkeypatch):
+    """transcribe_with_mt3 should forward a custom source_name to the service."""
+    monkeypatch.setenv('MT3_SERVICE_URL', 'http://shank-mt3:8001')
+    monkeypatch.setenv('DATA_DIR', str(tmp_path))
+    importlib.reload(worker_loop)
+
+    task_id = str(uuid.uuid4())
+    with patch('worker_loop.transcribe_with_service', return_value={
+        'source': 'vocals',
+        'model': 'multi_instrument',
+        'midi_path': '/tmp/vocals.mid',
+        'completed_at': '2026-01-01T00:00:00+00:00',
+    }) as mock_svc:
+        worker_loop.transcribe_with_mt3('/tmp/vocals.wav', task_id, source_name='vocals')
+
+    assert mock_svc.call_args.kwargs['source'] == 'vocals'
+
+
+# ---------------------------------------------------------------------------
+# run_mt3_transcription – error and completed_at fields
+# ---------------------------------------------------------------------------
+
+def test_run_mt3_transcription_sets_error_field_on_failure(tmp_path, monkeypatch):
+    """run_mt3_transcription should populate mt3.error (singular) when transcription fails."""
+    monkeypatch.setenv('MT3_ENABLED', 'true')
+    monkeypatch.setenv('MT3_SERVICE_URL', 'http://shank-mt3:8001')
+    monkeypatch.setenv('DATA_DIR', str(tmp_path))
+    importlib.reload(worker_loop)
+
+    task_id = str(uuid.uuid4())
+    with patch('worker_loop.transcribe_with_mt3', side_effect=RuntimeError('service timeout')):
+        result = worker_loop.run_mt3_transcription(task_id, '/tmp/audio.wav')
+
+    assert result['status'] == 'failed'
+    assert 'error' in result
+    assert 'service timeout' in result['error']
+
+
+def test_run_mt3_transcription_no_error_field_on_success(tmp_path, monkeypatch):
+    """run_mt3_transcription should not set mt3.error when transcription succeeds."""
+    monkeypatch.setenv('MT3_ENABLED', 'true')
+    monkeypatch.setenv('MT3_SERVICE_URL', 'http://shank-mt3:8001')
+    monkeypatch.setenv('DATA_DIR', str(tmp_path))
+    importlib.reload(worker_loop)
+
+    task_id = str(uuid.uuid4())
+    fake_transcription = {
+        'source': 'full_mix',
+        'model': 'multi_instrument',
+        'midi_path': '/tmp/out.mid',
+        'completed_at': '2026-01-01T00:00:00+00:00',
+    }
+    with patch('worker_loop.transcribe_with_mt3', return_value=fake_transcription):
+        result = worker_loop.run_mt3_transcription(task_id, '/tmp/audio.wav')
+
+    assert result['status'] == 'completed'
+    assert 'error' not in result
+
+
+def test_full_mix_result_contains_completed_at(tmp_path):
+    """transcribe_with_service should include completed_at in the result."""
+    import mt3_client
+
+    task_id = str(uuid.uuid4())
+    output_dir = tmp_path / 'mt3' / task_id
+    output_dir.mkdir(parents=True)
+
+    fake_payload = {
+        'midi_base64': __import__('base64').b64encode(b'MThd').decode(),
+        'model': 'multi_instrument',
+    }
+
+    with patch('mt3_client._post_json', return_value=fake_payload):
+        result = mt3_client.transcribe_with_service(
+            service_url='http://localhost:8090',
+            audio_path='/tmp/audio.wav',
+            output_dir=output_dir,
+            task_id=task_id,
+            model='multi_instrument',
+            source='full_mix',
+            timeout=60,
+        )
+
+    assert 'completed_at' in result
+    # Verify it's a valid ISO-8601 UTC timestamp reasonably close to the current time
+    from datetime import datetime, timezone, timedelta
+    ts = datetime.fromisoformat(result['completed_at'])
+    assert ts.tzinfo is not None
+    assert abs((ts - datetime.now(timezone.utc)).total_seconds()) < 5
+

@@ -175,6 +175,21 @@ def separate_stems_with_ace_step(src_audio_path: str) -> dict:
     raise RuntimeError('Ace-step stem separation timed out')
 
 
+def transcribe_with_mt3(normalized_path: str, task_id: str, source_name: str = 'full_mix') -> dict[str, Any]:
+    """Transcribe a single audio source with MT3 and return the transcription result."""
+    output_dir = MT3_OUTPUTS_DIR / task_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return transcribe_with_service(
+        service_url=MT3_SERVICE_URL,
+        audio_path=normalized_path,
+        output_dir=output_dir,
+        task_id=task_id,
+        model=MT3_MODEL,
+        source=source_name,
+        timeout=MT3_TIMEOUT,
+    )
+
+
 def run_mt3_transcription(task_id: str, normalized_path: str, stems: dict[str, str] | None = None) -> dict:
     """Run MT3 transcription (full mix first, then optional stems)."""
     result: dict[str, Any] = {
@@ -193,21 +208,11 @@ def run_mt3_transcription(task_id: str, normalized_path: str, stems: dict[str, s
     if not MT3_SERVICE_URL:
         result['status'] = 'failed'
         result['errors'].append('MT3 is enabled but MT3_SERVICE_URL is not configured')
+        result['error'] = result['errors'][0]
         return result
 
-    output_dir = MT3_OUTPUTS_DIR / task_id
-    output_dir.mkdir(parents=True, exist_ok=True)
-
     def transcribe_one(source: str, audio_path: str) -> dict[str, Any]:
-        transcription = transcribe_with_service(
-            service_url=MT3_SERVICE_URL,
-            audio_path=audio_path,
-            output_dir=output_dir,
-            task_id=task_id,
-            model=MT3_MODEL,
-            source=source,
-            timeout=MT3_TIMEOUT,
-        )
+        transcription = transcribe_with_mt3(audio_path, task_id, source_name=source)
         if isinstance(transcription.get('midi_path'), str):
             result['output_paths'].append(transcription['midi_path'])
         if isinstance(transcription.get('warnings'), list):
@@ -237,6 +242,10 @@ def run_mt3_transcription(task_id: str, normalized_path: str, stems: dict[str, s
         result['status'] = 'failed'
     else:
         result['status'] = 'completed'
+
+    if result['errors']:
+        result['error'] = '; '.join(str(e) for e in result['errors'])
+
     return result
 
 
