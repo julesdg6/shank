@@ -171,8 +171,11 @@ def _resolve_ace_step_stem_file(task_id: str, stem_name: str, stem_ref: str) -> 
         stem_ref,
         headers=({'Authorization': f'Bearer {ACE_STEP_API_KEY}'} if ACE_STEP_API_KEY else {}),
     )
-    with urllib.request.urlopen(request, timeout=60) as response:
-        cache_path.write_bytes(response.read())
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            cache_path.write_bytes(response.read())
+    except Exception as exc:
+        raise RuntimeError(f'Failed to download Ace-Step stem {stem_name} from {stem_ref}: {exc}') from exc
     return str(cache_path)
 
 
