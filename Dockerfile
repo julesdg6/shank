@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir -r /tmp/api-requirements.txt -r /tmp/worker-requi
 
 COPY api /app/api
 COPY worker /app/worker
+COPY services /app/services
 COPY docker /app/docker
 
 RUN chmod +x /app/docker/start.sh

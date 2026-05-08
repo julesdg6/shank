@@ -104,15 +104,15 @@ Environment variables (set in `.env` or `docker-compose.yml`):
 | `ACE_STEP_API_URL` | *(empty)* | Base URL of an ACE-Step API for stem separation |
 | `ACE_STEP_API_KEY` | *(empty)* | Optional Bearer token for the ACE-Step API |
 | `ACE_STEP_STEMS` | `vocals,drums,bass,other` | Comma-separated list of stems to request |
-| `MT3_ENABLED` | `false` | Enable MT3 transcription in worker |
-| `MT3_SERVICE_URL` | *(empty)* | Base URL for `shank-mt3` service (for example `http://shank-mt3:8001`) |
-| `MT3_MODEL` | `mt3` | Requested model identifier to send to MT3 service |
-| `MT3_TIMEOUT` | `300` | MT3 HTTP timeout in seconds |
+| `MT3_ENABLED` | `true` | Enable MT3 transcription in worker |
+| `MT3_SERVICE_URL` | `http://shank-mt3:8090` | Base URL for the MT3 FastAPI service inside the unified container |
+| `MT3_MODEL` | `multi_instrument` | Requested model identifier to send to MT3 service |
+| `MT3_TIMEOUT` | `900` | MT3 HTTP timeout in seconds |
 | `MT3_TRANSCRIBE_STEMS` | `true` | Also transcribe Ace-Step stems when present |
 | `MT3_FAIL_TASK_ON_ERROR` | `false` | If true, MT3 failure marks task as failed |
 | `MT3_CHECKPOINT_ROOT` | `/srv/shank/models/mt3/checkpoints` | Mount path for MT3 checkpoints in MT3 service |
 | `MT3_CACHE_DIR` | `/srv/shank/cache/mt3` | Mount path for MT3 runtime cache |
-| `MT3_DEVICE` | `cpu` | MT3 device hint (`cpu` or `gpu`) |
+| `MT3_DEVICE` | `auto` | MT3 device hint (`auto`, `cpu`, or `gpu`) |
 
 ## 🗺 Roadmap & Implementation Plan
 
@@ -167,16 +167,11 @@ When `ACE_STEP_API_URL` is set, each normalized track is submitted to ACE-Step (
 
 ## 🎹 Optional MT3 Transcription
 
-SHANK supports MT3 inference through a **separate service container** so the main worker image stays lightweight.
+SHANK runs MT3 inference through an internal FastAPI service in the same `shank` container.
 
-### Enable CPU MT3 profile
+### Start SHANK with MT3 enabled
 ```bash
-MT3_ENABLED=true MT3_SERVICE_URL=http://shank-mt3:8001 docker compose --profile mt3 up --build -d
-```
-
-### Enable GPU MT3 profile
-```bash
-MT3_ENABLED=true MT3_SERVICE_URL=http://shank-mt3-gpu:8001 docker compose --profile mt3-gpu up --build -d
+docker compose up --build -d
 ```
 
 Behavior:
@@ -188,8 +183,7 @@ Behavior:
 
 Limitations:
 - MT3 CPU throughput can be slow on long tracks.
-- GPU profile requires Docker GPU runtime support (`gpus: all`).
-- The MT3 service image/checkpoints must be provided separately.
+- The bundled service currently emits baseline MIDI/notes artifacts for integration flow validation.
 
 ## ⚖️ Legal Note
 This project is for research and personal use. Ensure you have the rights to any audio content you process.

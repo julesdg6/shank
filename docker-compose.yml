@@ -3,55 +3,30 @@ services:
     build: .
     ports:
       - "8088:8080"
+    expose:
+      - "8090"
     environment:
       - DATA_DIR=/srv/shank/data
       - POLL_INTERVAL=10
       - ACE_STEP_API_URL=${ACE_STEP_API_URL:-}
       - ACE_STEP_API_KEY=${ACE_STEP_API_KEY:-}
       - ACE_STEP_STEMS=${ACE_STEP_STEMS:-vocals,drums,bass,other}
-      - MT3_ENABLED=${MT3_ENABLED:-false}
-      - MT3_SERVICE_URL=${MT3_SERVICE_URL:-}
-      - MT3_MODEL=${MT3_MODEL:-mt3}
-      - MT3_TIMEOUT=${MT3_TIMEOUT:-300}
+      - MT3_ENABLED=${MT3_ENABLED:-true}
+      - MT3_SERVICE_URL=${MT3_SERVICE_URL:-http://shank-mt3:8090}
+      - MT3_MODEL=${MT3_MODEL:-multi_instrument}
+      - MT3_DEVICE=${MT3_DEVICE:-auto}
+      - MT3_TIMEOUT=${MT3_TIMEOUT:-900}
       - MT3_TRANSCRIBE_STEMS=${MT3_TRANSCRIBE_STEMS:-true}
       - MT3_FAIL_TASK_ON_ERROR=${MT3_FAIL_TASK_ON_ERROR:-false}
-    volumes:
-      - ./data:/srv/shank/data
-    networks:
-      - shank-net
-
-  shank-mt3:
-    profiles: ["mt3"]
-    image: ${MT3_SERVICE_IMAGE:-ghcr.io/julesdg6/shank-mt3:latest}
-    environment:
-      - DATA_DIR=/srv/shank/data
-      - MT3_MODEL=${MT3_MODEL:-mt3}
-      - MT3_CHECKPOINT_ROOT=${MT3_CHECKPOINT_ROOT:-/srv/shank/models/mt3/checkpoints}
       - MT3_CACHE_DIR=${MT3_CACHE_DIR:-/srv/shank/cache/mt3}
-      - MT3_DEVICE=${MT3_DEVICE:-cpu}
     volumes:
       - ./data:/srv/shank/data
-      - ./models/mt3/checkpoints:/srv/shank/models/mt3/checkpoints:ro
       - ./cache/mt3:/srv/shank/cache/mt3
-    networks:
-      - shank-net
-
-  shank-mt3-gpu:
-    profiles: ["mt3-gpu"]
-    image: ${MT3_SERVICE_IMAGE:-ghcr.io/julesdg6/shank-mt3:latest}
-    environment:
-      - DATA_DIR=/srv/shank/data
-      - MT3_MODEL=${MT3_MODEL:-mt3}
-      - MT3_CHECKPOINT_ROOT=${MT3_CHECKPOINT_ROOT:-/srv/shank/models/mt3/checkpoints}
-      - MT3_CACHE_DIR=${MT3_CACHE_DIR:-/srv/shank/cache/mt3}
-      - MT3_DEVICE=gpu
-    volumes:
-      - ./data:/srv/shank/data
       - ./models/mt3/checkpoints:/srv/shank/models/mt3/checkpoints:ro
-      - ./cache/mt3:/srv/shank/cache/mt3
-    gpus: all
     networks:
-      - shank-net
+      shank-net:
+        aliases:
+          - shank-mt3
 
 networks:
   shank-net:

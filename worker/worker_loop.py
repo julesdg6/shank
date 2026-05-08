@@ -36,8 +36,8 @@ ACE_STEP_POLL_INTERVAL = float(os.getenv('ACE_STEP_POLL_INTERVAL', '2'))
 ACE_STEP_TIMEOUT = int(os.getenv('ACE_STEP_TIMEOUT', '300'))
 MT3_ENABLED = os.getenv('MT3_ENABLED', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
 MT3_SERVICE_URL = os.getenv('MT3_SERVICE_URL', '').strip().rstrip('/')
-MT3_MODEL = os.getenv('MT3_MODEL', 'mt3').strip() or 'mt3'
-MT3_TIMEOUT = int(os.getenv('MT3_TIMEOUT', '300'))
+MT3_MODEL = os.getenv('MT3_MODEL', 'multi_instrument').strip() or 'multi_instrument'
+MT3_TIMEOUT = int(os.getenv('MT3_TIMEOUT', '900'))
 MT3_TRANSCRIBE_STEMS = os.getenv('MT3_TRANSCRIBE_STEMS', 'true').strip().lower() in ('1', 'true', 'yes', 'on')
 MT3_FAIL_TASK_ON_ERROR = os.getenv('MT3_FAIL_TASK_ON_ERROR', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
 
