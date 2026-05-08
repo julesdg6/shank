@@ -9,5 +9,4 @@ data/
 *.json
 *.csv
 *.md
-!docs/
 !docs/**/*.md
