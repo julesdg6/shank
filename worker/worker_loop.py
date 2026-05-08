@@ -141,7 +141,12 @@ def _extract_track_files(data: Any) -> dict[str, str]:
 
 
 def _resolve_ace_step_stem_file(task_id: str, stem_name: str, stem_ref: str) -> str:
-    """Return a local file path for an Ace-Step stem reference (path or URL)."""
+    """Return a local file path for one Ace-Step stem.
+
+    Accepts local file paths plus ``file://``, ``http://``, and ``https://`` references.
+    URL sources are cached under ``DATA_DIR/stems/<task_id>/`` and reused on retries.
+    Raises ``RuntimeError`` when the stem cannot be resolved locally or downloaded.
+    """
     parsed = urlparse(stem_ref)
     scheme = parsed.scheme.lower()
     if not scheme:
@@ -184,7 +189,7 @@ def _resolve_ace_step_stem_file(task_id: str, stem_name: str, stem_ref: str) -> 
 
 
 def _prepare_ace_step_stems_for_mt3(task_id: str, tracks: dict[str, str] | None) -> dict[str, str]:
-    """Return local file paths for configured Ace-step stems."""
+    """Resolve Ace-Step ``tracks`` into local files for configured ``ACE_STEP_STEMS`` only."""
     if not tracks:
         return {}
 
