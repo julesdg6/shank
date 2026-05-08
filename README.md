@@ -149,9 +149,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-08T11:57:23Z
-- Latest commit: `8ff6b9e`
-- Commit message: Merge pull request #42 from julesdg6/copilot/support-mt3-transcription-ace-step-stems  Support MT3 transcription for Ace-Step stems via local stem resolution and caching
+- Last automated update: 2026-05-08T14:21:51Z
+- Latest commit: `0ae7a32`
+- Commit message: Merge pull request #43 from julesdg6/copilot/update-ui-show-download-mt3-midi-outputs  Expose MT3 outputs and note stats in task results UI
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
