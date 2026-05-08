@@ -237,3 +237,45 @@ def test_list_completed_tasks_skips_invalid_json_files(client, tmp_path):
     response = client.get('/tasks/completed')
     assert response.status_code == 200
     assert response.json() == {'tasks': []}
+
+
+def test_download_mt3_midi_for_full_mix(client, tmp_path):
+    task_id = str(uuid.uuid4())
+    midi_file = tmp_path / 'mt3' / task_id / 'full_mix.mid'
+    midi_file.parent.mkdir(parents=True, exist_ok=True)
+    midi_file.write_bytes(b'MThd\x00\x00\x00\x06\x00\x00\x00\x01\x00`MTrk\x00\x00\x00\x04\x00\xff/\x00')
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'mt3': {
+            'status': 'completed',
+            'full_mix': {'midi_path': str(midi_file)},
+            'stems': {},
+        },
+    }))
+
+    response = client.get(f'/tasks/{task_id}/mt3/midi/full_mix')
+    assert response.status_code == 200
+    assert response.content.startswith(b'MThd')
+
+
+def test_download_mt3_midi_rejects_path_outside_data_dir(client, tmp_path):
+    task_id = str(uuid.uuid4())
+    outside = tmp_path.parent / 'outside.mid'
+    outside.write_bytes(b'MThd\x00\x00\x00\x06\x00\x00\x00\x01\x00`MTrk\x00\x00\x00\x04\x00\xff/\x00')
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'mt3': {
+            'status': 'completed',
+            'full_mix': {'midi_path': str(outside)},
+            'stems': {},
+        },
+    }))
+
+    response = client.get(f'/tasks/{task_id}/mt3/midi/full_mix')
+    assert response.status_code == 404
