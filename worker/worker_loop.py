@@ -141,7 +141,7 @@ def _extract_track_files(data: Any) -> dict[str, str]:
 
 
 def _resolve_ace_step_stem_file(task_id: str, stem_name: str, stem_ref: str) -> str:
-    """Return a local file path for an Ace-step stem reference (path or URL)."""
+    """Return a local file path for an Ace-Step stem reference (path or URL)."""
     parsed = urlparse(stem_ref)
     scheme = parsed.scheme.lower()
     if not scheme:
@@ -156,10 +156,13 @@ def _resolve_ace_step_stem_file(task_id: str, stem_name: str, stem_ref: str) -> 
         local_candidate = Path(parsed.path)
         if local_candidate.exists():
             return str(local_candidate)
-        raise RuntimeError(f'Ace-step stem for {stem_name} is not accessible: {stem_ref}')
+        raise RuntimeError(f'Ace-Step local stem file not found for {stem_name}: {stem_ref}')
 
     if scheme not in ('http', 'https'):
-        raise RuntimeError(f'Ace-step stem for {stem_name} is not accessible: {stem_ref}')
+        raise RuntimeError(
+            f'Ace-Step stem for {stem_name} has unsupported scheme {scheme!r}; '
+            f'only http, https, and file are supported: {stem_ref}'
+        )
 
     ext = Path(parsed.path).suffix or '.wav'
     cache_path = STEMS_CACHE_DIR / task_id / f'{stem_name}{ext}'
