@@ -358,3 +358,106 @@ def test_artifacts_endpoints_reject_outside_data_dir_paths(client, tmp_path):
 
     download_response = client.get(f'/tasks/{task_id}/artifacts/normalized_wav')
     assert download_response.status_code == 404
+
+
+def test_download_mt3_midi_for_stem(client, tmp_path):
+    task_id = str(uuid.uuid4())
+    stem_midi = tmp_path / 'mt3' / task_id / 'vocals.mid'
+    stem_midi.parent.mkdir(parents=True, exist_ok=True)
+    stem_midi.write_bytes(b'MThd\x00\x00\x00\x06\x00\x00\x00\x01\x00`MTrk\x00\x00\x00\x04\x00\xff/\x00')
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'mt3': {
+            'status': 'completed',
+            'full_mix': None,
+            'stems': {
+                'vocals': {'midi_path': str(stem_midi)},
+            },
+        },
+    }))
+
+    response = client.get(f'/tasks/{task_id}/mt3/midi/vocals')
+    assert response.status_code == 200
+    assert response.content.startswith(b'MThd')
+
+
+def test_download_mt3_midi_returns_404_when_track_not_found(client, tmp_path):
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'mt3': {
+            'status': 'completed',
+            'full_mix': None,
+            'stems': {},
+        },
+    }))
+
+    response = client.get(f'/tasks/{task_id}/mt3/midi/full_mix')
+    assert response.status_code == 404
+
+
+def test_get_mt3_notes_for_full_mix(client, tmp_path):
+    task_id = str(uuid.uuid4())
+    notes_file = tmp_path / 'mt3' / task_id / 'full_mix_notes.json'
+    notes_file.parent.mkdir(parents=True, exist_ok=True)
+    notes_data = [{'pitch': 60, 'start': 0.0, 'end': 1.0}]
+    notes_file.write_text(json.dumps(notes_data))
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'mt3': {
+            'status': 'completed',
+            'full_mix': {'notes_path': str(notes_file)},
+            'stems': {},
+        },
+    }))
+
+    response = client.get(f'/tasks/{task_id}/mt3/notes/full_mix')
+    assert response.status_code == 200
+    assert response.json() == notes_data
+
+
+def test_get_mt3_notes_returns_404_when_outside_data_dir(client, tmp_path):
+    task_id = str(uuid.uuid4())
+    outside = tmp_path.parent / 'outside_notes.json'
+    outside.write_text(json.dumps([{'pitch': 60}]))
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'mt3': {
+            'status': 'completed',
+            'full_mix': {'notes_path': str(outside)},
+            'stems': {},
+        },
+    }))
+
+    response = client.get(f'/tasks/{task_id}/mt3/notes/full_mix')
+    assert response.status_code == 404
+
+
+def test_get_mt3_notes_returns_404_when_no_notes_path(client, tmp_path):
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'mt3': {
+            'status': 'completed',
+            'full_mix': {'midi_path': '/some/path.mid'},
+            'stems': {},
+        },
+    }))
+
+    response = client.get(f'/tasks/{task_id}/mt3/notes/full_mix')
+    assert response.status_code == 404

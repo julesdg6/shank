@@ -629,3 +629,158 @@ def test_transcribe_with_service_includes_note_stats(tmp_path):
     assert result['pitch_range'] == {'min': 48, 'max': 72}
     assert result['duration_seconds'] == 2.5
     assert result['program_count'] == 2
+
+
+# ---------------------------------------------------------------------------
+# run_mt3_transcription – disabled path
+# ---------------------------------------------------------------------------
+
+def test_run_mt3_transcription_returns_disabled_when_not_enabled(tmp_path, monkeypatch):
+    """run_mt3_transcription should return status='disabled' when MT3_ENABLED is false."""
+    monkeypatch.delenv('MT3_ENABLED', raising=False)
+    monkeypatch.setenv('DATA_DIR', str(tmp_path))
+    importlib.reload(worker_loop)
+
+    task_id = str(uuid.uuid4())
+    result = worker_loop.run_mt3_transcription(task_id, '/tmp/audio.wav')
+
+    assert result['enabled'] is False
+    assert result['status'] == 'disabled'
+    assert result['full_mix'] is None
+    assert result['stems'] == {}
+    assert result['errors'] == []
+
+
+def test_process_pending_task_records_mt3_disabled_status(data_dir, monkeypatch):
+    """When MT3 is disabled the task must still complete as 'done' with mt3.status='disabled'."""
+    monkeypatch.delenv('MT3_ENABLED', raising=False)
+    importlib.reload(worker_loop)
+    task, task_file = _make_upload_task(data_dir)
+
+    with patch('worker_loop.normalize_audio'), \
+         patch('worker_loop.analyze_audio', return_value={'bpm': 120.0, 'key': 'C major'}):
+        count = worker_loop.process_pending_tasks()
+
+    assert count == 1
+    updated = json.loads(task_file.read_text())
+    assert updated['status'] == 'done'
+    assert updated['mt3']['enabled'] is False
+    assert updated['mt3']['status'] == 'disabled'
+
+
+# ---------------------------------------------------------------------------
+# transcribe_with_service – additional edge cases
+# ---------------------------------------------------------------------------
+
+def test_transcribe_with_service_uses_midi_path_when_no_bytes(tmp_path):
+    """transcribe_with_service should accept a midi_path string when no bytes are provided."""
+    import mt3_client
+
+    task_id = str(uuid.uuid4())
+    output_dir = tmp_path / 'mt3' / task_id
+    output_dir.mkdir(parents=True)
+
+    midi_path_str = '/srv/shank/data/mt3/song.mid'
+    fake_payload = {
+        'model': 'multi_instrument',
+        'midi_path': midi_path_str,
+    }
+
+    with patch('mt3_client._post_json', return_value=fake_payload):
+        result = mt3_client.transcribe_with_service(
+            service_url='http://localhost:8090',
+            audio_path='/tmp/audio.wav',
+            output_dir=output_dir,
+            task_id=task_id,
+            model='multi_instrument',
+            source='full_mix',
+            timeout=60,
+        )
+
+    assert result['midi_path'] == midi_path_str
+
+
+def test_transcribe_with_service_raises_when_no_midi_output(tmp_path):
+    """transcribe_with_service should raise RuntimeError when the service provides no MIDI."""
+    import mt3_client
+
+    task_id = str(uuid.uuid4())
+    output_dir = tmp_path / 'mt3' / task_id
+    output_dir.mkdir(parents=True)
+
+    fake_payload = {
+        'model': 'multi_instrument',
+        # No midi_base64, no midi_path
+    }
+
+    with patch('mt3_client._post_json', return_value=fake_payload):
+        with pytest.raises(RuntimeError, match='did not include MIDI output'):
+            mt3_client.transcribe_with_service(
+                service_url='http://localhost:8090',
+                audio_path='/tmp/audio.wav',
+                output_dir=output_dir,
+                task_id=task_id,
+                model='multi_instrument',
+                source='full_mix',
+                timeout=60,
+            )
+
+
+def test_transcribe_with_service_unwraps_data_envelope(tmp_path):
+    """transcribe_with_service should unwrap a top-level 'data' envelope in the response."""
+    import base64
+    import mt3_client
+
+    task_id = str(uuid.uuid4())
+    output_dir = tmp_path / 'mt3' / task_id
+    output_dir.mkdir(parents=True)
+
+    inner = {
+        'model': 'multi_instrument',
+        'midi_base64': base64.b64encode(b'MThd').decode(),
+    }
+    wrapped = {'data': inner}
+
+    with patch('mt3_client._post_json', return_value=wrapped):
+        result = mt3_client.transcribe_with_service(
+            service_url='http://localhost:8090',
+            audio_path='/tmp/audio.wav',
+            output_dir=output_dir,
+            task_id=task_id,
+            model='multi_instrument',
+            source='full_mix',
+            timeout=60,
+        )
+
+    assert result['model'] == 'multi_instrument'
+    assert 'midi_path' in result
+
+
+def test_transcribe_with_service_uses_notes_path_from_response(tmp_path):
+    """transcribe_with_service should store notes_path when the service returns it as a string."""
+    import base64
+    import mt3_client
+
+    task_id = str(uuid.uuid4())
+    output_dir = tmp_path / 'mt3' / task_id
+    output_dir.mkdir(parents=True)
+
+    notes_path_str = '/srv/shank/data/mt3/task/full_mix.notes.json'
+    fake_payload = {
+        'model': 'multi_instrument',
+        'midi_base64': base64.b64encode(b'MThd').decode(),
+        'notes_path': notes_path_str,
+    }
+
+    with patch('mt3_client._post_json', return_value=fake_payload):
+        result = mt3_client.transcribe_with_service(
+            service_url='http://localhost:8090',
+            audio_path='/tmp/audio.wav',
+            output_dir=output_dir,
+            task_id=task_id,
+            model='multi_instrument',
+            source='full_mix',
+            timeout=60,
+        )
+
+    assert result['notes_path'] == notes_path_str
