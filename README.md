@@ -137,9 +137,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-07T23:57:09Z
-- Latest commit: `2b2abed`
-- Commit message: Merge pull request #23 from julesdg6/copilot/add-processed-songs-list  Add completed-song discovery API and Song Analysis UI for finished tasks
+- Last automated update: 2026-05-08T01:50:51Z
+- Latest commit: `9d2a0c5`
+- Commit message: Merge pull request #36 from julesdg6/copilot/research-mt3-runtime-integration  Document MT3 runtime requirements and integration strategy for SHANK
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
