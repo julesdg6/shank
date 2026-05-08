@@ -149,9 +149,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-08T14:44:59Z
-- Latest commit: `862ca18`
-- Commit message: Merge pull request #44 from julesdg6/copilot/add-tests-for-mt3-integration  Add tests for MT3 integration plumbing
+- Last automated update: 2026-05-08T15:19:02Z
+- Latest commit: `57efb63`
+- Commit message: Merge pull request #45 from julesdg6/copilot/document-mt3-setup-usage  docs: Add MT3 MIDI transcription setup and usage documentation
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
