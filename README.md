@@ -149,9 +149,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-08T08:31:48Z
-- Latest commit: `7161496`
-- Commit message: Merge pull request #38 from julesdg6/copilot/add-mt3-service-container  [WIP] Add MT3 service container with FastAPI endpoints
+- Last automated update: 2026-05-08T08:41:29Z
+- Latest commit: `47fe68f`
+- Commit message: Merge pull request #39 from julesdg6/copilot/implement-mt3-transcription-wrapper  Add mt3/transcribe.py standalone MT3 transcription wrapper
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
