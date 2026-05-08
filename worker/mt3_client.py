@@ -1,6 +1,7 @@
 """Client wrapper for MT3 transcription service."""
 import base64
 import json
+import re
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -24,7 +25,7 @@ def _unwrap_data(payload: Any) -> Any:
 
 
 def _safe_name(value: str) -> str:
-    return ''.join(ch if ch.isalnum() or ch in ('-', '_') else '_' for ch in value).strip('_') or 'track'
+    return re.sub(r'[^a-zA-Z0-9_-]+', '_', value).strip('_') or 'track'
 
 
 def _decode_midi_bytes(payload: dict[str, Any]) -> bytes | None:
