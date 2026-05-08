@@ -165,25 +165,129 @@ ACE_STEP_STEMS=vocals,drums,bass,other   # optional — defaults shown
 
 When `ACE_STEP_API_URL` is set, each normalized track is submitted to ACE-Step (`/release_task`), the worker polls for completion (`/query_result`), and the returned stem references are stored in the task metadata.
 
-## 🎹 Optional MT3 Transcription
+## 🎹 Optional MT3 MIDI Transcription
 
-SHANK runs MT3 inference through an internal FastAPI service in the same `shank` container.
+SHANK can transcribe audio to MIDI using [Magenta MT3](https://github.com/magenta/mt3), running as an internal FastAPI service inside the same `shank` container.
 
-### Start SHANK with MT3 enabled
+> **Note:** MT3 is a research project by Google Magenta and is **not officially supported by Google** for production use. SHANK's integration is a best-effort wrapper around the upstream research code.
+
+### Enabling / Disabling MT3
+
+MT3 transcription is controlled by the `MT3_ENABLED` variable (default: `true`).
+
+**Enabled** (default):
+```dotenv
+MT3_ENABLED=true
+MT3_SERVICE_URL=http://127.0.0.1:8090
+```
+The worker will call the internal MT3 service after each analysis and attach MIDI artifacts to the task result.
+
+**Disabled**:
+```dotenv
+MT3_ENABLED=false
+```
+All transcription steps are skipped entirely. The `mt3` object in the task result will show `"status": "disabled"`.
+
+### Starting SHANK with MT3
+
 ```bash
 docker compose up --build -d
 ```
 
-Behavior:
-- Worker always attempts **full-mix MT3** transcription first (normalized WAV).
-- If Ace-Step stems exist and `MT3_TRANSCRIBE_STEMS=true`, worker transcribes stems second.
-- Outputs are stored under `DATA_DIR/mt3/<task_id>/`.
-- Task JSON gets an `mt3` object (`status`, `model`, `output_paths`, `full_mix`, `stems`, `warnings`, `errors`).
-- MT3 failures are non-fatal by default. Set `MT3_FAIL_TASK_ON_ERROR=true` for strict behavior.
+No extra compose profile is needed — MT3 runs inside the `shank` container managed by `supervisord` on port 8090.
 
-Limitations:
-- MT3 CPU throughput can be slow on long tracks.
-- The bundled service currently emits baseline MIDI/notes artifacts for integration flow validation.
+### Full-Mix vs Stem Transcription
+
+| Mode | What is transcribed | Requires |
+|------|---------------------|----------|
+| **Full mix** | The normalized stereo WAV of the whole track | Always attempted when MT3 is enabled |
+| **Stem transcription** | Each separated stem (vocals, drums, bass, other) | ACE-Step stems present **and** `MT3_TRANSCRIBE_STEMS=true` |
+
+- The worker always attempts full-mix transcription first.
+- Stem transcription is attempted afterwards when both `ACE_STEP_API_URL` is set and `MT3_TRANSCRIBE_STEMS=true`.
+- MIDI outputs are stored under `DATA_DIR/mt3/<task_id>/`.
+- The task JSON gains an `mt3` object with keys: `status`, `model`, `output_paths`, `full_mix`, `stems`, `warnings`, `errors`.
+- MT3 failures are **non-fatal** by default. Set `MT3_FAIL_TASK_ON_ERROR=true` to mark tasks as failed on MT3 error.
+
+### Docker Compose Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MT3_ENABLED` | `true` | Enable (`true`) or disable (`false`) MT3 transcription |
+| `MT3_SERVICE_URL` | `http://127.0.0.1:8090` | Internal URL of the MT3 FastAPI service |
+| `MT3_MODEL` | `multi_instrument` | MT3 model: `multi_instrument` (all instruments) or `ismir2021` (piano-only) |
+| `MT3_TIMEOUT` | `900` | HTTP timeout (seconds) for a single transcription request |
+| `MT3_TRANSCRIBE_STEMS` | `true` | Also transcribe ACE-Step stems when available |
+| `MT3_FAIL_TASK_ON_ERROR` | `false` | Mark the whole task failed if MT3 errors occur |
+| `MT3_CHECKPOINT_ROOT` | `/srv/shank/models/mt3/checkpoints` | Host-mounted path for MT3 model checkpoints |
+| `MT3_CACHE_DIR` | `/srv/shank/cache/mt3` | Host-mounted path for MT3 runtime/compiled cache |
+| `MT3_DEVICE` | `auto` | Device hint: `auto`, `cpu`, or `gpu` |
+
+Example `.env` snippet:
+```dotenv
+MT3_ENABLED=true
+MT3_MODEL=multi_instrument
+MT3_TIMEOUT=900
+MT3_TRANSCRIBE_STEMS=true
+MT3_FAIL_TASK_ON_ERROR=false
+MT3_CHECKPOINT_ROOT=/srv/shank/models/mt3/checkpoints
+MT3_CACHE_DIR=/srv/shank/cache/mt3
+MT3_DEVICE=auto
+```
+
+### Downloading MIDI Results
+
+```bash
+# Download full-mix MIDI
+curl http://localhost:8088/tasks/<task_id>/mt3/midi/full_mix --output full_mix.mid
+
+# Download stem MIDI (e.g. vocals)
+curl http://localhost:8088/tasks/<task_id>/mt3/midi/vocals --output vocals.mid
+
+# Retrieve note metadata JSON
+curl http://localhost:8088/tasks/<task_id>/mt3/notes/full_mix
+```
+
+### Troubleshooting MT3
+
+#### Model download failure
+MT3 checkpoints must be present in `MT3_CHECKPOINT_ROOT` before the container starts. The service does **not** auto-download models at runtime.
+
+1. Ensure the host directory `./models/mt3/checkpoints` exists and contains the checkpoint files.
+2. Verify the volume mount in `docker-compose.yml`:
+   ```yaml
+   volumes:
+     - ./models/mt3/checkpoints:/srv/shank/models/mt3/checkpoints:ro
+   ```
+3. Restart the container after placing the checkpoints.
+
+#### CUDA / GPU unavailable
+MT3 defaults to `MT3_DEVICE=auto`, which uses CPU when no GPU is detected.
+
+- To force CPU: set `MT3_DEVICE=cpu`.
+- To enable GPU: ensure `nvidia-container-toolkit` is installed on the host, then set `MT3_DEVICE=gpu`.
+- CPU inference is functional but significantly slower on tracks longer than a few minutes.
+
+#### Transcription timeout
+If the worker logs show a timeout error against `MT3_SERVICE_URL`, increase `MT3_TIMEOUT`:
+```dotenv
+MT3_TIMEOUT=1800   # 30 minutes — for long tracks or slow CPU inference
+```
+
+#### No MIDI generated / empty MIDI file
+- Check `task['mt3']['warnings']` in the task JSON — a warning such as `"No MIDI data returned; empty MIDI written"` indicates the service returned no note events.
+- This can happen when the audio is silent, very short, or contains only non-pitched content.
+- Verify `MT3_SERVICE_URL` is reachable from within the container: `docker exec shank curl -s http://127.0.0.1:8090/health`.
+
+#### Stem files not local / stem transcription skipped
+Stem transcription requires that ACE-Step has already separated the audio **and** that the stem file paths are accessible locally inside the container.
+
+- Confirm `ACE_STEP_API_URL` is set and ACE-Step completed successfully (check `task['stems']` in the task JSON).
+- Confirm `MT3_TRANSCRIBE_STEMS=true`.
+- If stems are stored on a remote service rather than a local path, SHANK cannot transcribe them — the worker will skip stem transcription and log a warning.
+
+For detailed setup, configuration, and troubleshooting, see [`docs/mt3.md`](docs/mt3.md).
+For MT3 integration design notes, see [`docs/mt3-research.md`](docs/mt3-research.md).
 
 ## ⚖️ Legal Note
 This project is for research and personal use. Ensure you have the rights to any audio content you process.
