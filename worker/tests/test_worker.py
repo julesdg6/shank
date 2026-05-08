@@ -497,6 +497,72 @@ def test_run_mt3_transcription_uses_only_configured_stems(tmp_path, monkeypatch)
     assert set(result['stems'].keys()) == {'vocals', 'drums'}
 
 
+def test_resolve_ace_step_stem_file_does_not_send_auth_to_third_party(tmp_path, monkeypatch):
+    """Authorization headers should only be sent to the configured Ace-Step host."""
+    monkeypatch.setenv('DATA_DIR', str(tmp_path))
+    monkeypatch.setenv('ACE_STEP_API_URL', 'http://ace-step:8001')
+    monkeypatch.setenv('ACE_STEP_API_KEY', 'super-secret')
+    importlib.reload(worker_loop)
+
+    class _FakeResponse:
+        def __init__(self):
+            self._sent = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, size=-1):
+            if not self._sent:
+                self._sent = True
+                return b'abc'
+            return b''
+
+    seen_auth_headers: list[str | None] = []
+
+    def _fake_urlopen(request, timeout=60):
+        seen_auth_headers.append(request.headers.get('Authorization'))
+        return _FakeResponse()
+
+    task_id = str(uuid.uuid4())
+    with patch('worker_loop.urllib.request.urlopen', side_effect=_fake_urlopen):
+        worker_loop._resolve_ace_step_stem_file(task_id, 'vocals', 'http://example.com/vocals.wav')
+
+    assert seen_auth_headers == [None]
+
+
+def test_resolve_ace_step_stem_file_rejects_oversized_download(tmp_path, monkeypatch):
+    """Stem download should fail when the response exceeds ACE_STEP_MAX_DOWNLOAD_BYTES."""
+    monkeypatch.setenv('DATA_DIR', str(tmp_path))
+    monkeypatch.setenv('ACE_STEP_API_URL', 'http://ace-step:8001')
+    monkeypatch.setenv('ACE_STEP_MAX_DOWNLOAD_BYTES', '4')
+    importlib.reload(worker_loop)
+
+    class _FakeResponse:
+        def __init__(self):
+            self._chunks = [b'abcd', b'ef', b'']
+            self._idx = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, size=-1):
+            chunk = self._chunks[self._idx]
+            self._idx += 1
+            return chunk
+
+    task_id = str(uuid.uuid4())
+    with patch('worker_loop.urllib.request.urlopen', return_value=_FakeResponse()):
+        with pytest.raises(RuntimeError, match='exceeded 4 bytes'):
+            worker_loop._resolve_ace_step_stem_file(task_id, 'vocals', 'http://ace-step:8001/vocals.wav')
+    assert not (tmp_path / 'stems' / task_id / 'vocals.wav').exists()
+
+
 def test_full_mix_result_contains_completed_at(tmp_path):
     """transcribe_with_service should include completed_at in the result."""
     import mt3_client

@@ -35,6 +35,7 @@ ACE_STEP_STEMS = tuple(
 )
 ACE_STEP_POLL_INTERVAL = float(os.getenv('ACE_STEP_POLL_INTERVAL', '2'))
 ACE_STEP_TIMEOUT = int(os.getenv('ACE_STEP_TIMEOUT', '300'))
+ACE_STEP_MAX_DOWNLOAD_BYTES = int(os.getenv('ACE_STEP_MAX_DOWNLOAD_BYTES', str(100 * 1024 * 1024)))
 MT3_ENABLED = os.getenv('MT3_ENABLED', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
 MT3_SERVICE_URL = os.getenv('MT3_SERVICE_URL', '').strip().rstrip('/')
 MT3_MODEL = os.getenv('MT3_MODEL', 'multi_instrument').strip() or 'multi_instrument'
@@ -169,21 +170,38 @@ def _resolve_ace_step_stem_file(task_id: str, stem_name: str, stem_ref: str) -> 
             f'only http, https, and file are supported: {stem_ref}'
         )
 
+    try:
+        safe_task_id = str(uuid.UUID(task_id))
+    except ValueError as exc:
+        raise RuntimeError(f'Invalid task_id for Ace-Step stem cache: {task_id!r}') from exc
+
     ext = Path(parsed.path).suffix or '.wav'
-    cache_path = STEMS_CACHE_DIR / task_id / f'{stem_name}{ext}'
+    cache_path = STEMS_CACHE_DIR / safe_task_id / f'{stem_name}{ext}'
     if cache_path.exists():
         return str(cache_path)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    request_kwargs = {'headers': {'Authorization': f'Bearer {ACE_STEP_API_KEY}'}} if ACE_STEP_API_KEY else {}
+    request_headers: dict[str, str] = {}
+    if ACE_STEP_API_KEY and ACE_STEP_API_URL:
+        ace_url = urlparse(ACE_STEP_API_URL)
+        if parsed.scheme == ace_url.scheme and parsed.netloc == ace_url.netloc:
+            request_headers['Authorization'] = f'Bearer {ACE_STEP_API_KEY}'
+    request_kwargs = {'headers': request_headers} if request_headers else {}
     request = urllib.request.Request(stem_ref, **request_kwargs)
     try:
         with urllib.request.urlopen(request, timeout=60) as response, cache_path.open('wb') as output_file:
+            total_bytes = 0
             while True:
                 chunk = response.read(64 * 1024)
                 if not chunk:
                     break
+                total_bytes += len(chunk)
+                if total_bytes > ACE_STEP_MAX_DOWNLOAD_BYTES:
+                    raise RuntimeError(
+                        f'Ace-Step stem download exceeded {ACE_STEP_MAX_DOWNLOAD_BYTES} bytes: {stem_ref}'
+                    )
                 output_file.write(chunk)
     except Exception as exc:
+        cache_path.unlink(missing_ok=True)
         raise RuntimeError(f'Failed to download Ace-Step stem {stem_name} from {stem_ref}: {exc}') from exc
     return str(cache_path)
 
