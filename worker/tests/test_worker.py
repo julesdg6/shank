@@ -542,7 +542,7 @@ def test_resolve_ace_step_stem_file_rejects_oversized_download(tmp_path, monkeyp
 
     class _FakeResponse:
         def __init__(self):
-            self._chunks = [b'abcd', b'ef', b'']
+            self._chunks = [b'ab', b'cde', b'']
             self._idx = 0
 
         def __enter__(self):
@@ -552,6 +552,8 @@ def test_resolve_ace_step_stem_file_rejects_oversized_download(tmp_path, monkeyp
             return False
 
         def read(self, size=-1):
+            if self._idx >= len(self._chunks):
+                return b''
             chunk = self._chunks[self._idx]
             self._idx += 1
             return chunk

@@ -194,11 +194,11 @@ def _resolve_ace_step_stem_file(task_id: str, stem_name: str, stem_ref: str) -> 
                 chunk = response.read(64 * 1024)
                 if not chunk:
                     break
-                total_bytes += len(chunk)
-                if total_bytes > ACE_STEP_MAX_DOWNLOAD_BYTES:
+                if total_bytes + len(chunk) > ACE_STEP_MAX_DOWNLOAD_BYTES:
                     raise RuntimeError(
                         f'Ace-Step stem download exceeded {ACE_STEP_MAX_DOWNLOAD_BYTES} bytes: {stem_ref}'
                     )
+                total_bytes += len(chunk)
                 output_file.write(chunk)
     except Exception as exc:
         cache_path.unlink(missing_ok=True)
