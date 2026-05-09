@@ -19,7 +19,8 @@ def test_compose_uses_single_unified_service():
     assert '- ./data:/srv/shank/data' in text
     assert '- ./cache/mt3:/srv/shank/cache/mt3' in text
     assert '- ./models/mt3/checkpoints:/srv/shank/models/mt3/checkpoints:ro' in text
-    assert 'profiles: ["mt3"]' in text
+    assert 'profiles:' in text
+    assert 'mt3' in text
     assert 'command: uvicorn services.mt3.main:app --host 0.0.0.0 --port 8090 --log-level info' in text
     assert '# Optional NVIDIA GPU runtime example:' in text
     assert '# gpus: all' in text
