@@ -399,7 +399,11 @@
   <span style="font-size:1.5rem">🎵</span>
   <h1>SHANK</h1>
   <span class="badge">AI Analyzer</span>
-  <div id="api-dot" class="status-dot" title="API status"></div>
+  <div id="stem-backend-badge" title="Stem separation backend" style="display:flex;align-items:center;gap:0.4rem;margin-left:auto;font-size:0.75rem;color:var(--text-muted)">
+    <span id="stem-backend-dot" class="status-dot offline" style="margin-left:0" title="Stem backend status"></span>
+    <span id="stem-backend-label">Stems: —</span>
+  </div>
+  <div id="api-dot" class="status-dot" title="API status" style="margin-left:0.75rem"></div>
 </header>
 
 <main>
@@ -1285,6 +1289,31 @@
   }
   checkApiHealth();
   setInterval(checkApiHealth, 30000);
+
+  // ── Stem Backend Status ───────────────────────────────────────────────────
+  async function checkStemBackendStatus() {
+    const dot = document.getElementById('stem-backend-dot');
+    const label = document.getElementById('stem-backend-label');
+    try {
+      const res = await fetch(`${API}/stem-backend/status`, { cache: 'no-store' });
+      if (!res.ok) { dot.className = 'status-dot offline'; label.textContent = 'Stems: unavailable'; return; }
+      const data = await res.json();
+      const active = data.active_backend || 'none';
+      if (active === 'none') {
+        dot.className = 'status-dot offline';
+        label.textContent = 'Stems: none';
+      } else {
+        dot.className = 'status-dot';
+        const backendNames = { acestep: 'Ace-Step', demucs: `Demucs (${data.demucs?.model || ''})` };
+        label.textContent = `Stems: ${backendNames[active] || active}`;
+      }
+    } catch (_) {
+      dot.className = 'status-dot offline';
+      label.textContent = 'Stems: —';
+    }
+  }
+  checkStemBackendStatus();
+  setInterval(checkStemBackendStatus, 60000);
 
   // ── Init ──────────────────────────────────────────────────────────────────
   const detailTaskId = new URLSearchParams(window.location.search).get('task_id');

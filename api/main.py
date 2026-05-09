@@ -1,5 +1,8 @@
 import json
+import logging
 import os
+import shutil
+import urllib.request
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,6 +13,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
 app = FastAPI(title='SHANK API')
+
+log = logging.getLogger(__name__)
 
 DATA_DIR = Path(os.getenv('DATA_DIR', '/srv/shank/data'))
 UPLOADS_DIR = DATA_DIR / 'uploads'
@@ -295,6 +300,65 @@ def get_mt3_notes(task_id: str, track_name: str):
         return json.loads(resolved.read_text())
     except (OSError, json.JSONDecodeError):
         raise HTTPException(status_code=500, detail='MT3 note metadata is unreadable')
+
+
+# ---------------------------------------------------------------------------
+# Stem backend status
+# ---------------------------------------------------------------------------
+
+@app.get('/stem-backend/status')
+def get_stem_backend_status():
+    """Return the configured stem separation backend and its health status."""
+    configured_backend = os.getenv('STEM_BACKEND', 'auto').strip().lower()
+    ace_step_url = os.getenv('ACE_STEP_API_URL', '').strip().rstrip('/')
+    ace_step_key = os.getenv('ACE_STEP_API_KEY', '').strip()
+    demucs_model = os.getenv('DEMUCS_MODEL', 'htdemucs').strip() or 'htdemucs'
+    demucs_device = os.getenv('DEMUCS_DEVICE', 'cpu').strip() or 'cpu'
+
+    # Check Ace-Step reachability with a short timeout.
+    ace_step_healthy = False
+    if ace_step_url:
+        try:
+            req = urllib.request.Request(ace_step_url)
+            if ace_step_key:
+                req.add_header('Authorization', f'Bearer {ace_step_key}')
+            with urllib.request.urlopen(req, timeout=3):
+                ace_step_healthy = True
+        except Exception as exc:
+            log.debug('Ace-Step health check failed: %s', exc)
+            ace_step_healthy = False
+
+    demucs_available = shutil.which('demucs') is not None
+
+    # Determine the effective active backend.
+    if configured_backend == 'none':
+        active_backend = 'none'
+    elif configured_backend == 'acestep':
+        active_backend = 'acestep' if (ace_step_url and ace_step_healthy) else 'none'
+    elif configured_backend == 'demucs':
+        active_backend = 'demucs' if demucs_available else 'none'
+    else:  # auto
+        if ace_step_url and ace_step_healthy:
+            active_backend = 'acestep'
+        elif demucs_available:
+            active_backend = 'demucs'
+        else:
+            active_backend = 'none'
+
+    return {
+        'configured_backend': configured_backend,
+        'active_backend': active_backend,
+        'acestep': {
+            'configured': bool(ace_step_url),
+            'url': ace_step_url or None,
+            'healthy': ace_step_healthy,
+        },
+        'demucs': {
+            'available': demucs_available,
+            'model': demucs_model,
+            'device': demucs_device,
+        },
+    }
 
 
 # ---------------------------------------------------------------------------

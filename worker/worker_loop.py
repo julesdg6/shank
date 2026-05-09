@@ -2,6 +2,7 @@
 import json
 import logging
 import os
+import shutil
 import subprocess
 import time
 import urllib.request
@@ -36,6 +37,10 @@ ACE_STEP_STEMS = tuple(
 ACE_STEP_POLL_INTERVAL = float(os.getenv('ACE_STEP_POLL_INTERVAL', '2'))
 ACE_STEP_TIMEOUT = int(os.getenv('ACE_STEP_TIMEOUT', '300'))
 ACE_STEP_MAX_DOWNLOAD_BYTES = int(os.getenv('ACE_STEP_MAX_DOWNLOAD_BYTES', str(100 * 1024 * 1024)))
+# Stem backend selection: 'auto' (default), 'acestep', 'demucs', or 'none'
+STEM_BACKEND = os.getenv('STEM_BACKEND', 'auto').strip().lower()
+DEMUCS_MODEL = os.getenv('DEMUCS_MODEL', 'htdemucs').strip() or 'htdemucs'
+DEMUCS_DEVICE = os.getenv('DEMUCS_DEVICE', 'cpu').strip() or 'cpu'
 MT3_ENABLED = os.getenv('MT3_ENABLED', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
 MT3_SERVICE_URL = os.getenv('MT3_SERVICE_URL', '').strip().rstrip('/')
 MT3_MODEL = os.getenv('MT3_MODEL', 'multi_instrument').strip() or 'multi_instrument'
@@ -263,6 +268,49 @@ def separate_stems_with_ace_step(src_audio_path: str) -> dict:
     raise RuntimeError('Ace-step stem separation timed out')
 
 
+def _is_demucs_available() -> bool:
+    """Return True if the ``demucs`` command-line tool is found in PATH."""
+    return shutil.which('demucs') is not None
+
+
+def separate_stems_with_demucs(src_audio_path: str, task_id: str) -> dict:
+    """Run Demucs stem separation and return ``{'tracks': dict[str, str]}``.
+
+    Output stems are stored under ``DATA_DIR/stems/<task_id>/`` to mirror the
+    layout used for Ace-Step cached stems.
+    Raises ``RuntimeError`` if Demucs exits with a non-zero status or produces
+    no output stems.
+    """
+    out_base = STEMS_CACHE_DIR / task_id
+    out_base.mkdir(parents=True, exist_ok=True)
+
+    cmd = [
+        'demucs',
+        '--model', DEMUCS_MODEL,
+        '--device', DEMUCS_DEVICE,
+        '--out', str(out_base),
+        src_audio_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    if result.returncode != 0:
+        raise RuntimeError(f'demucs failed (exit {result.returncode}): {result.stderr}')
+
+    # Demucs writes to {out}/{model}/{track_stem}/
+    track_stem = Path(src_audio_path).stem
+    stem_dir = out_base / DEMUCS_MODEL / track_stem
+    if not stem_dir.exists():
+        raise RuntimeError(f'Demucs output directory not found: {stem_dir}')
+
+    tracks: dict[str, str] = {}
+    for stem_file in sorted(stem_dir.glob('*.wav')):
+        tracks[stem_file.stem] = str(stem_file)
+
+    if not tracks:
+        raise RuntimeError(f'Demucs produced no output stems in {stem_dir}')
+
+    return {'tracks': tracks}
+
+
 def transcribe_with_mt3(normalized_path: str, task_id: str, source_name: str = 'full_mix') -> dict[str, Any]:
     """Transcribe a single audio source with MT3 and return the transcription result."""
     output_dir = MT3_OUTPUTS_DIR / task_id
@@ -440,22 +488,98 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
             continue
 
         stem_tracks: dict[str, str] | None = None
-        if ACE_STEP_API_URL:
+        effective_backend = STEM_BACKEND
+
+        if effective_backend == 'acestep':
+            # Strict Ace-Step mode: fail the task if Ace-Step is unavailable or fails.
+            if not ACE_STEP_API_URL:
+                _update_task(task_file, {
+                    'status': 'failed',
+                    'error': 'STEM_BACKEND=acestep but ACE_STEP_API_URL is not configured',
+                    'completed_at': datetime.now(timezone.utc).isoformat(),
+                })
+                continue
             try:
                 stem_data = separate_stems_with_ace_step(normalized_path)
-                task_updates = {'ace_step_task_id': stem_data['task_id']}
+                task_updates: dict[str, Any] = {
+                    'ace_step_task_id': stem_data['task_id'],
+                    'stem_backend': 'acestep',
+                }
                 if stem_data.get('tracks'):
                     stem_tracks = _prepare_ace_step_stems_for_mt3(task_id, stem_data['tracks'])
                     task_updates['stems'] = stem_tracks
                 _update_task(task_file, task_updates)
             except Exception as exc:
-                log.exception('Task %s stem separation failed: %s', task_id, exc)
+                log.exception('Task %s Ace-Step stem separation failed: %s', task_id, exc)
                 _update_task(task_file, {
                     'status': 'failed',
                     'error': str(exc),
                     'completed_at': datetime.now(timezone.utc).isoformat(),
                 })
                 continue
+
+        elif effective_backend == 'demucs':
+            # Strict Demucs mode: fail the task if Demucs is unavailable or fails.
+            try:
+                stem_data = separate_stems_with_demucs(normalized_path, task_id)
+                task_updates = {'stem_backend': 'demucs'}
+                if stem_data.get('tracks'):
+                    stem_tracks = stem_data['tracks']
+                    task_updates['stems'] = stem_tracks
+                _update_task(task_file, task_updates)
+            except Exception as exc:
+                log.exception('Task %s Demucs stem separation failed: %s', task_id, exc)
+                _update_task(task_file, {
+                    'status': 'failed',
+                    'error': str(exc),
+                    'completed_at': datetime.now(timezone.utc).isoformat(),
+                })
+                continue
+
+        elif effective_backend == 'auto':
+            # Auto mode: try Ace-Step first (if configured), then fall back to Demucs.
+            # Neither failure is fatal – the task continues without stems.
+            ace_step_attempted = False
+            if ACE_STEP_API_URL:
+                ace_step_attempted = True
+                try:
+                    stem_data = separate_stems_with_ace_step(normalized_path)
+                    task_updates = {
+                        'ace_step_task_id': stem_data['task_id'],
+                        'stem_backend': 'acestep',
+                    }
+                    if stem_data.get('tracks'):
+                        stem_tracks = _prepare_ace_step_stems_for_mt3(task_id, stem_data['tracks'])
+                        task_updates['stems'] = stem_tracks
+                    _update_task(task_file, task_updates)
+                except Exception as exc:
+                    log.warning(
+                        'Task %s Ace-Step stem separation failed, trying Demucs fallback: %s',
+                        task_id, exc,
+                    )
+
+            if stem_tracks is None and _is_demucs_available():
+                try:
+                    stem_data = separate_stems_with_demucs(normalized_path, task_id)
+                    task_updates = {'stem_backend': 'demucs'}
+                    if stem_data.get('tracks'):
+                        stem_tracks = stem_data['tracks']
+                        task_updates['stems'] = stem_tracks
+                    _update_task(task_file, task_updates)
+                    if ace_step_attempted:
+                        log.info('Task %s: Demucs fallback succeeded after Ace-Step failure', task_id)
+                except Exception as exc:
+                    log.warning(
+                        'Task %s Demucs fallback also failed, continuing without stems: %s',
+                        task_id, exc,
+                    )
+            elif stem_tracks is None and ace_step_attempted:
+                log.warning(
+                    'Task %s: Ace-Step failed and Demucs is not available; continuing without stems',
+                    task_id,
+                )
+
+        # effective_backend == 'none' (or any unrecognized value): skip stem separation.
 
         mt3_result = run_mt3_transcription(task_id, normalized_path, stems=stem_tracks)
         _update_task(task_file, {'mt3': mt3_result})
