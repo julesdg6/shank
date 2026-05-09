@@ -93,7 +93,7 @@ MT3_SERVICE_URL=http://shank-mt3:8090
 MT3_DEVICE=gpu
 ```
 
-Optional NVIDIA GPU runtime/device reservation example (already included as comments under `shank-mt3` in `docker-compose.yml`):
+Optional NVIDIA GPU runtime/device reservation example (already included as commented-out lines under `shank-mt3` in `docker-compose.yml`):
 ```yaml
 # gpus: all
 # deploy:

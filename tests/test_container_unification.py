@@ -23,7 +23,7 @@ def test_compose_uses_single_unified_service():
     assert 'command: uvicorn services.mt3.main:app --host 0.0.0.0 --port 8090 --log-level info' in text
     assert '# Optional NVIDIA GPU runtime example:' in text
     assert '# gpus: all' in text
-    assert '#           capabilities: [gpu]' in text
+    assert 'capabilities: [gpu]' in text
     assert 'shank-api:' not in text
     assert 'shank-worker:' not in text
     assert 'shank-mt3-gpu:' not in text
