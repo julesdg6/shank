@@ -10,7 +10,7 @@ SHANK integrates [Magenta MT3](https://github.com/magenta/mt3) to automatically 
 
 After each analysis task completes, the SHANK worker:
 
-1. Calls the internal MT3 FastAPI service (running on port 8090 inside the container via `supervisord`).
+1. Calls the MT3 FastAPI service (running as `shank-mt3` on port 8090 when the `mt3` compose profile is enabled).
 2. Sends the normalized WAV file to the `/transcribe` endpoint.
 3. Receives MIDI bytes and note event metadata in the response.
 4. Writes MIDI (`.mid`) and optional note JSON (`.notes.json`) under `DATA_DIR/mt3/<task_id>/`.
@@ -20,13 +20,13 @@ After each analysis task completes, the SHANK worker:
 
 ## Enabled / Disabled mode
 
-MT3 transcription is controlled by the `MT3_ENABLED` environment variable.
+MT3 transcription is controlled by the `MT3_ENABLED` environment variable (default: `false`).
 
-### Enabled (default)
+### Enabled
 
 ```dotenv
 MT3_ENABLED=true
-MT3_SERVICE_URL=http://127.0.0.1:8090
+MT3_SERVICE_URL=http://shank-mt3:8090
 ```
 
 - The worker attempts full-mix transcription for every task.
@@ -51,8 +51,8 @@ All variables can be set in `.env` or passed directly in `docker-compose.yml`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MT3_ENABLED` | `true` | Enable (`true`) or disable (`false`) MT3 transcription |
-| `MT3_SERVICE_URL` | `http://127.0.0.1:8090` | URL of the internal MT3 FastAPI service |
+| `MT3_ENABLED` | `false` | Enable (`true`) or disable (`false`) MT3 transcription |
+| `MT3_SERVICE_URL` | `http://shank-mt3:8090` | URL of the optional MT3 FastAPI service |
 | `MT3_MODEL` | `multi_instrument` | Model to use: `multi_instrument` (all instruments) or `ismir2021` (piano-only) |
 | `MT3_TIMEOUT` | `900` | HTTP timeout in seconds per transcription request |
 | `MT3_TRANSCRIBE_STEMS` | `true` | Also transcribe ACE-Step stems when present |
@@ -68,6 +68,47 @@ volumes:
   - ./data:/srv/shank/data
   - ./models/mt3/checkpoints:/srv/shank/models/mt3/checkpoints:ro
   - ./cache/mt3:/srv/shank/cache/mt3
+```
+
+---
+
+## Docker Compose modes
+
+### CPU/basic mode (default, MT3 off)
+
+```bash
+docker compose up --build -d
+```
+
+### GPU mode (MT3 profile on)
+
+```bash
+docker compose --profile mt3 up --build -d
+```
+
+Set:
+```dotenv
+MT3_ENABLED=true
+MT3_SERVICE_URL=http://shank-mt3:8090
+MT3_DEVICE=gpu
+```
+
+Optional NVIDIA GPU runtime/device reservation example (already included as comments under `shank-mt3` in `docker-compose.yml`):
+```yaml
+# gpus: all
+# deploy:
+#   resources:
+#     reservations:
+#       devices:
+#         - driver: nvidia
+#           count: 1
+#           capabilities: [gpu]
+```
+
+### MT3 disabled mode
+
+```dotenv
+MT3_ENABLED=false
 ```
 
 ---
@@ -128,7 +169,7 @@ MT3 checkpoints must be placed manually in `./models/mt3/checkpoints` on the hos
    ```
 4. Restart the container:
    ```bash
-   docker compose down && docker compose up --build -d
+   docker compose down && docker compose --profile mt3 up --build -d
    ```
 
 If the checkpoint directory is empty or missing, the MT3 service will start but return errors or empty MIDI on transcription requests.
