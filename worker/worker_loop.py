@@ -478,8 +478,8 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                     try:
                         stem_analysis[stem_name] = analyze_audio(stem_path)
                     except Exception as exc:
-                        log.exception('Task %s stem analysis failed for %s: %s', task_id, stem_name, exc)
-                        analysis_warnings.append(f'{stem_name}: {exc}')
+                        log.exception('Task %s stem analysis failed for %s', task_id, stem_name)
+                        analysis_warnings.append(f'Failed to analyze stem {stem_name}: {str(exc)}')
 
             analysis_payload: dict[str, Any] = {
                 'full_mix': full_mix_analysis,

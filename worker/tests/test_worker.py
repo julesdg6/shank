@@ -199,12 +199,13 @@ def test_pending_upload_task_records_ace_step_stems_when_enabled(data_dir, monke
 
     def fake_analysis_for_path(path):
         stem_name = Path(path).stem
+        is_full_mix = Path(path).name == f"{task['task_id']}.wav"
         return {
             'bpm': 128.0 if stem_name != 'drums' else 110.0,
             'key': 'A minor',
             'duration_seconds': 60.0,
             'waveform': [0.1, -0.1],
-            'frequency_histogram': [0.2, 0.8] if stem_name == task['task_id'] else [0.6, 0.4],
+            'frequency_histogram': [0.2, 0.8] if is_full_mix else [0.6, 0.4],
             'spectrogram_summary': [-12.0, -8.0],
             'loudness_curve': [0.3, 0.5],
             'energy_over_time': [0.09, 0.25],

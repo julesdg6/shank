@@ -83,7 +83,7 @@ def analyze_audio(file_path: str) -> dict:
             round(float(np.mean(chunk)), 5)
             for chunk in np.array_split(mean_by_freq, histogram_bins)
         ]
-        max_hist = max(frequency_histogram) or 1.0
+        max_hist = max(max(frequency_histogram, default=1.0), 1.0)
         frequency_histogram = [round(v / max_hist, 5) for v in frequency_histogram]
     else:
         frequency_histogram = [0.0] * histogram_bins

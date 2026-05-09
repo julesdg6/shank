@@ -638,7 +638,10 @@
     if (!stemPlayer.isPlaying) return stemPlayer.seekSeconds;
     if (!stemPlayer.context) return stemPlayer.seekSeconds;
     const elapsed = stemPlayer.context.currentTime - stemPlayer.transportStartAt;
-    return Math.max(0, Math.min(stemPlayer.durationSeconds || Infinity, stemPlayer.seekSeconds + elapsed));
+    if (stemPlayer.durationSeconds > 0) {
+      return Math.max(0, Math.min(stemPlayer.durationSeconds, stemPlayer.seekSeconds + elapsed));
+    }
+    return Math.max(0, stemPlayer.seekSeconds + elapsed);
   }
 
   function stopStemSources() {
@@ -683,7 +686,8 @@
       const source = stemPlayer.context.createBufferSource();
       source.buffer = track.buffer;
       source.connect(track.gain);
-      source.start(0, Math.min(stemPlayer.seekSeconds, track.buffer.duration));
+      const maxStartOffset = Math.max(0, track.buffer.duration - 0.001);
+      source.start(0, Math.min(stemPlayer.seekSeconds, maxStartOffset));
       track.source = source;
     });
     updateTrackGains();
@@ -776,10 +780,20 @@
     }
 
     if (series.length === 0) return;
-    const maxLen = Math.max(...series.map((s) => s.values.length), 1);
-    const maxValue = Math.max(...series.flatMap((s) => s.values), 1);
+    const normalizedSeries = series.map((s) => ({
+      ...s,
+      waveMax: s.kind === 'wave'
+        ? Math.max(s.values.reduce((max, v) => Math.max(max, Math.abs(toFiniteNumber(v, 0))), 0), 1)
+        : 1,
+    }));
 
-    series.forEach((s) => {
+    const maxLen = normalizedSeries.reduce((max, s) => Math.max(max, s.values.length), 1);
+    const maxValue = Math.max(
+      normalizedSeries.reduce((max, s) => s.values.reduce((innerMax, v) => Math.max(innerMax, toFiniteNumber(v, 0)), max), 1),
+      1,
+    );
+
+    normalizedSeries.forEach((s) => {
       const color = stemColor(s.name);
       ctx.strokeStyle = color;
       ctx.lineWidth = s.kind === 'wave' ? 1 : (s.name === 'full_mix' ? 2 : 1.5);
@@ -790,8 +804,7 @@
         const value = toFiniteNumber(s.values[i], 0);
         let y = canvas.clientHeight - (value / maxValue) * canvas.clientHeight;
         if (s.kind === 'wave') {
-          const waveMax = Math.max(...s.values.map((v) => Math.abs(toFiniteNumber(v, 0))), 1);
-          y = (canvas.clientHeight / 2) - ((value / waveMax) * (canvas.clientHeight * 0.45));
+          y = (canvas.clientHeight / 2) - ((value / s.waveMax) * (canvas.clientHeight * 0.45));
         }
         if (i === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
@@ -843,10 +856,15 @@
       };
       try {
         const res = await fetch(`/tasks/${encodeURIComponent(taskData.task_id)}/artifacts/${encodeURIComponent(spec.artifactName)}`);
-        if (!res.ok) return track;
+        if (!res.ok) {
+          console.warn(`Failed to load audio artifact task=${taskData.task_id} stem=${spec.name} artifact=${spec.artifactName} status=${res.status}`);
+          return track;
+        }
         const buffer = await res.arrayBuffer();
         track.buffer = await stemPlayer.context.decodeAudioData(buffer);
-      } catch (_) { /* non-fatal; keep analysis panel usable */ }
+      } catch (error) {
+        console.warn('Failed to decode track for stem workbench:', spec.name, error);
+      }
       return track;
     }));
 
@@ -890,16 +908,20 @@
       });
     });
 
-    document.getElementById('transport-play')?.addEventListener('click', () => startStemPlayback());
-    document.getElementById('transport-pause')?.addEventListener('click', () => pauseStemPlayback());
-    document.getElementById('transport-seek')?.addEventListener('input', (event) => {
+    const playBtn = document.getElementById('transport-play');
+    const pauseBtn = document.getElementById('transport-pause');
+    const seek = document.getElementById('transport-seek');
+    const modeSelect = document.getElementById('histogram-mode');
+    if (playBtn) playBtn.onclick = () => startStemPlayback();
+    if (pauseBtn) pauseBtn.onclick = () => pauseStemPlayback();
+    if (seek) seek.oninput = (event) => {
       const ratio = Number(event.target.value) / 1000;
       seekStemPlayback((stemPlayer.durationSeconds || 0) * ratio);
-    });
-    document.getElementById('histogram-mode')?.addEventListener('change', (event) => {
+    };
+    if (modeSelect) modeSelect.onchange = (event) => {
       stemPlayer.histogramMode = event.target.value;
       drawHistogram(taskData);
-    });
+    };
 
     workbench.style.display = '';
     updateTransportUi();
