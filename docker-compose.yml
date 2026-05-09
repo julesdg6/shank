@@ -23,7 +23,8 @@ services:
   shank-mt3:
     build: .
     command: uvicorn services.mt3.main:app --host 0.0.0.0 --port 8090 --log-level info
-    profiles: ["mt3"]
+    profiles:
+      - mt3
     expose:
       - "8090"
     environment:
