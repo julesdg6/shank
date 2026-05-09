@@ -149,9 +149,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-09T10:02:09Z
-- Latest commit: `828deb9`
-- Commit message: Merge pull request #47 from julesdg6/copilot/add-per-stem-histogram-overlays  Add per-stem analysis artifacts and synced stem mixer with histogram overlay modes
+- Last automated update: 2026-05-09T10:53:39Z
+- Latest commit: `3071fce`
+- Commit message: Merge pull request #49 from julesdg6/copilot/add-demucs-fallback-stem-separation  Add Demucs fallback for stem separation when Ace-Step is unavailable
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
