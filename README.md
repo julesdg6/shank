@@ -149,9 +149,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-09T09:41:14Z
-- Latest commit: `68deced`
-- Commit message: Merge pull request #46 from julesdg6/copilot/add-docker-compose-profile-mt3  Add optional MT3 Docker Compose profile with GPU-ready config and mode-specific docs
+- Last automated update: 2026-05-09T10:02:09Z
+- Latest commit: `828deb9`
+- Commit message: Merge pull request #47 from julesdg6/copilot/add-per-stem-histogram-overlays  Add per-stem analysis artifacts and synced stem mixer with histogram overlay modes
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
