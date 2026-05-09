@@ -104,8 +104,8 @@ Environment variables (set in `.env` or `docker-compose.yml`):
 | `ACE_STEP_API_URL` | *(empty)* | Base URL of an ACE-Step API for stem separation |
 | `ACE_STEP_API_KEY` | *(empty)* | Optional Bearer token for the ACE-Step API |
 | `ACE_STEP_STEMS` | `vocals,drums,bass,other` | Comma-separated list of stems to request |
-| `MT3_ENABLED` | `true` | Enable MT3 transcription in worker |
-| `MT3_SERVICE_URL` | `http://127.0.0.1:8090` | Base URL for the MT3 FastAPI service inside the unified container |
+| `MT3_ENABLED` | `false` | Enable MT3 transcription in worker |
+| `MT3_SERVICE_URL` | `http://shank-mt3:8090` | Base URL for the optional MT3 FastAPI service |
 | `MT3_MODEL` | `multi_instrument` | Requested model identifier to send to MT3 service |
 | `MT3_TIMEOUT` | `900` | MT3 HTTP timeout in seconds |
 | `MT3_TRANSCRIBE_STEMS` | `true` | Also transcribe Ace-Step stems when present |
@@ -173,12 +173,12 @@ SHANK can transcribe audio to MIDI using [Magenta MT3](https://github.com/magent
 
 ### Enabling / Disabling MT3
 
-MT3 transcription is controlled by the `MT3_ENABLED` variable (default: `true`).
+MT3 transcription is controlled by the `MT3_ENABLED` variable (default: `false`).
 
-**Enabled** (default):
+**Enabled**:
 ```dotenv
 MT3_ENABLED=true
-MT3_SERVICE_URL=http://127.0.0.1:8090
+MT3_SERVICE_URL=http://shank-mt3:8090
 ```
 The worker will call the internal MT3 service after each analysis and attach MIDI artifacts to the task result.
 
@@ -188,13 +188,47 @@ MT3_ENABLED=false
 ```
 All transcription steps are skipped entirely. The `mt3` object in the task result will show `"status": "disabled"`.
 
-### Starting SHANK with MT3
+### CPU/basic mode (default, MT3 off)
 
 ```bash
 docker compose up --build -d
 ```
 
-No extra compose profile is needed — MT3 runs inside the `shank` container managed by `supervisord` on port 8090.
+### GPU/MT3 mode
+
+```bash
+docker compose --profile mt3 up --build -d
+```
+
+Set in `.env`:
+```dotenv
+MT3_ENABLED=true
+MT3_SERVICE_URL=http://shank-mt3:8090
+MT3_DEVICE=gpu
+```
+
+Optional NVIDIA Docker Compose GPU reservation example in `docker-compose.yml` under `shank-mt3`:
+```yaml
+# gpus: all
+# deploy:
+#   resources:
+#     reservations:
+#       devices:
+#         - driver: nvidia
+#           count: 1
+#           capabilities: [gpu]
+```
+
+### MT3 disabled mode
+
+```bash
+docker compose up --build -d
+```
+
+Set in `.env`:
+```dotenv
+MT3_ENABLED=false
+```
 
 ### Full-Mix vs Stem Transcription
 
@@ -213,8 +247,8 @@ No extra compose profile is needed — MT3 runs inside the `shank` container man
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MT3_ENABLED` | `true` | Enable (`true`) or disable (`false`) MT3 transcription |
-| `MT3_SERVICE_URL` | `http://127.0.0.1:8090` | Internal URL of the MT3 FastAPI service |
+| `MT3_ENABLED` | `false` | Enable (`true`) or disable (`false`) MT3 transcription |
+| `MT3_SERVICE_URL` | `http://shank-mt3:8090` | Internal URL of the optional MT3 FastAPI service |
 | `MT3_MODEL` | `multi_instrument` | MT3 model: `multi_instrument` (all instruments) or `ismir2021` (piano-only) |
 | `MT3_TIMEOUT` | `900` | HTTP timeout (seconds) for a single transcription request |
 | `MT3_TRANSCRIBE_STEMS` | `true` | Also transcribe ACE-Step stems when available |
@@ -225,7 +259,7 @@ No extra compose profile is needed — MT3 runs inside the `shank` container man
 
 Example `.env` snippet:
 ```dotenv
-MT3_ENABLED=true
+MT3_ENABLED=false
 MT3_MODEL=multi_instrument
 MT3_TIMEOUT=900
 MT3_TRANSCRIBE_STEMS=true
@@ -233,6 +267,7 @@ MT3_FAIL_TASK_ON_ERROR=false
 MT3_CHECKPOINT_ROOT=/srv/shank/models/mt3/checkpoints
 MT3_CACHE_DIR=/srv/shank/cache/mt3
 MT3_DEVICE=auto
+MT3_SERVICE_URL=http://shank-mt3:8090
 ```
 
 ### Downloading MIDI Results
@@ -277,7 +312,7 @@ MT3_TIMEOUT=1800   # 30 minutes — for long tracks or slow CPU inference
 #### No MIDI generated / empty MIDI file
 - Check `task['mt3']['warnings']` in the task JSON — a warning such as `"No MIDI data returned; empty MIDI written"` indicates the service returned no note events.
 - This can happen when the audio is silent, very short, or contains only non-pitched content.
-- Verify `MT3_SERVICE_URL` is reachable from within the container: `docker exec shank curl -s http://127.0.0.1:8090/health`.
+- Verify `MT3_SERVICE_URL` is reachable from within the container: `docker compose exec shank curl -s http://shank-mt3:8090/health`.
 
 #### Stem files not local / stem transcription skipped
 Stem transcription requires that ACE-Step has already separated the audio **and** that the stem file paths are accessible locally inside the container.
