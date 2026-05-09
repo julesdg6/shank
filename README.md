@@ -149,9 +149,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-08T15:19:02Z
-- Latest commit: `57efb63`
-- Commit message: Merge pull request #45 from julesdg6/copilot/document-mt3-setup-usage  docs: Add MT3 MIDI transcription setup and usage documentation
+- Last automated update: 2026-05-09T09:41:14Z
+- Latest commit: `68deced`
+- Commit message: Merge pull request #46 from julesdg6/copilot/add-docker-compose-profile-mt3  Add optional MT3 Docker Compose profile with GPU-ready config and mode-specific docs
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
