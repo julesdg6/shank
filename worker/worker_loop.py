@@ -291,7 +291,7 @@ def separate_stems_with_demucs(src_audio_path: str, task_id: str) -> dict:
         '--out', str(out_base),
         src_audio_path,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     if result.returncode != 0:
         raise RuntimeError(f'demucs failed (exit {result.returncode}): {result.stderr}')
 
@@ -579,7 +579,7 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                     task_id,
                 )
 
-        # effective_backend == 'none' (or any unrecognised value): skip stem separation.
+        # effective_backend == 'none' (or any unrecognized value): skip stem separation.
 
         mt3_result = run_mt3_transcription(task_id, normalized_path, stems=stem_tracks)
         _update_task(task_file, {'mt3': mt3_result})

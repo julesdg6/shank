@@ -1304,8 +1304,8 @@
         label.textContent = 'Stems: none';
       } else {
         dot.className = 'status-dot';
-        const backendLabel = active === 'acestep' ? 'Ace-Step' : active === 'demucs' ? `Demucs (${data.demucs?.model || ''})` : active;
-        label.textContent = `Stems: ${backendLabel}`;
+        const backendNames = { acestep: 'Ace-Step', demucs: `Demucs (${data.demucs?.model || ''})` };
+        label.textContent = `Stems: ${backendNames[active] || active}`;
       }
     } catch (_) {
       dot.className = 'status-dot offline';

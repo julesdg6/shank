@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import shutil
 import urllib.request
@@ -12,6 +13,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
 app = FastAPI(title='SHANK API')
+
+log = logging.getLogger(__name__)
 
 DATA_DIR = Path(os.getenv('DATA_DIR', '/srv/shank/data'))
 UPLOADS_DIR = DATA_DIR / 'uploads'
@@ -321,7 +324,8 @@ def get_stem_backend_status():
                 req.add_header('Authorization', f'Bearer {ace_step_key}')
             with urllib.request.urlopen(req, timeout=3):
                 ace_step_healthy = True
-        except Exception:
+        except Exception as exc:
+            log.debug('Ace-Step health check failed: %s', exc)
             ace_step_healthy = False
 
     demucs_available = shutil.which('demucs') is not None
@@ -357,7 +361,9 @@ def get_stem_backend_status():
     }
 
 
-
+# ---------------------------------------------------------------------------
+# Static UI — mount last so API routes take precedence
+# ---------------------------------------------------------------------------
 
 _UI_DIR = Path(__file__).parent / 'ui'
 if _UI_DIR.is_dir():
