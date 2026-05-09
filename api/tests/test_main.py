@@ -465,3 +465,50 @@ def test_get_mt3_notes_returns_404_when_no_notes_path(client, tmp_path):
 
     response = client.get(f'/tasks/{task_id}/mt3/notes/full_mix')
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /stem-backend/status
+# ---------------------------------------------------------------------------
+
+def test_stem_backend_status_returns_expected_shape(client, monkeypatch):
+    """The /stem-backend/status endpoint must return the correct structure."""
+    monkeypatch.delenv('ACE_STEP_API_URL', raising=False)
+    monkeypatch.delenv('STEM_BACKEND', raising=False)
+    import importlib
+    import api.main as main_module  # noqa: PLC0415
+    importlib.reload(main_module)
+    from fastapi.testclient import TestClient
+    c = TestClient(main_module.app)
+
+    response = c.get('/stem-backend/status')
+    assert response.status_code == 200
+    data = response.json()
+    assert 'configured_backend' in data
+    assert 'active_backend' in data
+    assert 'acestep' in data
+    assert 'demucs' in data
+    assert isinstance(data['acestep']['configured'], bool)
+    assert isinstance(data['acestep']['healthy'], bool)
+    assert isinstance(data['demucs']['available'], bool)
+
+
+def test_stem_backend_status_active_none_when_no_backend_configured(client, monkeypatch):
+    """active_backend must be 'none' when no backend is reachable."""
+    monkeypatch.delenv('ACE_STEP_API_URL', raising=False)
+    monkeypatch.setenv('STEM_BACKEND', 'auto')
+    import importlib
+    import shutil
+    import api.main as main_module  # noqa: PLC0415
+    importlib.reload(main_module)
+    from fastapi.testclient import TestClient
+    from unittest.mock import patch
+    with patch.object(shutil, 'which', return_value=None):
+        c = TestClient(main_module.app)
+        response = c.get('/stem-backend/status')
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data['active_backend'] == 'none'
+    assert data['acestep']['configured'] is False
+    assert data['demucs']['available'] is False

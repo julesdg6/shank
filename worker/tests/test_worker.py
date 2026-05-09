@@ -237,9 +237,10 @@ def test_pending_upload_task_records_ace_step_stems_when_enabled(data_dir, monke
     assert updated['analysis']['stems']['drums']['bpm'] == 110.0
 
 
-def test_pending_upload_task_marks_failed_when_ace_step_fails(data_dir, monkeypatch):
-    """If Ace-step stem extraction fails, the task should be marked as failed."""
+def test_pending_upload_task_marks_failed_when_ace_step_fails_strict_mode(data_dir, monkeypatch):
+    """In STEM_BACKEND=acestep strict mode, an Ace-Step failure must mark the task failed."""
     monkeypatch.setenv('ACE_STEP_API_URL', 'http://ace-step:8001')
+    monkeypatch.setenv('STEM_BACKEND', 'acestep')
     importlib.reload(worker_loop)
     task, task_file = _make_upload_task(data_dir)
 
@@ -253,6 +254,140 @@ def test_pending_upload_task_marks_failed_when_ace_step_fails(data_dir, monkeypa
     updated = json.loads(task_file.read_text())
     assert updated['status'] == 'failed'
     assert 'Ace-step unavailable' in updated['error']
+
+
+def test_auto_mode_falls_back_to_demucs_when_ace_step_fails(data_dir, monkeypatch):
+    """In STEM_BACKEND=auto, Ace-Step failure should fall back to Demucs."""
+    monkeypatch.setenv('ACE_STEP_API_URL', 'http://ace-step:8001')
+    monkeypatch.setenv('STEM_BACKEND', 'auto')
+    importlib.reload(worker_loop)
+    task, task_file = _make_upload_task(data_dir)
+
+    vocals = data_dir / 'stems' / task['task_id'] / 'htdemucs' / f"{task['task_id']}" / 'vocals.wav'
+    drums = vocals.parent / 'drums.wav'
+    bass = vocals.parent / 'bass.wav'
+    other = vocals.parent / 'other.wav'
+
+    def fake_demucs(src_path, tid):
+        for f in (vocals, drums, bass, other):
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_bytes(b'fake-wav')
+        return {'tracks': {'vocals': str(vocals), 'drums': str(drums), 'bass': str(bass), 'other': str(other)}}
+
+    with patch('worker_loop.normalize_audio'), \
+         patch('worker_loop.separate_stems_with_ace_step', side_effect=RuntimeError('Ace-step down')), \
+         patch('worker_loop.separate_stems_with_demucs', side_effect=fake_demucs), \
+         patch('worker_loop._is_demucs_available', return_value=True), \
+         patch('worker_loop.analyze_audio', return_value={'bpm': 120.0, 'key': 'C major'}):
+        count = worker_loop.process_pending_tasks()
+
+    assert count == 1
+    updated = json.loads(task_file.read_text())
+    assert updated['status'] == 'done'
+    assert updated.get('stem_backend') == 'demucs'
+    assert set(updated['stems'].keys()) == {'vocals', 'drums', 'bass', 'other'}
+
+
+def test_auto_mode_continues_without_stems_when_both_backends_fail(data_dir, monkeypatch):
+    """In auto mode, if Ace-Step fails and Demucs fails too, the task should still succeed without stems."""
+    monkeypatch.setenv('ACE_STEP_API_URL', 'http://ace-step:8001')
+    monkeypatch.setenv('STEM_BACKEND', 'auto')
+    importlib.reload(worker_loop)
+    task, task_file = _make_upload_task(data_dir)
+
+    with patch('worker_loop.normalize_audio'), \
+         patch('worker_loop.separate_stems_with_ace_step', side_effect=RuntimeError('Ace-step down')), \
+         patch('worker_loop.separate_stems_with_demucs', side_effect=RuntimeError('demucs error')), \
+         patch('worker_loop._is_demucs_available', return_value=True), \
+         patch('worker_loop.analyze_audio', return_value={'bpm': 120.0, 'key': 'C major'}):
+        count = worker_loop.process_pending_tasks()
+
+    assert count == 1
+    updated = json.loads(task_file.read_text())
+    assert updated['status'] == 'done'
+    assert 'stems' not in updated
+
+
+def test_auto_mode_continues_without_stems_when_ace_step_fails_and_demucs_unavailable(data_dir, monkeypatch):
+    """In auto mode, Ace-Step failure with no Demucs available should still succeed without stems."""
+    monkeypatch.setenv('ACE_STEP_API_URL', 'http://ace-step:8001')
+    monkeypatch.setenv('STEM_BACKEND', 'auto')
+    importlib.reload(worker_loop)
+    task, task_file = _make_upload_task(data_dir)
+
+    with patch('worker_loop.normalize_audio'), \
+         patch('worker_loop.separate_stems_with_ace_step', side_effect=RuntimeError('Ace-step down')), \
+         patch('worker_loop._is_demucs_available', return_value=False), \
+         patch('worker_loop.analyze_audio', return_value={'bpm': 120.0, 'key': 'C major'}):
+        count = worker_loop.process_pending_tasks()
+
+    assert count == 1
+    updated = json.loads(task_file.read_text())
+    assert updated['status'] == 'done'
+    assert 'stems' not in updated
+
+
+def test_demucs_backend_strict_mode_fails_task_on_error(data_dir, monkeypatch):
+    """In STEM_BACKEND=demucs strict mode, a Demucs failure must mark the task failed."""
+    monkeypatch.setenv('STEM_BACKEND', 'demucs')
+    importlib.reload(worker_loop)
+    task, task_file = _make_upload_task(data_dir)
+
+    with patch('worker_loop.normalize_audio'), \
+         patch('worker_loop.separate_stems_with_demucs', side_effect=RuntimeError('demucs not found')), \
+         patch('worker_loop.analyze_audio') as mock_analyze:
+        count = worker_loop.process_pending_tasks()
+
+    assert count == 1
+    mock_analyze.assert_not_called()
+    updated = json.loads(task_file.read_text())
+    assert updated['status'] == 'failed'
+    assert 'demucs not found' in updated['error']
+
+
+def test_demucs_backend_strict_mode_records_stems_on_success(data_dir, monkeypatch):
+    """In STEM_BACKEND=demucs, a successful run stores stems in the task."""
+    monkeypatch.setenv('STEM_BACKEND', 'demucs')
+    importlib.reload(worker_loop)
+    task, task_file = _make_upload_task(data_dir)
+
+    vocals = data_dir / 'stems' / task['task_id'] / 'htdemucs' / task['task_id'] / 'vocals.wav'
+    drums = vocals.parent / 'drums.wav'
+
+    def fake_demucs(src_path, tid):
+        for f in (vocals, drums):
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_bytes(b'fake-wav')
+        return {'tracks': {'vocals': str(vocals), 'drums': str(drums)}}
+
+    with patch('worker_loop.normalize_audio'), \
+         patch('worker_loop.separate_stems_with_demucs', side_effect=fake_demucs), \
+         patch('worker_loop.analyze_audio', return_value={'bpm': 120.0, 'key': 'C major'}):
+        count = worker_loop.process_pending_tasks()
+
+    assert count == 1
+    updated = json.loads(task_file.read_text())
+    assert updated['status'] == 'done'
+    assert updated.get('stem_backend') == 'demucs'
+    assert set(updated['stems'].keys()) == {'vocals', 'drums'}
+
+
+def test_acestep_strict_mode_fails_when_url_not_configured(data_dir, monkeypatch):
+    """In STEM_BACKEND=acestep mode, task must fail if ACE_STEP_API_URL is not set."""
+    monkeypatch.setenv('STEM_BACKEND', 'acestep')
+    monkeypatch.delenv('ACE_STEP_API_URL', raising=False)
+    importlib.reload(worker_loop)
+    task, task_file = _make_upload_task(data_dir)
+
+    with patch('worker_loop.normalize_audio'), \
+         patch('worker_loop.analyze_audio') as mock_analyze:
+        count = worker_loop.process_pending_tasks()
+
+    assert count == 1
+    mock_analyze.assert_not_called()
+    updated = json.loads(task_file.read_text())
+    assert updated['status'] == 'failed'
+    assert 'ACE_STEP_API_URL' in updated['error']
 
 
 def test_pending_upload_task_records_mt3_results_when_enabled(data_dir, monkeypatch):
