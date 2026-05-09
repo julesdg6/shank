@@ -103,7 +103,16 @@ def test_normalize_audio_raises_on_ffmpeg_failure(tmp_path, monkeypatch):
 def test_pending_upload_task_is_normalized(data_dir):
     """process_pending_tasks must normalize and analyze a pending upload task and mark it done."""
     task, task_file = _make_upload_task(data_dir)
-    fake_analysis = {'bpm': 128.0, 'key': 'A minor', 'duration_seconds': 95.75}
+    fake_analysis = {
+        'bpm': 128.0,
+        'key': 'A minor',
+        'duration_seconds': 95.75,
+        'waveform': [0.1, -0.1],
+        'frequency_histogram': [0.2, 0.8],
+        'spectrogram_summary': [-12.0, -8.0],
+        'loudness_curve': [0.3, 0.5],
+        'energy_over_time': [0.09, 0.25],
+    }
 
     with patch('worker_loop.normalize_audio') as mock_norm, \
          patch('worker_loop.analyze_audio', return_value=fake_analysis):
@@ -117,6 +126,8 @@ def test_pending_upload_task_is_normalized(data_dir):
     assert updated['bpm'] == 128.0
     assert updated['key'] == 'A minor'
     assert updated['duration_seconds'] == 95.75
+    assert updated['analysis']['full_mix']['frequency_histogram'] == [0.2, 0.8]
+    assert updated['analysis']['stems'] == {}
     mock_norm.assert_called_once()
 
 
@@ -186,6 +197,19 @@ def test_pending_upload_task_records_ace_step_stems_when_enabled(data_dir, monke
         stem_file.parent.mkdir(parents=True, exist_ok=True)
         stem_file.write_bytes(b'fake-wav')
 
+    def fake_analysis_for_path(path):
+        stem_name = Path(path).stem
+        return {
+            'bpm': 128.0 if stem_name != 'drums' else 110.0,
+            'key': 'A minor',
+            'duration_seconds': 60.0,
+            'waveform': [0.1, -0.1],
+            'frequency_histogram': [0.2, 0.8] if stem_name == task['task_id'] else [0.6, 0.4],
+            'spectrogram_summary': [-12.0, -8.0],
+            'loudness_curve': [0.3, 0.5],
+            'energy_over_time': [0.09, 0.25],
+        }
+
     with patch('worker_loop.normalize_audio'), \
          patch('worker_loop.separate_stems_with_ace_step', return_value={
              'task_id': 'ace-task-1',
@@ -196,7 +220,7 @@ def test_pending_upload_task_records_ace_step_stems_when_enabled(data_dir, monke
                  'other': str(other),
              },
          }), \
-         patch('worker_loop.analyze_audio', return_value={'bpm': 128.0, 'key': 'A minor'}):
+         patch('worker_loop.analyze_audio', side_effect=fake_analysis_for_path):
         count = worker_loop.process_pending_tasks()
 
     assert count == 1
@@ -207,6 +231,9 @@ def test_pending_upload_task_records_ace_step_stems_when_enabled(data_dir, monke
     assert updated['stems']['drums'].endswith('drums.wav')
     assert updated['stems']['bass'].endswith('bass.wav')
     assert updated['stems']['other'].endswith('other.wav')
+    assert updated['analysis']['full_mix']['frequency_histogram'] == [0.2, 0.8]
+    assert set(updated['analysis']['stems'].keys()) == {'vocals', 'drums', 'bass', 'other'}
+    assert updated['analysis']['stems']['drums']['bpm'] == 110.0
 
 
 def test_pending_upload_task_marks_failed_when_ace_step_fails(data_dir, monkeypatch):

@@ -68,7 +68,7 @@ def _write_rhythmic_wav(path, bpm=120.0, frequency=440.0, duration=8.0, sr=SAMPL
 # ---------------------------------------------------------------------------
 
 def test_analyze_audio_returns_bpm_and_key(tmp_path):
-    """analyze_audio must return a dict with 'bpm', 'key', and duration."""
+    """analyze_audio must return base stats plus summary visualization artefacts."""
     wav = _write_sine_wav(tmp_path / 'test.wav')
     result = analyze_audio(str(wav))
 
@@ -76,6 +76,11 @@ def test_analyze_audio_returns_bpm_and_key(tmp_path):
     assert 'bpm' in result
     assert 'key' in result
     assert 'duration_seconds' in result
+    assert 'waveform' in result
+    assert 'frequency_histogram' in result
+    assert 'spectrogram_summary' in result
+    assert 'loudness_curve' in result
+    assert 'energy_over_time' in result
 
 
 def test_analyze_audio_bpm_is_positive(tmp_path):
