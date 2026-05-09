@@ -287,6 +287,7 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
     midi_file = tmp_path / 'mt3' / task_id / 'full_mix.mid'
     notes_file = tmp_path / 'mt3' / task_id / 'full_mix_notes.json'
     stem_midi = tmp_path / 'mt3' / task_id / 'vocals.mid'
+    stem_wav = tmp_path / 'stems' / task_id / 'vocals.wav'
 
     normalized.parent.mkdir(parents=True, exist_ok=True)
     midi_file.parent.mkdir(parents=True, exist_ok=True)
@@ -294,6 +295,8 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
     midi_file.write_bytes(b'MThd\x00\x00\x00\x06\x00\x00\x00\x01\x00`MTrk\x00\x00\x00\x04\x00\xff/\x00')
     notes_file.write_text(json.dumps({'notes': []}))
     stem_midi.write_bytes(b'MThd\x00\x00\x00\x06\x00\x00\x00\x01\x00`MTrk\x00\x00\x00\x04\x00\xff/\x00')
+    stem_wav.parent.mkdir(parents=True, exist_ok=True)
+    stem_wav.write_bytes(b'RIFF' + b'\x00' * 36)
 
     tasks_dir = tmp_path / 'tasks'
     tasks_dir.mkdir(parents=True, exist_ok=True)
@@ -301,6 +304,7 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
         'task_id': task_id,
         'status': 'done',
         'normalized_path': str(normalized),
+        'stems': {'vocals': str(stem_wav)},
         'mt3': {
             'status': 'completed',
             'full_mix': {
@@ -316,7 +320,7 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
     response = client.get(f'/tasks/{task_id}/artifacts')
     assert response.status_code == 200
     assert response.json() == {
-        'artifacts': ['midi', 'normalized_wav', 'notes_json', 'stem_vocals_midi'],
+        'artifacts': ['midi', 'normalized_wav', 'notes_json', 'stem_vocals_midi', 'stem_vocals_wav'],
     }
 
 

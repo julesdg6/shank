@@ -470,16 +470,34 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
             continue
 
         try:
-            results = analyze_audio(normalized_path)
+            full_mix_analysis = analyze_audio(normalized_path)
+            stem_analysis: dict[str, Any] = {}
+            analysis_warnings: list[str] = []
+            if stem_tracks:
+                for stem_name, stem_path in stem_tracks.items():
+                    try:
+                        stem_analysis[stem_name] = analyze_audio(stem_path)
+                    except Exception as exc:
+                        log.exception('Task %s stem analysis failed for %s', task_id, stem_name)
+                        analysis_warnings.append(f'Failed to analyze stem {stem_name}: {str(exc)}')
+
+            analysis_payload: dict[str, Any] = {
+                'full_mix': full_mix_analysis,
+                'stems': stem_analysis,
+            }
+            if analysis_warnings:
+                analysis_payload['warnings'] = analysis_warnings
+
             _update_task(task_file, {
                 'status': 'done',
                 'normalized_path': normalized_path,
-                'bpm': results['bpm'],
-                'key': results['key'],
-                **({'duration_seconds': results.get('duration_seconds')} if results.get('duration_seconds') is not None else {}),
+                'analysis': analysis_payload,
+                'bpm': full_mix_analysis['bpm'],
+                'key': full_mix_analysis['key'],
+                **({'duration_seconds': full_mix_analysis.get('duration_seconds')} if full_mix_analysis.get('duration_seconds') is not None else {}),
                 'completed_at': datetime.now(timezone.utc).isoformat(),
             })
-            log.info('Task %s done: bpm=%s key=%s', task_id, results['bpm'], results['key'])
+            log.info('Task %s done: bpm=%s key=%s', task_id, full_mix_analysis['bpm'], full_mix_analysis['key'])
         except Exception as exc:
             log.exception('Task %s analysis failed: %s', task_id, exc)
             _update_task(task_file, {

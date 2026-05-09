@@ -208,6 +208,15 @@ def _task_artifacts(task: dict) -> dict[str, Path]:
         if resolved is not None:
             artifacts['normalized_wav'] = resolved
 
+    stems = task.get('stems')
+    if isinstance(stems, dict):
+        for stem_name, stem_path in stems.items():
+            if not isinstance(stem_name, str) or not isinstance(stem_path, str) or not stem_path:
+                continue
+            resolved = _resolve_data_path(stem_path)
+            if resolved is not None:
+                artifacts[f'stem_{stem_name}_wav'] = resolved
+
     mt3_data = task.get('mt3')
     if isinstance(mt3_data, dict):
         full_mix = mt3_data.get('full_mix')

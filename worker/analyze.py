@@ -63,4 +63,67 @@ def analyze_audio(file_path: str) -> dict:
 
     key = _detect_key(y, sr)
 
-    return {'bpm': bpm, 'key': key, 'duration_seconds': duration_seconds}
+    # Lightweight summary artifacts for UI visualizations.
+    waveform_bins = 128
+    histogram_bins = 64
+    curve_bins = 128
+
+    if y.size:
+        waveform = [
+            round(float(np.mean(chunk)), 5)
+            for chunk in np.array_split(y, waveform_bins)
+        ]
+    else:
+        waveform = [0.0] * waveform_bins
+
+    stft_mag = np.abs(librosa.stft(y, n_fft=2048, hop_length=512))
+    if stft_mag.size:
+        mean_by_freq = stft_mag.mean(axis=1)
+        frequency_histogram = [
+            round(float(np.mean(chunk)), 5)
+            for chunk in np.array_split(mean_by_freq, histogram_bins)
+        ]
+        max_hist = max(max(frequency_histogram, default=1.0), 1.0)
+        frequency_histogram = [round(v / max_hist, 5) for v in frequency_histogram]
+    else:
+        frequency_histogram = [0.0] * histogram_bins
+
+    mel_spec = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=64, hop_length=1024)
+    if mel_spec.size:
+        mel_db = librosa.power_to_db(mel_spec, ref=np.max)
+        mean_by_band = mel_db.mean(axis=1)
+        spectrogram_summary = [
+            round(float(np.mean(chunk)), 2)
+            for chunk in np.array_split(mean_by_band, 8)
+        ]
+    else:
+        spectrogram_summary = [0.0] * 8
+
+    rms = librosa.feature.rms(y=y, frame_length=2048, hop_length=512)[0]
+    if rms.size:
+        loudness_curve = [
+            round(float(np.mean(chunk)), 5)
+            for chunk in np.array_split(rms, curve_bins)
+        ]
+    else:
+        loudness_curve = [0.0] * curve_bins
+
+    frame_energy = rms ** 2 if rms.size else np.array([])
+    if frame_energy.size:
+        energy_over_time = [
+            round(float(np.mean(chunk)), 5)
+            for chunk in np.array_split(frame_energy, curve_bins)
+        ]
+    else:
+        energy_over_time = [0.0] * curve_bins
+
+    return {
+        'bpm': bpm,
+        'key': key,
+        'duration_seconds': duration_seconds,
+        'waveform': waveform,
+        'frequency_histogram': frequency_histogram,
+        'spectrogram_summary': spectrogram_summary,
+        'loudness_curve': loudness_curve,
+        'energy_over_time': energy_over_time,
+    }

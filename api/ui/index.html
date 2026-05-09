@@ -332,9 +332,64 @@
     }
     .detail-list li { display: contents; }
     .detail-list strong { color: var(--text-muted); }
+    .detail-grid {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+    .panel {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.85rem;
+    }
+    .panel h4 {
+      font-size: 0.82rem;
+      margin-bottom: 0.6rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .transport-controls {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      margin-bottom: 0.6rem;
+      flex-wrap: wrap;
+    }
+    .transport-controls input[type="range"] { flex: 1; min-width: 180px; }
+    .transport-time { font-family: monospace; font-size: 0.78rem; color: var(--text-muted); }
+    .histogram-canvas {
+      width: 100%;
+      height: 180px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: #111722;
+    }
+    .stem-row {
+      display: grid;
+      grid-template-columns: auto 1fr auto auto auto;
+      gap: 0.5rem;
+      align-items: center;
+      margin-bottom: 0.5rem;
+      font-size: 0.82rem;
+    }
+    .stem-row:last-child { margin-bottom: 0; }
+    .stem-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .stem-row input[type="range"] { width: 100%; }
+    #stem-analysis-list { list-style: none; font-size: 0.82rem; display: grid; gap: 0.35rem; }
+    #stem-analysis-list li { display: flex; justify-content: space-between; gap: 0.5rem; }
+    #stem-analysis-list strong { color: var(--text-muted); }
     @media (max-width: 700px) {
       .detail-list { grid-template-columns: 1fr; }
       .detail-list li { display: block; margin-bottom: 0.5rem; }
+      .detail-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -451,6 +506,36 @@
     </div>
     <div class="alert" id="detail-alert"></div>
     <ul class="detail-list" id="detail-list"></ul>
+    <div class="detail-grid" id="stem-workbench" style="display:none">
+      <div class="panel">
+        <h4>Stem Mixer &amp; Playback</h4>
+        <div class="transport-controls">
+          <button class="btn btn-primary btn-sm" id="transport-play">Play</button>
+          <button class="btn btn-ghost btn-sm" id="transport-pause">Pause</button>
+          <input type="range" id="transport-seek" min="0" max="1000" value="0" />
+          <span class="transport-time" id="transport-time">0:00 / 0:00</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.6rem">
+          <label for="histogram-mode" style="font-size:0.78rem;color:var(--text-muted)">Histogram view</label>
+          <select id="histogram-mode" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:0.35rem">
+            <option value="full_mix">Full mix only</option>
+            <option value="selected">Selected stem only</option>
+            <option value="overlay">Overlay all stems</option>
+          </select>
+        </div>
+        <canvas class="histogram-canvas" id="histogram-canvas"></canvas>
+      </div>
+      <div style="display:grid;gap:1rem">
+        <div class="panel">
+          <h4>Stems</h4>
+          <div id="stem-mixer-list"></div>
+        </div>
+        <div class="panel">
+          <h4>Selected Stem Analysis</h4>
+          <ul id="stem-analysis-list"></ul>
+        </div>
+      </div>
+    </div>
     <h3 style="font-size:0.95rem;margin-bottom:0.5rem">Full Task JSON</h3>
     <pre id="detail-pre"></pre>
   </div>
@@ -475,6 +560,24 @@
   let completedTasks = [];
   let pollTimer = null;
   let completedPollTimer = null;
+  const STEM_COLORS = {
+    drums: '#f97316',
+    bass: '#3b82f6',
+    vocals: '#22c55e',
+    other: '#a855f7',
+    full_mix: '#e2e8f0',
+  };
+  const stemPlayer = {
+    context: null,
+    tracks: [],
+    isPlaying: false,
+    selectedStem: 'full_mix',
+    histogramMode: 'full_mix',
+    transportStartAt: 0,
+    seekSeconds: 0,
+    durationSeconds: 0,
+    rafId: null,
+  };
 
   // ── Utilities ────────────────────────────────────────────────────────────
   function saveTasks() { localStorage.setItem('shank_tasks', JSON.stringify(tasks)); }
@@ -521,6 +624,309 @@
   function needsPoll(status) {
     const s = (status || '').toLowerCase();
     return s === 'pending' || s === 'running';
+  }
+
+  function toFiniteNumber(value, fallback = 0) {
+    return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+  }
+
+  function stemColor(name) {
+    return STEM_COLORS[name] || '#fbbf24';
+  }
+
+  function getTransportTime() {
+    if (!stemPlayer.isPlaying) return stemPlayer.seekSeconds;
+    if (!stemPlayer.context) return stemPlayer.seekSeconds;
+    const elapsed = stemPlayer.context.currentTime - stemPlayer.transportStartAt;
+    if (stemPlayer.durationSeconds > 0) {
+      return Math.max(0, Math.min(stemPlayer.durationSeconds, stemPlayer.seekSeconds + elapsed));
+    }
+    return Math.max(0, stemPlayer.seekSeconds + elapsed);
+  }
+
+  function stopStemSources() {
+    stemPlayer.tracks.forEach((track) => {
+      if (track.source) {
+        try { track.source.stop(); } catch (_) { /* ignore */ }
+      }
+      track.source = null;
+    });
+    stemPlayer.isPlaying = false;
+  }
+
+  function updateTrackGains() {
+    const soloed = stemPlayer.tracks.filter((track) => track.solo);
+    stemPlayer.tracks.forEach((track) => {
+      if (!track.gain) return;
+      const mutedBySolo = soloed.length > 0 && !track.solo;
+      const muted = track.muted || mutedBySolo;
+      track.gain.gain.value = muted ? 0 : track.volume;
+    });
+  }
+
+  function updateTransportUi() {
+    const seek = document.getElementById('transport-seek');
+    const label = document.getElementById('transport-time');
+    if (!seek || !label) return;
+    const current = getTransportTime();
+    const duration = stemPlayer.durationSeconds || 0;
+    seek.value = duration > 0 ? String(Math.round((current / duration) * 1000)) : '0';
+    label.textContent = `${fmtDuration(current)} / ${fmtDuration(duration)}`;
+    if (stemPlayer.isPlaying) {
+      stemPlayer.rafId = requestAnimationFrame(updateTransportUi);
+    }
+  }
+
+  function startStemPlayback() {
+    if (!stemPlayer.context || stemPlayer.isPlaying || stemPlayer.tracks.length === 0) return;
+    stemPlayer.isPlaying = true;
+    stemPlayer.transportStartAt = stemPlayer.context.currentTime;
+    stemPlayer.tracks.forEach((track) => {
+      if (!track.buffer || !track.gain) return;
+      const source = stemPlayer.context.createBufferSource();
+      source.buffer = track.buffer;
+      source.connect(track.gain);
+      const maxStartOffset = Math.max(0, track.buffer.duration - 0.001);
+      source.start(0, Math.min(stemPlayer.seekSeconds, maxStartOffset));
+      track.source = source;
+    });
+    updateTrackGains();
+    cancelAnimationFrame(stemPlayer.rafId);
+    updateTransportUi();
+  }
+
+  function pauseStemPlayback() {
+    if (!stemPlayer.isPlaying) return;
+    stemPlayer.seekSeconds = getTransportTime();
+    stopStemSources();
+    cancelAnimationFrame(stemPlayer.rafId);
+    updateTransportUi();
+  }
+
+  function seekStemPlayback(seconds) {
+    stemPlayer.seekSeconds = Math.max(0, Math.min(stemPlayer.durationSeconds || 0, toFiniteNumber(seconds, 0)));
+    const wasPlaying = stemPlayer.isPlaying;
+    stopStemSources();
+    if (wasPlaying) startStemPlayback();
+    updateTransportUi();
+  }
+
+  function selectedAnalysisForStem(taskData) {
+    const analysis = taskData?.analysis && typeof taskData.analysis === 'object' ? taskData.analysis : null;
+    if (!analysis) return null;
+    if (stemPlayer.selectedStem === 'full_mix') return analysis.full_mix || null;
+    const stems = analysis.stems && typeof analysis.stems === 'object' ? analysis.stems : {};
+    return stems[stemPlayer.selectedStem] || null;
+  }
+
+  function renderStemAnalysisPanel(taskData) {
+    const list = document.getElementById('stem-analysis-list');
+    if (!list) return;
+    const selected = selectedAnalysisForStem(taskData);
+    if (!selected) {
+      list.innerHTML = '<li><span>No analysis available.</span></li>';
+      return;
+    }
+    const rows = [
+      ['Stem', stemPlayer.selectedStem],
+      ['BPM', typeof selected.bpm === 'number' ? selected.bpm.toFixed(2) : '—'],
+      ['Key', selected.key || '—'],
+      ['Duration', fmtDuration(selected.duration_seconds)],
+      ['Histogram bins', Array.isArray(selected.frequency_histogram) ? selected.frequency_histogram.length : 0],
+      ['Waveform bins', Array.isArray(selected.waveform) ? selected.waveform.length : 0],
+    ];
+    list.innerHTML = rows.map(([label, value]) => `<li><strong>${escapeHtml(label)}</strong><span>${escapeHtml(value)}</span></li>`).join('');
+  }
+
+  function drawHistogram(taskData) {
+    const canvas = document.getElementById('histogram-canvas');
+    if (!canvas) return;
+    canvas.width = canvas.clientWidth * window.devicePixelRatio;
+    canvas.height = canvas.clientHeight * window.devicePixelRatio;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+    ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+
+    const analysis = taskData?.analysis && typeof taskData.analysis === 'object' ? taskData.analysis : null;
+    if (!analysis || !analysis.full_mix) return;
+
+    const fullMixHist = Array.isArray(analysis.full_mix.frequency_histogram) ? analysis.full_mix.frequency_histogram : [];
+    const fullMixWave = Array.isArray(analysis.full_mix.waveform) ? analysis.full_mix.waveform : [];
+    const stems = analysis.stems && typeof analysis.stems === 'object' ? analysis.stems : {};
+    const selected = stemPlayer.selectedStem;
+    const mode = stemPlayer.histogramMode;
+
+    const series = [];
+    if (mode === 'selected') {
+      if (selected === 'full_mix') {
+        series.push({ name: 'full_mix', kind: 'hist', values: fullMixHist });
+        series.push({ name: 'full_mix', kind: 'wave', values: fullMixWave });
+      } else {
+        const stemSeries = stems[selected];
+        if (Array.isArray(stemSeries?.frequency_histogram)) series.push({ name: selected, kind: 'hist', values: stemSeries.frequency_histogram });
+        if (Array.isArray(stemSeries?.waveform)) series.push({ name: selected, kind: 'wave', values: stemSeries.waveform });
+      }
+    } else if (mode === 'overlay') {
+      series.push({ name: 'full_mix', kind: 'hist', values: fullMixHist });
+      series.push({ name: 'full_mix', kind: 'wave', values: fullMixWave });
+      Object.entries(stems).forEach(([name, data]) => {
+        if (Array.isArray(data?.frequency_histogram)) series.push({ name, kind: 'hist', values: data.frequency_histogram });
+        if (Array.isArray(data?.waveform)) series.push({ name, kind: 'wave', values: data.waveform });
+      });
+    } else {
+      series.push({ name: 'full_mix', kind: 'hist', values: fullMixHist });
+      series.push({ name: 'full_mix', kind: 'wave', values: fullMixWave });
+    }
+
+    if (series.length === 0) return;
+    const normalizedSeries = series.map((s) => ({
+      ...s,
+      waveMax: s.kind === 'wave'
+        ? Math.max(s.values.reduce((max, v) => Math.max(max, Math.abs(toFiniteNumber(v, 0))), 0), 1)
+        : 1,
+    }));
+
+    const maxLen = normalizedSeries.reduce((max, s) => Math.max(max, s.values.length), 1);
+    const maxValue = Math.max(
+      normalizedSeries.reduce((max, s) => s.values.reduce((innerMax, v) => Math.max(innerMax, toFiniteNumber(v, 0)), max), 1),
+      1,
+    );
+
+    normalizedSeries.forEach((s) => {
+      const color = stemColor(s.name);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = s.kind === 'wave' ? 1 : (s.name === 'full_mix' ? 2 : 1.5);
+      ctx.globalAlpha = s.kind === 'wave' ? 0.45 : 1;
+      ctx.beginPath();
+      for (let i = 0; i < maxLen; i += 1) {
+        const x = (i / Math.max(maxLen - 1, 1)) * canvas.clientWidth;
+        const value = toFiniteNumber(s.values[i], 0);
+        let y = canvas.clientHeight - (value / maxValue) * canvas.clientHeight;
+        if (s.kind === 'wave') {
+          y = (canvas.clientHeight / 2) - ((value / s.waveMax) * (canvas.clientHeight * 0.45));
+        }
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    });
+  }
+
+  async function initStemWorkbench(taskData) {
+    const workbench = document.getElementById('stem-workbench');
+    const mixerList = document.getElementById('stem-mixer-list');
+    if (!workbench || !mixerList) return;
+
+    stopStemSources();
+    cancelAnimationFrame(stemPlayer.rafId);
+    stemPlayer.seekSeconds = 0;
+    stemPlayer.durationSeconds = toFiniteNumber(taskData.duration_seconds, 0);
+    stemPlayer.selectedStem = 'full_mix';
+    stemPlayer.histogramMode = 'full_mix';
+    stemPlayer.tracks = [];
+
+    const stems = taskData.stems && typeof taskData.stems === 'object' ? taskData.stems : {};
+    const trackSpecs = [{ name: 'full_mix', artifactName: 'normalized_wav' }].concat(
+      Object.keys(stems).map((name) => ({ name, artifactName: `stem_${name}_wav` })),
+    );
+
+    if (trackSpecs.length <= 1 && !taskData.analysis) {
+      workbench.style.display = 'none';
+      return;
+    }
+
+    if (!stemPlayer.context) {
+      stemPlayer.context = new (window.AudioContext || window.webkitAudioContext)();
+    }
+
+    const decodedTracks = await Promise.all(trackSpecs.map(async (spec) => {
+      const gain = stemPlayer.context.createGain();
+      gain.connect(stemPlayer.context.destination);
+      const track = {
+        name: spec.name,
+        artifactName: spec.artifactName,
+        buffer: null,
+        source: null,
+        gain,
+        muted: false,
+        solo: false,
+        volume: 1,
+      };
+      try {
+        const res = await fetch(`/tasks/${encodeURIComponent(taskData.task_id)}/artifacts/${encodeURIComponent(spec.artifactName)}`);
+        if (!res.ok) {
+          console.warn(`Failed to load audio artifact task=${taskData.task_id} stem=${spec.name} artifact=${spec.artifactName} status=${res.status}`);
+          return track;
+        }
+        const buffer = await res.arrayBuffer();
+        track.buffer = await stemPlayer.context.decodeAudioData(buffer);
+      } catch (error) {
+        console.warn('Failed to decode track for stem workbench:', spec.name, error);
+      }
+      return track;
+    }));
+
+    stemPlayer.tracks = decodedTracks;
+    stemPlayer.durationSeconds = Math.max(
+      stemPlayer.durationSeconds,
+      ...decodedTracks.map((track) => toFiniteNumber(track.buffer?.duration, 0)),
+    );
+
+    mixerList.innerHTML = decodedTracks.map((track) => `
+      <div class="stem-row" data-stem="${escapeHtml(track.name)}">
+        <span class="stem-dot" style="background:${stemColor(track.name)}"></span>
+        <button class="btn btn-ghost btn-sm stem-select">${escapeHtml(track.name)}</button>
+        <button class="btn btn-ghost btn-sm stem-mute">Mute</button>
+        <button class="btn btn-ghost btn-sm stem-solo">Solo</button>
+        <input type="range" class="stem-volume" min="0" max="100" value="100" />
+      </div>
+    `).join('');
+
+    mixerList.querySelectorAll('.stem-row').forEach((row) => {
+      const stem = row.dataset.stem;
+      const track = stemPlayer.tracks.find((t) => t.name === stem);
+      if (!track) return;
+      row.querySelector('.stem-select')?.addEventListener('click', () => {
+        stemPlayer.selectedStem = track.name;
+        renderStemAnalysisPanel(taskData);
+        drawHistogram(taskData);
+      });
+      row.querySelector('.stem-mute')?.addEventListener('click', () => {
+        track.muted = !track.muted;
+        updateTrackGains();
+      });
+      row.querySelector('.stem-solo')?.addEventListener('click', () => {
+        track.solo = !track.solo;
+        updateTrackGains();
+      });
+      row.querySelector('.stem-volume')?.addEventListener('input', (event) => {
+        const value = Number(event.target.value);
+        track.volume = Math.max(0, Math.min(1, value / 100));
+        updateTrackGains();
+      });
+    });
+
+    const playBtn = document.getElementById('transport-play');
+    const pauseBtn = document.getElementById('transport-pause');
+    const seek = document.getElementById('transport-seek');
+    const modeSelect = document.getElementById('histogram-mode');
+    if (playBtn) playBtn.onclick = () => startStemPlayback();
+    if (pauseBtn) pauseBtn.onclick = () => pauseStemPlayback();
+    if (seek) seek.oninput = (event) => {
+      const ratio = Number(event.target.value) / 1000;
+      seekStemPlayback((stemPlayer.durationSeconds || 0) * ratio);
+    };
+    if (modeSelect) modeSelect.onchange = (event) => {
+      stemPlayer.histogramMode = event.target.value;
+      drawHistogram(taskData);
+    };
+
+    workbench.style.display = '';
+    updateTransportUi();
+    renderStemAnalysisPanel(taskData);
+    drawHistogram(taskData);
   }
 
   // ── Render ───────────────────────────────────────────────────────────────
@@ -697,6 +1103,13 @@
         item('Original File', fileValue(data.file_path)),
         item('Normalized WAV', fileValue(data.normalized_path)),
       ].join('');
+      if (data.analysis && typeof data.analysis === 'object') {
+        list.innerHTML += [
+          item('Analysis Full Mix', data.analysis.full_mix ? 'available' : '—'),
+          item('Analysis Stems', data.analysis.stems ? escapeHtml(Object.keys(data.analysis.stems).join(', ') || '—') : '—'),
+          item('Analysis Warnings', Array.isArray(data.analysis.warnings) && data.analysis.warnings.length ? escapeHtml(data.analysis.warnings.join('; ')) : '—'),
+        ].join('');
+      }
       if (mt3) {
         const mt3TrackStats = (track) => {
           if (!track || typeof track !== 'object') return '—';
@@ -741,6 +1154,7 @@
         ].join('');
       }
       pre.textContent = JSON.stringify(data, null, 2);
+      await initStemWorkbench(data);
     } catch (_) {
       showAlert(alert, '❌ Failed to load task details.', 'error');
     }
