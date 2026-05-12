@@ -13,7 +13,7 @@ services:
       - MT3_SERVICE_URL=${MT3_SERVICE_URL:-http://shank-mt3:8090}
       - MT3_MODEL=${MT3_MODEL:-multi_instrument}
       - MT3_DEVICE=${MT3_DEVICE:-auto}
-      - MT3_TIMEOUT=${MT3_TIMEOUT:-900}
+      - MT3_TIMEOUT=${MT3_TIMEOUT:-1800}
       - MT3_TRANSCRIBE_STEMS=${MT3_TRANSCRIBE_STEMS:-true}
       - MT3_FAIL_TASK_ON_ERROR=${MT3_FAIL_TASK_ON_ERROR:-false}
     volumes:

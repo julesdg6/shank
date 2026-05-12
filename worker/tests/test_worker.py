@@ -919,6 +919,36 @@ def test_transcribe_with_service_unwraps_data_envelope(tmp_path):
     assert 'midi_path' in result
 
 
+def test_transcribe_with_service_warns_when_no_note_events(tmp_path):
+    """transcribe_with_service should warn when the service returns an empty note list."""
+    import base64
+    import mt3_client
+
+    task_id = str(uuid.uuid4())
+    output_dir = tmp_path / 'mt3' / task_id
+    output_dir.mkdir(parents=True)
+
+    fake_payload = {
+        'model': 'multi_instrument',
+        'midi_base64': base64.b64encode(b'MThd').decode(),
+        'notes': [],
+    }
+
+    with patch('mt3_client._post_json', return_value=fake_payload):
+        result = mt3_client.transcribe_with_service(
+            service_url='http://localhost:8090',
+            audio_path='/tmp/audio.wav',
+            output_dir=output_dir,
+            task_id=task_id,
+            model='multi_instrument',
+            source='full_mix',
+            timeout=60,
+        )
+
+    assert result['note_count'] == 0
+    assert 'No note events returned; MIDI may be empty' in result['warnings']
+
+
 def test_transcribe_with_service_uses_notes_path_from_response(tmp_path):
     """transcribe_with_service should store notes_path when the service returns it as a string."""
     import base64
