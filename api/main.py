@@ -21,6 +21,7 @@ UPLOADS_DIR = DATA_DIR / 'uploads'
 TASKS_DIR = DATA_DIR / 'tasks'
 
 ALLOWED_AUDIO_EXTENSIONS = {'.mp3', '.wav', '.flac'}
+ALLOWED_REQUESTED_TYPES = {'melody'}
 MAX_UPLOAD_SIZE = 200 * 1024 * 1024  # 200 MB
 
 
@@ -72,6 +73,9 @@ def _resolve_data_path(path_value: str) -> Path | None:
 
 
 async def _queue_audio_task(file: UploadFile, *, requested_type: str | None = None) -> dict:
+    if requested_type is not None and requested_type not in ALLOWED_REQUESTED_TYPES:
+        raise HTTPException(status_code=400, detail='Unsupported requested_type')
+
     suffix = Path(file.filename).suffix.lower() if file.filename else ''
     if suffix not in ALLOWED_AUDIO_EXTENSIONS:
         raise HTTPException(

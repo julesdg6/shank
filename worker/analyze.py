@@ -1,7 +1,10 @@
 """librosa-based audio analysis: BPM, key, and chord progression extraction."""
 
+from functools import lru_cache
+
 import numpy as np
 import librosa
+from music21 import pitch as m21_pitch
 
 # Krumhansl-Kessler key profiles (tonic at index 0)
 _MAJOR_PROFILE = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
@@ -13,6 +16,11 @@ _MINOR_THIRD = 3
 _PERFECT_FIFTH = 7
 # Ignore effectively silent chroma frames so low-level noise does not create false chord segments.
 _CHROMA_ACTIVITY_THRESHOLD = 1e-8
+
+
+@lru_cache(maxsize=12)
+def _normalize_pitch_name(pitch_class: str) -> str:
+    return m21_pitch.Pitch(pitch_class).name
 
 
 def _detect_key(y: np.ndarray, sr: int) -> str:
@@ -71,12 +79,8 @@ def _detect_chords(y: np.ndarray, sr: int) -> dict:
         else:
             quality = 'minor'
 
-        root_name = _PITCH_CLASSES[root_idx]
-        symbol = f'{root_name}{"m" if quality == "minor" else ""}'
-
         frame_labels.append({
-            'symbol': symbol,
-            'root': root_name,
+            'root': _PITCH_CLASSES[root_idx],
             'quality': quality,
             'start_seconds': float(frame_boundaries[frame_idx]),
             'end_seconds': float(frame_boundaries[frame_idx + 1]),
@@ -87,10 +91,12 @@ def _detect_chords(y: np.ndarray, sr: int) -> dict:
 
     segments: list[dict] = []
     for frame in frame_labels:
-        if not segments or segments[-1]['symbol'] != frame['symbol']:
+        root_name = _normalize_pitch_name(frame['root'])
+        symbol = f'{root_name}{"m" if frame["quality"] == "minor" else ""}'
+        if not segments or segments[-1]['symbol'] != symbol:
             segments.append({
-                'symbol': frame['symbol'],
-                'root': frame['root'],
+                'symbol': symbol,
+                'root': root_name,
                 'quality': frame['quality'],
                 'start_seconds': round(frame['start_seconds'], 3),
                 'end_seconds': round(frame['end_seconds'], 3),

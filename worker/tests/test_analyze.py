@@ -64,7 +64,7 @@ def _write_rhythmic_wav(path, bpm=120.0, frequency=440.0, duration=8.0, sr=SAMPL
     return path
 
 
-def _write_chord_wav(path, frequencies=(261.63, 329.63, 392.0), duration=4.0, sr=SAMPLE_RATE):
+def _write_chord_wav(file_path, frequencies=(261.63, 329.63, 392.0), duration=4.0, sr=SAMPLE_RATE):
     """Write a simple chord (sum of sines) to a PCM WAV file."""
     n_samples = int(duration * sr)
     t = np.arange(n_samples) / sr
@@ -73,12 +73,12 @@ def _write_chord_wav(path, frequencies=(261.63, 329.63, 392.0), duration=4.0, sr
         signal += np.sin(2 * np.pi * frequency * t)
     signal /= max(len(frequencies), 1)
     samples = (signal * 32767).astype(np.int16)
-    with wave.open(str(path), 'w') as wf:
+    with wave.open(str(file_path), 'w') as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
         wf.setframerate(sr)
         wf.writeframes(samples.tobytes())
-    return path
+    return file_path
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +179,14 @@ def test_detect_chords_identifies_a_minor_triad(tmp_path):
     assert first['root'] == 'A'
     assert first['quality'] == 'minor'
     assert result['progression'][0] == 'Am'
+
+
+def test_detect_chords_returns_empty_for_silence(tmp_path):
+    """Silent audio should not produce chord segments."""
+    wav = _write_chord_wav(tmp_path / 'silence.wav', frequencies=())
+    y, sr = librosa.load(str(wav), mono=True)
+    result = _detect_chords(y, sr)
+    assert result == {'segments': [], 'progression': []}
 
 
 # ---------------------------------------------------------------------------
