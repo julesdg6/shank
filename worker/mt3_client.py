@@ -130,7 +130,7 @@ def transcribe_with_service(
             result['pitch_range'] = stats['pitch_range']
             result['duration_seconds'] = stats['duration_seconds']
             result['program_count'] = stats['program_count']
-            if stats['note_count'] == 0:
+            if stats.get('note_count', 0) == 0:
                 result.setdefault('warnings', []).append('No note events returned; MIDI may be empty')
     elif isinstance(payload.get('notes_path'), str) and payload['notes_path']:
         result['notes_path'] = payload['notes_path']
