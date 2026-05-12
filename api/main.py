@@ -71,22 +71,7 @@ def _resolve_data_path(path_value: str) -> Path | None:
     return resolved
 
 
-# ---------------------------------------------------------------------------
-# Health check
-# ---------------------------------------------------------------------------
-
-@app.get('/')
-def read_root():
-    return {'status': 'online', 'service': 'SHANK API'}
-
-
-# ---------------------------------------------------------------------------
-# Upload audio file
-# ---------------------------------------------------------------------------
-
-@app.post('/tasks/upload', status_code=202)
-async def upload_audio(file: UploadFile = File(...)):
-    """Accept an audio file (MP3, WAV, FLAC) and queue it for analysis."""
+async def _queue_audio_task(file: UploadFile, *, requested_type: str | None = None) -> dict:
     suffix = Path(file.filename).suffix.lower() if file.filename else ''
     if suffix not in ALLOWED_AUDIO_EXTENSIONS:
         raise HTTPException(
@@ -123,51 +108,36 @@ async def upload_audio(file: UploadFile = File(...)):
         'status': 'pending',
         'created_at': datetime.now(timezone.utc).isoformat(),
     }
+    if requested_type is not None:
+        task['requested_type'] = requested_type
     _write_task(task)
 
-    return JSONResponse(status_code=202, content={'task_id': task_id, 'status': 'pending'})
+    return {'task_id': task_id, 'status': 'pending'}
+
+
+# ---------------------------------------------------------------------------
+# Health check
+# ---------------------------------------------------------------------------
+
+@app.get('/')
+def read_root():
+    return {'status': 'online', 'service': 'SHANK API'}
+
+
+# ---------------------------------------------------------------------------
+# Upload audio file
+# ---------------------------------------------------------------------------
+
+@app.post('/tasks/upload', status_code=202)
+async def upload_audio(file: UploadFile = File(...)):
+    """Accept an audio file (MP3, WAV, FLAC) and queue it for analysis."""
+    return JSONResponse(status_code=202, content=await _queue_audio_task(file))
 
 
 @app.post('/tasks/melody', status_code=202)
 async def submit_melody(file: UploadFile = File(...)):
     """Accept an audio file and queue a melody-focused analysis task."""
-    suffix = Path(file.filename).suffix.lower() if file.filename else ''
-    if suffix not in ALLOWED_AUDIO_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported file type '{suffix}'. Allowed: {sorted(ALLOWED_AUDIO_EXTENSIONS)}",
-        )
-
-    task_id = str(uuid.uuid4())
-    _ensure_dirs()
-
-    if file.size is not None and file.size > MAX_UPLOAD_SIZE:
-        raise HTTPException(
-            status_code=413,
-            detail=f'File exceeds maximum allowed size of {MAX_UPLOAD_SIZE // (1024 * 1024)} MB',
-        )
-    content = await file.read(MAX_UPLOAD_SIZE + 1)
-    if len(content) > MAX_UPLOAD_SIZE:
-        raise HTTPException(
-            status_code=413,
-            detail=f'File exceeds maximum allowed size of {MAX_UPLOAD_SIZE // (1024 * 1024)} MB',
-        )
-
-    upload_path = UPLOADS_DIR / f"{task_id}{suffix}"
-    upload_path.write_bytes(content)
-
-    task = {
-        'task_id': task_id,
-        'type': 'upload',
-        'requested_type': 'melody',
-        'source': file.filename,
-        'file_path': str(upload_path),
-        'status': 'pending',
-        'created_at': datetime.now(timezone.utc).isoformat(),
-    }
-    _write_task(task)
-
-    return JSONResponse(status_code=202, content={'task_id': task_id, 'status': 'pending'})
+    return JSONResponse(status_code=202, content=await _queue_audio_task(file, requested_type='melody'))
 
 
 # ---------------------------------------------------------------------------

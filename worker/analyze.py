@@ -2,13 +2,17 @@
 
 import numpy as np
 import librosa
-from music21 import chord as m21_chord
 
 # Krumhansl-Kessler key profiles (tonic at index 0)
 _MAJOR_PROFILE = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
 _MINOR_PROFILE = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
 
 _PITCH_CLASSES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+_MAJOR_THIRD = 4
+_MINOR_THIRD = 3
+_PERFECT_FIFTH = 7
+# Ignore effectively silent chroma frames so low-level noise does not create false chord segments.
+_CHROMA_ACTIVITY_THRESHOLD = 1e-8
 
 
 def _detect_key(y: np.ndarray, sr: int) -> str:
@@ -53,24 +57,21 @@ def _detect_chords(y: np.ndarray, sr: int) -> dict:
     for frame_idx in range(chroma.shape[1]):
         frame = chroma[:, frame_idx]
         root_idx = int(np.argmax(frame))
-        if float(frame[root_idx]) <= 1e-8:
+        if float(frame[root_idx]) <= _CHROMA_ACTIVITY_THRESHOLD:
             continue
 
-        major_indices = [root_idx, (root_idx + 4) % 12, (root_idx + 7) % 12]
-        minor_indices = [root_idx, (root_idx + 3) % 12, (root_idx + 7) % 12]
+        major_indices = [root_idx, (root_idx + _MAJOR_THIRD) % 12, (root_idx + _PERFECT_FIFTH) % 12]
+        minor_indices = [root_idx, (root_idx + _MINOR_THIRD) % 12, (root_idx + _PERFECT_FIFTH) % 12]
 
         major_score = float(np.sum(frame[major_indices]))
         minor_score = float(np.sum(frame[minor_indices]))
 
         if major_score >= minor_score:
             quality = 'major'
-            note_names = [_PITCH_CLASSES[idx] for idx in major_indices]
         else:
             quality = 'minor'
-            note_names = [_PITCH_CLASSES[idx] for idx in minor_indices]
 
-        chord_obj = m21_chord.Chord(note_names)
-        root_name = chord_obj.root().name if chord_obj.root() is not None else _PITCH_CLASSES[root_idx]
+        root_name = _PITCH_CLASSES[root_idx]
         symbol = f'{root_name}{"m" if quality == "minor" else ""}'
 
         frame_labels.append({
