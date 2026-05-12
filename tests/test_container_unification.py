@@ -15,7 +15,7 @@ def test_compose_uses_single_unified_service():
     assert '- MT3_SERVICE_URL=${MT3_SERVICE_URL:-http://shank-mt3:8090}' in text
     assert '- MT3_MODEL=${MT3_MODEL:-multi_instrument}' in text
     assert '- MT3_DEVICE=${MT3_DEVICE:-auto}' in text
-    assert '- MT3_TIMEOUT=${MT3_TIMEOUT:-900}' in text
+    assert '- MT3_TIMEOUT=${MT3_TIMEOUT:-1800}' in text
     assert '- ./data:/srv/shank/data' in text
     assert '- ./cache/mt3:/srv/shank/cache/mt3' in text
     assert '- ./models/mt3/checkpoints:/srv/shank/models/mt3/checkpoints:ro' in text

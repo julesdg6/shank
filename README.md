@@ -108,7 +108,7 @@ Environment variables (set in `.env` or `docker-compose.yml`):
 | `MT3_ENABLED` | `false` | Enable MT3 transcription in worker |
 | `MT3_SERVICE_URL` | `http://shank-mt3:8090` | Base URL for the optional MT3 FastAPI service |
 | `MT3_MODEL` | `multi_instrument` | Requested model identifier to send to MT3 service |
-| `MT3_TIMEOUT` | `900` | MT3 HTTP timeout in seconds |
+| `MT3_TIMEOUT` | `1800` | MT3 HTTP timeout in seconds |
 | `MT3_TRANSCRIBE_STEMS` | `true` | Also transcribe Ace-Step stems when present |
 | `MT3_FAIL_TASK_ON_ERROR` | `false` | If true, MT3 failure marks task as failed |
 | `MT3_CHECKPOINT_ROOT` | `/srv/shank/models/mt3/checkpoints` | Mount path for MT3 checkpoints in MT3 service |
@@ -251,7 +251,7 @@ MT3_ENABLED=false
 | `MT3_ENABLED` | `false` | Enable (`true`) or disable (`false`) MT3 transcription |
 | `MT3_SERVICE_URL` | `http://shank-mt3:8090` | Internal URL of the optional MT3 FastAPI service |
 | `MT3_MODEL` | `multi_instrument` | MT3 model: `multi_instrument` (all instruments) or `ismir2021` (piano-only) |
-| `MT3_TIMEOUT` | `900` | HTTP timeout (seconds) for a single transcription request |
+| `MT3_TIMEOUT` | `1800` | HTTP timeout (seconds) for a single transcription request |
 | `MT3_TRANSCRIBE_STEMS` | `true` | Also transcribe ACE-Step stems when available |
 | `MT3_FAIL_TASK_ON_ERROR` | `false` | Mark the whole task failed if MT3 errors occur |
 | `MT3_CHECKPOINT_ROOT` | `/srv/shank/models/mt3/checkpoints` | Host-mounted path for MT3 model checkpoints |
@@ -262,7 +262,7 @@ Example `.env` snippet:
 ```dotenv
 MT3_ENABLED=false
 MT3_MODEL=multi_instrument
-MT3_TIMEOUT=900
+MT3_TIMEOUT=1800
 MT3_TRANSCRIBE_STEMS=true
 MT3_FAIL_TASK_ON_ERROR=false
 MT3_CHECKPOINT_ROOT=/srv/shank/models/mt3/checkpoints

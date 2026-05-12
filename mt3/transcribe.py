@@ -30,7 +30,7 @@ DATA_DIR = Path(os.getenv('DATA_DIR', '/srv/shank/data'))
 MT3_OUTPUT_DIR = DATA_DIR / 'mt3'
 MT3_SERVICE_URL = os.getenv('MT3_SERVICE_URL', '').strip().rstrip('/')
 MT3_MODEL = os.getenv('MT3_MODEL', 'multi_instrument').strip() or 'multi_instrument'
-MT3_TIMEOUT = int(os.getenv('MT3_TIMEOUT', '900'))
+MT3_TIMEOUT = int(os.getenv('MT3_TIMEOUT', '1800'))
 
 
 # ---------------------------------------------------------------------------

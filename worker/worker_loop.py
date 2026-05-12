@@ -44,7 +44,7 @@ DEMUCS_DEVICE = os.getenv('DEMUCS_DEVICE', 'cpu').strip() or 'cpu'
 MT3_ENABLED = os.getenv('MT3_ENABLED', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
 MT3_SERVICE_URL = os.getenv('MT3_SERVICE_URL', '').strip().rstrip('/')
 MT3_MODEL = os.getenv('MT3_MODEL', 'multi_instrument').strip() or 'multi_instrument'
-MT3_TIMEOUT = int(os.getenv('MT3_TIMEOUT', '900'))
+MT3_TIMEOUT = int(os.getenv('MT3_TIMEOUT', '1800'))
 MT3_TRANSCRIBE_STEMS = os.getenv('MT3_TRANSCRIBE_STEMS', 'true').strip().lower() in ('1', 'true', 'yes', 'on')
 MT3_FAIL_TASK_ON_ERROR = os.getenv('MT3_FAIL_TASK_ON_ERROR', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
 

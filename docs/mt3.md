@@ -54,7 +54,7 @@ All variables can be set in `.env` or passed directly in `docker-compose.yml`.
 | `MT3_ENABLED` | `false` | Enable (`true`) or disable (`false`) MT3 transcription |
 | `MT3_SERVICE_URL` | `http://shank-mt3:8090` | URL of the optional MT3 FastAPI service |
 | `MT3_MODEL` | `multi_instrument` | Model to use: `multi_instrument` (all instruments) or `ismir2021` (piano-only) |
-| `MT3_TIMEOUT` | `900` | HTTP timeout in seconds per transcription request |
+| `MT3_TIMEOUT` | `1800` | HTTP timeout in seconds per transcription request |
 | `MT3_TRANSCRIBE_STEMS` | `true` | Also transcribe ACE-Step stems when present |
 | `MT3_FAIL_TASK_ON_ERROR` | `false` | Mark the whole task failed on MT3 error |
 | `MT3_CHECKPOINT_ROOT` | `/srv/shank/models/mt3/checkpoints` | Container path for MT3 model checkpoints (volume-mounted read-only) |
