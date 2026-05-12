@@ -4,11 +4,12 @@ import importlib
 import json
 import wave
 
+import librosa
 import numpy as np
 import pytest
 
 # conftest.py adds the worker directory to sys.path, so we can import directly.
-from analyze import analyze_audio
+from analyze import _detect_chords, analyze_audio
 import worker_loop
 
 # ---------------------------------------------------------------------------
@@ -76,6 +77,7 @@ def test_analyze_audio_returns_bpm_and_key(tmp_path):
     assert 'bpm' in result
     assert 'key' in result
     assert 'duration_seconds' in result
+    assert 'chords' in result
     assert 'waveform' in result
     assert 'frequency_histogram' in result
     assert 'spectrogram_summary' in result
@@ -112,6 +114,25 @@ def test_analyze_audio_missing_file_raises(tmp_path):
     """analyze_audio must raise an exception for a non-existent file."""
     with pytest.raises(Exception):
         analyze_audio(str(tmp_path / 'nonexistent.wav'))
+
+
+def test_detect_chords_returns_structured_data(tmp_path):
+    """Chord detection should return segment + progression metadata."""
+    wav = _write_sine_wav(tmp_path / 'test.wav')
+    y, sr = librosa.load(str(wav), mono=True)
+    result = _detect_chords(y, sr)
+
+    assert isinstance(result, dict)
+    assert 'segments' in result
+    assert 'progression' in result
+    assert isinstance(result['segments'], list)
+    assert isinstance(result['progression'], list)
+
+    if result['segments']:
+        first = result['segments'][0]
+        assert {'symbol', 'root', 'quality', 'start_seconds', 'end_seconds'} <= set(first.keys())
+        assert first['quality'] in {'major', 'minor'}
+        assert first['end_seconds'] >= first['start_seconds']
 
 
 # ---------------------------------------------------------------------------

@@ -1,7 +1,8 @@
-"""librosa-based audio analysis: BPM and musical key extraction."""
+"""librosa-based audio analysis: BPM, key, and chord progression extraction."""
 
 import numpy as np
 import librosa
+from music21 import chord as m21_chord
 
 # Krumhansl-Kessler key profiles (tonic at index 0)
 _MAJOR_PROFILE = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
@@ -39,6 +40,69 @@ def _detect_key(y: np.ndarray, sr: int) -> str:
     return best_key
 
 
+def _detect_chords(y: np.ndarray, sr: int) -> dict:
+    """Return a lightweight, time-segmented chord progression summary."""
+    hop_length = 1024
+    chroma = librosa.feature.chroma_cqt(y=y, sr=sr, hop_length=hop_length)
+    if chroma.size == 0:
+        return {'segments': [], 'progression': []}
+
+    frame_boundaries = librosa.frames_to_time(np.arange(chroma.shape[1] + 1), sr=sr, hop_length=hop_length)
+    frame_labels: list[dict] = []
+
+    for frame_idx in range(chroma.shape[1]):
+        frame = chroma[:, frame_idx]
+        root_idx = int(np.argmax(frame))
+        if float(frame[root_idx]) <= 1e-8:
+            continue
+
+        major_indices = [root_idx, (root_idx + 4) % 12, (root_idx + 7) % 12]
+        minor_indices = [root_idx, (root_idx + 3) % 12, (root_idx + 7) % 12]
+
+        major_score = float(np.sum(frame[major_indices]))
+        minor_score = float(np.sum(frame[minor_indices]))
+
+        if major_score >= minor_score:
+            quality = 'major'
+            note_names = [_PITCH_CLASSES[idx] for idx in major_indices]
+        else:
+            quality = 'minor'
+            note_names = [_PITCH_CLASSES[idx] for idx in minor_indices]
+
+        chord_obj = m21_chord.Chord(note_names)
+        root_name = chord_obj.root().name if chord_obj.root() is not None else _PITCH_CLASSES[root_idx]
+        symbol = f'{root_name}{"m" if quality == "minor" else ""}'
+
+        frame_labels.append({
+            'symbol': symbol,
+            'root': root_name,
+            'quality': quality,
+            'start_seconds': float(frame_boundaries[frame_idx]),
+            'end_seconds': float(frame_boundaries[frame_idx + 1]),
+        })
+
+    if not frame_labels:
+        return {'segments': [], 'progression': []}
+
+    segments: list[dict] = []
+    for frame in frame_labels:
+        if not segments or segments[-1]['symbol'] != frame['symbol']:
+            segments.append({
+                'symbol': frame['symbol'],
+                'root': frame['root'],
+                'quality': frame['quality'],
+                'start_seconds': round(frame['start_seconds'], 3),
+                'end_seconds': round(frame['end_seconds'], 3),
+            })
+            continue
+        segments[-1]['end_seconds'] = round(frame['end_seconds'], 3)
+
+    return {
+        'segments': segments,
+        'progression': [segment['symbol'] for segment in segments],
+    }
+
+
 def analyze_audio(file_path: str) -> dict:
     """Load audio from *file_path* and return BPM and key analysis results.
 
@@ -62,6 +126,7 @@ def analyze_audio(file_path: str) -> dict:
     duration_seconds = round(float(librosa.get_duration(y=y, sr=sr)), 2)
 
     key = _detect_key(y, sr)
+    chords = _detect_chords(y, sr)
 
     # Lightweight summary artifacts for UI visualizations.
     waveform_bins = 128
@@ -121,6 +186,7 @@ def analyze_audio(file_path: str) -> dict:
         'bpm': bpm,
         'key': key,
         'duration_seconds': duration_seconds,
+        'chords': chords,
         'waveform': waveform,
         'frequency_histogram': frequency_histogram,
         'spectrogram_summary': spectrogram_summary,

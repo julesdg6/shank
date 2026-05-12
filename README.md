@@ -59,6 +59,7 @@ docker compose down
 |--------|------|-------------|
 | `GET` | `/` | Health check — returns `{"status": "online"}` |
 | `POST` | `/tasks/upload` | Upload an audio file (MP3, WAV, FLAC, max 200 MB) |
+| `POST` | `/tasks/melody` | Upload audio and queue a melody-focused analysis task |
 | `POST` | `/tasks/url` | Submit a YouTube URL for download and analysis |
 | `GET` | `/tasks/{task_id}` | Retrieve the status and results of a task |
 | `GET` | `/tasks/completed` | List all completed (`done`) tasks |
