@@ -65,6 +65,23 @@ def test_upload_flac(client):
     assert response.status_code == 202
 
 
+def test_submit_melody_upload(client, tmp_path):
+    response = client.post(
+        '/tasks/melody',
+        files={'file': ('melody.wav', io.BytesIO(b'RIFF' + b'\x00' * 36), 'audio/wav')},
+    )
+    assert response.status_code == 202
+    body = response.json()
+    assert body['status'] == 'pending'
+    task_id = body['task_id']
+
+    task_file = tmp_path / 'tasks' / f'{task_id}.json'
+    assert task_file.exists()
+    task = json.loads(task_file.read_text())
+    assert task['type'] == 'upload'
+    assert task['requested_type'] == 'melody'
+
+
 def test_upload_invalid_extension(client):
     response = client.post(
         '/tasks/upload',

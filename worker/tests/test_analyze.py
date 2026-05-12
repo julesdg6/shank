@@ -4,11 +4,12 @@ import importlib
 import json
 import wave
 
+import librosa
 import numpy as np
 import pytest
 
 # conftest.py adds the worker directory to sys.path, so we can import directly.
-from analyze import analyze_audio
+from analyze import _detect_chords, analyze_audio
 import worker_loop
 
 # ---------------------------------------------------------------------------
@@ -63,6 +64,23 @@ def _write_rhythmic_wav(path, bpm=120.0, frequency=440.0, duration=8.0, sr=SAMPL
     return path
 
 
+def _write_chord_wav(file_path, frequencies=(261.63, 329.63, 392.0), duration=4.0, sr=SAMPLE_RATE):
+    """Write a simple chord (sum of sines) to a PCM WAV file."""
+    n_samples = int(duration * sr)
+    t = np.arange(n_samples) / sr
+    signal = np.zeros(n_samples, dtype=np.float32)
+    for frequency in frequencies:
+        signal += np.sin(2 * np.pi * frequency * t)
+    signal /= max(len(frequencies), 1)
+    samples = (signal * 32767).astype(np.int16)
+    with wave.open(str(file_path), 'w') as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sr)
+        wf.writeframes(samples.tobytes())
+    return file_path
+
+
 # ---------------------------------------------------------------------------
 # Tests for analyze_audio
 # ---------------------------------------------------------------------------
@@ -76,11 +94,15 @@ def test_analyze_audio_returns_bpm_and_key(tmp_path):
     assert 'bpm' in result
     assert 'key' in result
     assert 'duration_seconds' in result
+    assert 'chords' in result
     assert 'waveform' in result
     assert 'frequency_histogram' in result
     assert 'spectrogram_summary' in result
     assert 'loudness_curve' in result
     assert 'energy_over_time' in result
+    assert isinstance(result['chords'], dict)
+    assert 'segments' in result['chords']
+    assert 'progression' in result['chords']
 
 
 def test_analyze_audio_bpm_is_positive(tmp_path):
@@ -112,6 +134,59 @@ def test_analyze_audio_missing_file_raises(tmp_path):
     """analyze_audio must raise an exception for a non-existent file."""
     with pytest.raises(Exception):
         analyze_audio(str(tmp_path / 'nonexistent.wav'))
+
+
+def test_detect_chords_returns_structured_data(tmp_path):
+    """Chord detection should return segment + progression metadata."""
+    wav = _write_sine_wav(tmp_path / 'test.wav')
+    y, sr = librosa.load(str(wav), mono=True)
+    result = _detect_chords(y, sr)
+
+    assert isinstance(result, dict)
+    assert 'segments' in result
+    assert 'progression' in result
+    assert isinstance(result['segments'], list)
+    assert isinstance(result['progression'], list)
+
+    if result['segments']:
+        first = result['segments'][0]
+        assert all(key in first for key in ['symbol', 'root', 'quality', 'start_seconds', 'end_seconds'])
+        assert first['quality'] in {'major', 'minor'}
+        assert first['end_seconds'] >= first['start_seconds']
+
+
+def test_detect_chords_identifies_c_major_triad(tmp_path):
+    """A synthetic C-major triad should produce a C major segment."""
+    wav = _write_chord_wav(tmp_path / 'c_major.wav', frequencies=(261.63, 329.63, 392.0))
+    y, sr = librosa.load(str(wav), mono=True)
+    result = _detect_chords(y, sr)
+
+    assert result['segments'], 'Expected at least one detected chord segment'
+    first = result['segments'][0]
+    assert first['root'] == 'C'
+    assert first['quality'] == 'major'
+    assert result['progression'][0] == 'C'
+
+
+def test_detect_chords_identifies_a_minor_triad(tmp_path):
+    """A synthetic A-minor triad should produce an A minor segment."""
+    wav = _write_chord_wav(tmp_path / 'a_minor.wav', frequencies=(220.0, 261.63, 329.63))
+    y, sr = librosa.load(str(wav), mono=True)
+    result = _detect_chords(y, sr)
+
+    assert result['segments'], 'Expected at least one detected chord segment'
+    first = result['segments'][0]
+    assert first['root'] == 'A'
+    assert first['quality'] == 'minor'
+    assert result['progression'][0] == 'Am'
+
+
+def test_detect_chords_returns_empty_for_silence(tmp_path):
+    """Silent audio should not produce chord segments."""
+    wav = _write_chord_wav(tmp_path / 'silence.wav', frequencies=())
+    y, sr = librosa.load(str(wav), mono=True)
+    result = _detect_chords(y, sr)
+    assert result == {'segments': [], 'progression': []}
 
 
 # ---------------------------------------------------------------------------
