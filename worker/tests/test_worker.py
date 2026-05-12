@@ -945,6 +945,7 @@ def test_transcribe_with_service_warns_when_no_note_events(tmp_path):
             timeout=60,
         )
 
+    assert 'note_count' in result
     assert result['note_count'] == 0
     assert 'No note events returned; MIDI may be empty' in result['warnings']
 
