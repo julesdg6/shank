@@ -150,9 +150,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-12T09:35:37Z
-- Latest commit: `28c1982`
-- Commit message: Merge pull request #52 from julesdg6/copilot/feat-verify-music21-chord-detection  Complete Phase 3 chord output and add melody task submission endpoint
+- Last automated update: 2026-05-12T09:35:59Z
+- Latest commit: `bcc9507`
+- Commit message: Merge pull request #53 from julesdg6/copilot/ci-verify-mt3-transcription  MT3: harden transcription stability defaults and flag empty-note outputs
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
