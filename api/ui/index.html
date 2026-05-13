@@ -915,6 +915,8 @@
     if (bpm > 0 && duration > 0) {
       const beatInterval = 60 / bpm;
       const beatsPerBar = 4;
+      // Extra ±1 beat buffer ensures markers at the very edge of the viewport
+      // are computed and drawn even after floating-point rounding.
       const firstBeat = Math.max(0, Math.floor((currentTime - cx / pps) / beatInterval) - 1);
       const lastBeat = Math.ceil((currentTime + (W - cx) / pps) / beatInterval) + 1;
 
@@ -1031,16 +1033,17 @@
 
         const isActive = idx === activeChordIdx;
         const isMinor = chord.quality === 'minor';
-        const baseR = isMinor ? 124 : 108;
-        const baseG = isMinor ? 58 : 99;
-        const baseB = isMinor ? 237 : 255;
+        // Minor chords: indigo (#7c3aed ≈ rgb 124,58,237); major: accent (#6c63ff ≈ rgb 108,99,255)
+        const [baseR, baseG, baseB] = isMinor ? [124, 58, 237] : [108, 99, 255];
         const alpha = isActive ? 0.9 : 0.4;
         ctx.fillStyle = `rgba(${baseR},${baseG},${baseB},${alpha})`;
         const blockPad = 6;
         ctx.fillRect(xClipped, CHORD_TOP + blockPad, wClipped - 1, CHORD_H - blockPad * 2);
 
         const rawW = xEnd - xStart;
-        if (rawW > 18) {
+        // Only render the chord label when the block is wide enough to be legible.
+        const MIN_LABEL_PX = 18;
+        if (rawW > MIN_LABEL_PX) {
           ctx.save();
           ctx.beginPath();
           ctx.rect(xClipped, CHORD_TOP + blockPad, wClipped - 1, CHORD_H - blockPad * 2);
