@@ -367,6 +367,15 @@
       border-radius: 7px;
       background: #111722;
     }
+    .timeline-canvas {
+      width: 100%;
+      height: 200px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: #0d0f14;
+      cursor: pointer;
+      display: block;
+    }
     .stem-row {
       display: grid;
       grid-template-columns: auto 1fr auto auto auto;
@@ -510,33 +519,46 @@
     </div>
     <div class="alert" id="detail-alert"></div>
     <ul class="detail-list" id="detail-list"></ul>
-    <div class="detail-grid" id="stem-workbench" style="display:none">
-      <div class="panel">
-        <h4>Stem Mixer &amp; Playback</h4>
-        <div class="transport-controls">
-          <button class="btn btn-primary btn-sm" id="transport-play">Play</button>
-          <button class="btn btn-ghost btn-sm" id="transport-pause">Pause</button>
-          <input type="range" id="transport-seek" min="0" max="1000" value="0" />
-          <span class="transport-time" id="transport-time">0:00 / 0:00</span>
+    <div id="stem-workbench" style="display:none">
+      <div class="panel" style="margin-bottom:1rem">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem">
+          <h4 style="margin-bottom:0">Waveform Timeline</h4>
+          <div style="display:flex;align-items:center;gap:0.5rem;font-size:0.78rem;color:var(--text-muted)">
+            <button class="btn btn-ghost btn-sm" id="timeline-zoom-out" title="Zoom out">−</button>
+            <span id="timeline-zoom-label" style="font-family:monospace;min-width:5ch;text-align:center">100 px/s</span>
+            <button class="btn btn-ghost btn-sm" id="timeline-zoom-in" title="Zoom in">+</button>
+          </div>
         </div>
-        <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.6rem">
-          <label for="histogram-mode" style="font-size:0.78rem;color:var(--text-muted)">Histogram view</label>
-          <select id="histogram-mode" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:0.35rem">
-            <option value="full_mix">Full mix only</option>
-            <option value="selected">Selected stem only</option>
-            <option value="overlay">Overlay all stems</option>
-          </select>
-        </div>
-        <canvas class="histogram-canvas" id="histogram-canvas"></canvas>
+        <canvas id="timeline-canvas" class="timeline-canvas"></canvas>
       </div>
-      <div style="display:grid;gap:1rem">
+      <div class="detail-grid">
         <div class="panel">
-          <h4>Stems</h4>
-          <div id="stem-mixer-list"></div>
+          <h4>Stem Mixer &amp; Playback</h4>
+          <div class="transport-controls">
+            <button class="btn btn-primary btn-sm" id="transport-play">Play</button>
+            <button class="btn btn-ghost btn-sm" id="transport-pause">Pause</button>
+            <input type="range" id="transport-seek" min="0" max="1000" value="0" />
+            <span class="transport-time" id="transport-time">0:00 / 0:00</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.6rem">
+            <label for="histogram-mode" style="font-size:0.78rem;color:var(--text-muted)">Histogram view</label>
+            <select id="histogram-mode" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:0.35rem">
+              <option value="full_mix">Full mix only</option>
+              <option value="selected">Selected stem only</option>
+              <option value="overlay">Overlay all stems</option>
+            </select>
+          </div>
+          <canvas class="histogram-canvas" id="histogram-canvas"></canvas>
         </div>
-        <div class="panel">
-          <h4>Selected Stem Analysis</h4>
-          <ul id="stem-analysis-list"></ul>
+        <div style="display:grid;gap:1rem">
+          <div class="panel">
+            <h4>Stems</h4>
+            <div id="stem-mixer-list"></div>
+          </div>
+          <div class="panel">
+            <h4>Selected Stem Analysis</h4>
+            <ul id="stem-analysis-list"></ul>
+          </div>
         </div>
       </div>
     </div>
@@ -581,6 +603,8 @@
     seekSeconds: 0,
     durationSeconds: 0,
     rafId: null,
+    timelinePixelsPerSecond: 100,
+    timelineTaskData: null,
   };
 
   // ── Utilities ────────────────────────────────────────────────────────────
@@ -676,6 +700,7 @@
     const duration = stemPlayer.durationSeconds || 0;
     seek.value = duration > 0 ? String(Math.round((current / duration) * 1000)) : '0';
     label.textContent = `${fmtDuration(current)} / ${fmtDuration(duration)}`;
+    drawTimeline();
     if (stemPlayer.isPlaying) {
       stemPlayer.rafId = requestAnimationFrame(updateTransportUi);
     }
@@ -818,6 +843,249 @@
     });
   }
 
+  function drawTimeline() {
+    const canvas = document.getElementById('timeline-canvas');
+    if (!canvas) return;
+    const taskData = stemPlayer.timelineTaskData;
+
+    const dpr = window.devicePixelRatio || 1;
+    const W = canvas.clientWidth;
+    const H = canvas.clientHeight;
+    if (W === 0 || H === 0) return;
+
+    const scaledW = Math.round(W * dpr);
+    const scaledH = Math.round(H * dpr);
+    if (canvas.width !== scaledW || canvas.height !== scaledH) {
+      canvas.width = scaledW;
+      canvas.height = scaledH;
+    }
+
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+
+    // Background
+    ctx.fillStyle = '#0d0f14';
+    ctx.fillRect(0, 0, W, H);
+
+    if (!taskData) {
+      ctx.fillStyle = 'rgba(136,152,170,0.4)';
+      ctx.font = '13px sans-serif';
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'center';
+      ctx.fillText('No analysis data', W / 2, H / 2);
+      ctx.textBaseline = 'alphabetic';
+      ctx.textAlign = 'left';
+      return;
+    }
+
+    const analysis = (taskData.analysis && typeof taskData.analysis === 'object')
+      ? taskData.analysis.full_mix || null
+      : null;
+    const bpm = toFiniteNumber(analysis ? analysis.bpm : 0, 0);
+    const duration = toFiniteNumber(
+      analysis ? analysis.duration_seconds : (taskData.duration_seconds || 0),
+      0,
+    );
+    const waveform = Array.isArray(analysis ? analysis.waveform : null) ? analysis.waveform : [];
+    const chords = Array.isArray(analysis && analysis.chords ? analysis.chords.segments : null)
+      ? analysis.chords.segments
+      : [];
+
+    const pps = stemPlayer.timelinePixelsPerSecond;
+    const currentTime = getTransportTime();
+    const cx = W / 2;
+
+    // ── Layout bands ────────────────────────────────────────────────────────
+    const RULER_H = 38;
+    const CHORD_H = chords.length > 0 ? 54 : 0;
+    const WAVE_H = H - RULER_H - CHORD_H;
+
+    // ── Ruler background ─────────────────────────────────────────────────────
+    ctx.fillStyle = '#161b25';
+    ctx.fillRect(0, 0, W, RULER_H);
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, RULER_H);
+    ctx.lineTo(W, RULER_H);
+    ctx.stroke();
+
+    // ── Beat and bar markers ─────────────────────────────────────────────────
+    if (bpm > 0 && duration > 0) {
+      const beatInterval = 60 / bpm;
+      const beatsPerBar = 4;
+      const firstBeat = Math.max(0, Math.floor((currentTime - cx / pps) / beatInterval) - 1);
+      const lastBeat = Math.ceil((currentTime + (W - cx) / pps) / beatInterval) + 1;
+
+      for (let beat = firstBeat; beat <= lastBeat; beat += 1) {
+        const beatTime = beat * beatInterval;
+        if (beatTime < 0 || beatTime > duration + beatInterval) continue;
+        const x = cx + (beatTime - currentTime) * pps;
+        if (x < -5 || x > W + 5) continue;
+
+        const isBar = beat % beatsPerBar === 0;
+        if (isBar) {
+          const barNum = Math.floor(beat / beatsPerBar) + 1;
+          // Bar line through ruler and waveform area
+          ctx.strokeStyle = 'rgba(108,99,255,0.45)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, RULER_H + WAVE_H);
+          ctx.stroke();
+          // Tick mark at ruler bottom edge
+          ctx.strokeStyle = 'rgba(108,99,255,0.8)';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(x, RULER_H - 8);
+          ctx.lineTo(x, RULER_H);
+          ctx.stroke();
+          // Bar number label
+          ctx.fillStyle = 'rgba(180,170,255,0.85)';
+          ctx.font = 'bold 10px monospace';
+          ctx.textBaseline = 'top';
+          ctx.fillText(String(barNum), x + 3, 4);
+        } else {
+          // Thin beat line in waveform area only
+          ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+          ctx.lineWidth = 0.7;
+          ctx.beginPath();
+          ctx.moveTo(x, RULER_H + 4);
+          ctx.lineTo(x, RULER_H + WAVE_H);
+          ctx.stroke();
+          // Small tick in ruler
+          ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+          ctx.lineWidth = 0.7;
+          ctx.beginPath();
+          ctx.moveTo(x, RULER_H - 5);
+          ctx.lineTo(x, RULER_H);
+          ctx.stroke();
+        }
+      }
+    }
+
+    // ── Waveform ─────────────────────────────────────────────────────────────
+    if (waveform.length > 0 && duration > 0) {
+      const numBins = waveform.length;
+      const waveMax = waveform.reduce((m, v) => Math.max(m, Math.abs(toFiniteNumber(v, 0))), 0) || 1;
+      const binDuration = duration / numBins;
+      const binWidth = Math.max(1, binDuration * pps);
+      const waveCenterY = RULER_H + WAVE_H / 2;
+
+      for (let i = 0; i < numBins; i += 1) {
+        const binTime = (i + 0.5) * binDuration;
+        const x = cx + (binTime - currentTime) * pps;
+        if (x + binWidth < 0 || x - binWidth > W) continue;
+
+        const amplitude = Math.abs(toFiniteNumber(waveform[i], 0)) / waveMax;
+        const barHalfH = Math.max(1, amplitude * WAVE_H * 0.42);
+        const bw = Math.max(1, binWidth - 1);
+        const isPast = binTime < currentTime;
+        ctx.fillStyle = isPast ? 'rgba(108,99,255,0.55)' : 'rgba(108,99,255,0.85)';
+        ctx.fillRect(x - bw / 2, waveCenterY - barHalfH, bw, barHalfH * 2);
+      }
+
+      // Waveform centreline
+      ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(0, waveCenterY);
+      ctx.lineTo(W, waveCenterY);
+      ctx.stroke();
+    } else if (duration === 0) {
+      ctx.fillStyle = 'rgba(136,152,170,0.3)';
+      ctx.font = '12px sans-serif';
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'center';
+      ctx.fillText('No waveform data', W / 2, RULER_H + WAVE_H / 2);
+      ctx.textBaseline = 'alphabetic';
+      ctx.textAlign = 'left';
+    }
+
+    // ── Chord overlay ─────────────────────────────────────────────────────────
+    if (chords.length > 0) {
+      const CHORD_TOP = RULER_H + WAVE_H;
+      ctx.fillStyle = '#161b25';
+      ctx.fillRect(0, CHORD_TOP, W, CHORD_H);
+      ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, CHORD_TOP);
+      ctx.lineTo(W, CHORD_TOP);
+      ctx.stroke();
+
+      const activeChordIdx = chords.findIndex(
+        (c) => currentTime >= c.start_seconds && currentTime < c.end_seconds,
+      );
+
+      chords.forEach((chord, idx) => {
+        const xStart = cx + (chord.start_seconds - currentTime) * pps;
+        const xEnd = cx + (chord.end_seconds - currentTime) * pps;
+        if (xEnd < 0 || xStart > W) return;
+
+        const xClipped = Math.max(0, xStart);
+        const xClippedEnd = Math.min(W, xEnd);
+        const wClipped = xClippedEnd - xClipped;
+        if (wClipped <= 0) return;
+
+        const isActive = idx === activeChordIdx;
+        const isMinor = chord.quality === 'minor';
+        const baseR = isMinor ? 124 : 108;
+        const baseG = isMinor ? 58 : 99;
+        const baseB = isMinor ? 237 : 255;
+        const alpha = isActive ? 0.9 : 0.4;
+        ctx.fillStyle = `rgba(${baseR},${baseG},${baseB},${alpha})`;
+        const blockPad = 6;
+        ctx.fillRect(xClipped, CHORD_TOP + blockPad, wClipped - 1, CHORD_H - blockPad * 2);
+
+        const rawW = xEnd - xStart;
+        if (rawW > 18) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(xClipped, CHORD_TOP + blockPad, wClipped - 1, CHORD_H - blockPad * 2);
+          ctx.clip();
+          ctx.fillStyle = isActive ? '#fff' : 'rgba(255,255,255,0.85)';
+          ctx.font = isActive
+            ? "bold 12px 'Segoe UI', sans-serif"
+            : "11px 'Segoe UI', sans-serif";
+          ctx.textBaseline = 'middle';
+          ctx.fillText(chord.symbol, Math.max(xClipped + 4, xStart + 4), CHORD_TOP + CHORD_H / 2);
+          ctx.restore();
+        }
+      });
+      ctx.textBaseline = 'alphabetic';
+    }
+
+    // ── Fixed playhead ────────────────────────────────────────────────────────
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(cx, 0);
+    ctx.lineTo(cx, H);
+    ctx.stroke();
+
+    // Playhead down-arrow at the top
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(cx - 5, 1);
+    ctx.lineTo(cx + 5, 1);
+    ctx.lineTo(cx, 9);
+    ctx.closePath();
+    ctx.fill();
+
+    // Current-time label just above the ruler bottom edge
+    ctx.fillStyle = 'rgba(255,255,255,0.65)';
+    ctx.font = '10px monospace';
+    ctx.textBaseline = 'bottom';
+    const timeLabel = fmtDuration(currentTime);
+    const timeLabelW = ctx.measureText(timeLabel).width;
+    const timeLabelX = Math.min(W - timeLabelW - 3, Math.max(2, cx - timeLabelW / 2));
+    ctx.fillText(timeLabel, timeLabelX, RULER_H - 1);
+    ctx.textBaseline = 'alphabetic';
+  }
+
   async function initStemWorkbench(taskData) {
     const workbench = document.getElementById('stem-workbench');
     const mixerList = document.getElementById('stem-mixer-list');
@@ -830,6 +1098,8 @@
     stemPlayer.selectedStem = 'full_mix';
     stemPlayer.histogramMode = 'full_mix';
     stemPlayer.tracks = [];
+    stemPlayer.timelineTaskData = null;
+    stemPlayer.timelinePixelsPerSecond = 100;
 
     const stems = taskData.stems && typeof taskData.stems === 'object' ? taskData.stems : {};
     const trackSpecs = [{ name: 'full_mix', artifactName: 'normalized_wav' }].concat(
@@ -931,6 +1201,41 @@
     updateTransportUi();
     renderStemAnalysisPanel(taskData);
     drawHistogram(taskData);
+
+    // ── Timeline initialisation ───────────────────────────────────────────
+    stemPlayer.timelineTaskData = taskData;
+
+    const timelineCanvas = document.getElementById('timeline-canvas');
+    if (timelineCanvas) {
+      // Click to seek
+      timelineCanvas.onclick = (e) => {
+        const rect = timelineCanvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const cx = timelineCanvas.clientWidth / 2;
+        const clickTime = getTransportTime() + (x - cx) / stemPlayer.timelinePixelsPerSecond;
+        seekStemPlayback(clickTime);
+      };
+    }
+
+    // Zoom controls
+    const zoomIn = document.getElementById('timeline-zoom-in');
+    const zoomOut = document.getElementById('timeline-zoom-out');
+    const zoomLabel = document.getElementById('timeline-zoom-label');
+    const updateZoomLabel = () => {
+      if (zoomLabel) zoomLabel.textContent = `${stemPlayer.timelinePixelsPerSecond} px/s`;
+    };
+    if (zoomIn) zoomIn.onclick = () => {
+      stemPlayer.timelinePixelsPerSecond = Math.min(2000, stemPlayer.timelinePixelsPerSecond * 2);
+      updateZoomLabel();
+      drawTimeline();
+    };
+    if (zoomOut) zoomOut.onclick = () => {
+      stemPlayer.timelinePixelsPerSecond = Math.max(10, stemPlayer.timelinePixelsPerSecond / 2);
+      updateZoomLabel();
+      drawTimeline();
+    };
+    updateZoomLabel();
+    drawTimeline();
   }
 
   // ── Render ───────────────────────────────────────────────────────────────
