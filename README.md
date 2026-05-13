@@ -150,9 +150,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-12T09:35:59Z
-- Latest commit: `bcc9507`
-- Commit message: Merge pull request #53 from julesdg6/copilot/ci-verify-mt3-transcription  MT3: harden transcription stability defaults and flag empty-note outputs
+- Last automated update: 2026-05-13T22:25:11Z
+- Latest commit: `c5be2ee`
+- Commit message: Merge pull request #55 from julesdg6/copilot/add-daw-style-waving-timeline  Add DAW-style scrolling waveform timeline to song detail view
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
