@@ -529,3 +529,36 @@ def test_stem_backend_status_active_none_when_no_backend_configured(client, monk
     assert data['active_backend'] == 'none'
     assert data['acestep']['configured'] is False
     assert data['demucs']['available'] is False
+
+
+def test_stem_backend_status_prefers_healthy_ace_step(client, monkeypatch):
+    """A configured, reachable Ace-Step service should be reported as active."""
+    monkeypatch.setenv('ACE_STEP_API_URL', 'http://ace-step:8001')
+    monkeypatch.setenv('ACE_STEP_API_KEY', 'secret-token')
+    monkeypatch.setenv('STEM_BACKEND', 'auto')
+    import importlib
+    import shutil
+    import api.main as main_module  # noqa: PLC0415
+    importlib.reload(main_module)
+    from fastapi.testclient import TestClient
+    from unittest.mock import MagicMock, patch
+
+    response_ctx = MagicMock()
+    response_ctx.__enter__.return_value = object()
+
+    with (
+        patch.object(main_module.urllib.request, 'urlopen', return_value=response_ctx) as mock_urlopen,
+        patch.object(shutil, 'which', return_value=None),
+    ):
+        c = TestClient(main_module.app)
+        response = c.get('/stem-backend/status')
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data['active_backend'] == 'acestep'
+    assert data['acestep']['configured'] is True
+    assert data['acestep']['healthy'] is True
+    assert data['acestep']['url'] == 'http://ace-step:8001'
+    request = mock_urlopen.call_args.args[0]
+    assert request.full_url == 'http://ace-step:8001'
+    assert request.get_header('Authorization') == 'Bearer secret-token'
