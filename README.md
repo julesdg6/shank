@@ -150,9 +150,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-19T17:08:57Z
-- Latest commit: `f5b5316`
-- Commit message: Merge pull request #62 from julesdg6/copilot/fix-stem-separation-issue  Cover healthy Ace-Step stem backend status in API tests
+- Last automated update: 2026-05-19T17:09:34Z
+- Latest commit: `e12fb74`
+- Commit message: Merge pull request #63 from julesdg6/copilot/fix-worker-placeholder-issue  Factor worker polling into a real backend entrypoint
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
