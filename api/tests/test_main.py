@@ -41,6 +41,24 @@ def test_root_serves_dashboard_html_for_browser_requests(client):
     assert 'Upload Audio File' in response.text
 
 
+def test_root_keeps_json_for_non_html_accept_headers(client):
+    response = client.get('/', headers={'accept': 'application/xhtml+xml,application/json'})
+    assert response.status_code == 200
+    assert response.json() == {'status': 'online', 'service': 'SHANK API'}
+
+
+def test_root_logs_warning_when_dashboard_file_is_missing(client, monkeypatch, caplog, tmp_path):
+    import api.main as main_module  # noqa: PLC0415
+
+    monkeypatch.setattr(main_module, '_UI_DIR', tmp_path / 'missing-ui')
+    with caplog.at_level('WARNING'):
+        response = client.get('/', headers={'accept': 'text/html'})
+
+    assert response.status_code == 200
+    assert response.json() == {'status': 'online', 'service': 'SHANK API'}
+    assert f'Dashboard HTML requested at / but {tmp_path / "missing-ui" / "index.html"} is missing' in caplog.text
+
+
 # ---------------------------------------------------------------------------
 # POST /tasks/upload
 # ---------------------------------------------------------------------------

@@ -25,6 +25,13 @@ ALLOWED_REQUESTED_TYPES = {'melody'}
 MAX_UPLOAD_SIZE = 200 * 1024 * 1024  # 200 MB
 
 
+def _accepts_media_type(accept_header: str, media_type: str) -> bool:
+    return any(
+        part.split(';', 1)[0].strip().lower() == media_type
+        for part in accept_header.split(',')
+    )
+
+
 def _ensure_dirs() -> None:
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     TASKS_DIR.mkdir(parents=True, exist_ok=True)
@@ -128,10 +135,12 @@ _UI_DIR = Path(__file__).parent / 'ui'
 
 @app.get('/')
 def read_root(request: Request):
-    accepts_html = 'text/html' in request.headers.get('accept', '').lower()
+    accepts_html = _accepts_media_type(request.headers.get('accept', ''), 'text/html')
     index_file = _UI_DIR / 'index.html'
-    if accepts_html and index_file.is_file():
-        return FileResponse(index_file, media_type='text/html')
+    if accepts_html:
+        if index_file.is_file():
+            return FileResponse(index_file, media_type='text/html')
+        log.warning('Dashboard HTML requested at / but %s is missing', index_file)
     return {'status': 'online', 'service': 'SHANK API'}
 
 
