@@ -650,10 +650,8 @@ def run_worker(
             log.info('Processed %d task(s) this cycle', count)
 
         cycles_run += 1
-        if max_cycles is not None and cycles_run >= max_cycles:
-            break
-
-        sleep_fn(poll_interval)
+        if max_cycles is None or cycles_run < max_cycles:
+            sleep_fn(poll_interval)
 
 
 if __name__ == '__main__':

@@ -277,7 +277,7 @@ def test_multiple_pending_tasks_all_processed(data_dir):
 
 
 def test_run_worker_polls_tasks_repeatedly(data_dir):
-    """run_worker should repeatedly poll for tasks and sleep between cycles."""
+    """run_worker should poll every cycle and only sleep between cycles."""
     tasks_dir = data_dir / 'custom-tasks'
     observed_tasks_dirs = []
     sleep_calls = []
