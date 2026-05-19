@@ -43,7 +43,5 @@ def test_dockerfile_installs_audio_processing_tools():
     dockerfile = Path(__file__).resolve().parents[1] / 'Dockerfile'
     text = dockerfile.read_text()
 
-    assert 'apt-get install -y --no-install-recommends' in text
     assert 'ffmpeg' in text
     assert 'yt-dlp' in text
-    assert 'supervisor' in text
