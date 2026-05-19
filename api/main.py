@@ -25,11 +25,34 @@ ALLOWED_REQUESTED_TYPES = {'melody'}
 MAX_UPLOAD_SIZE = 200 * 1024 * 1024  # 200 MB
 
 
-def _accepts_media_type(accept_header: str, media_type: str) -> bool:
-    return any(
-        part.split(';', 1)[0].strip().lower() == media_type
-        for part in accept_header.split(',')
-    )
+def _preferred_media_type(accept_header: str, media_type: str) -> float:
+    wanted_type, wanted_subtype = media_type.lower().split('/', 1)
+    best_q = 0.0
+    for raw_part in accept_header.split(','):
+        part = raw_part.strip()
+        if not part:
+            continue
+        media_range, *params = [item.strip() for item in part.split(';') if item.strip()]
+        if '/' not in media_range:
+            continue
+        range_type, range_subtype = media_range.lower().split('/', 1)
+        if range_type not in (wanted_type, '*'):
+            continue
+        if range_subtype not in (wanted_subtype, '*'):
+            continue
+
+        q_value = 1.0
+        for param in params:
+            key, sep, value = param.partition('=')
+            if key.strip().lower() != 'q' or sep != '=':
+                continue
+            try:
+                q_value = float(value.strip())
+            except ValueError:
+                q_value = 0.0
+            break
+        best_q = max(best_q, q_value)
+    return best_q
 
 
 def _ensure_dirs() -> None:
@@ -135,7 +158,10 @@ _UI_DIR = Path(__file__).parent / 'ui'
 
 @app.get('/')
 def read_root(request: Request):
-    accepts_html = _accepts_media_type(request.headers.get('accept', ''), 'text/html')
+    accept_header = request.headers.get('accept', '')
+    html_quality = _preferred_media_type(accept_header, 'text/html')
+    json_quality = _preferred_media_type(accept_header, 'application/json')
+    accepts_html = html_quality > 0 and html_quality >= json_quality
     index_file = _UI_DIR / 'index.html'
     if accepts_html:
         if index_file.is_file():
