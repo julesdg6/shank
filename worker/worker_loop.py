@@ -633,10 +633,26 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
     return picked_up
 
 
-if __name__ == '__main__':
-    log.info('Worker starting (poll interval=%ds, DATA_DIR=%s)', POLL_INTERVAL, DATA_DIR)
-    while True:
-        count = process_pending_tasks()
+def run_worker(
+    tasks_dir: Path = TASKS_DIR,
+    poll_interval: float = POLL_INTERVAL,
+    *,
+    sleep_fn=time.sleep,
+    max_cycles: int | None = None,
+) -> None:
+    """Continuously poll *tasks_dir* for work and process pending tasks."""
+    log.info('Worker starting (poll interval=%ss, DATA_DIR=%s)', poll_interval, DATA_DIR)
+
+    cycles_run = 0
+    while max_cycles is None or cycles_run < max_cycles:
+        count = process_pending_tasks(tasks_dir)
         if count:
             log.info('Processed %d task(s) this cycle', count)
-        time.sleep(POLL_INTERVAL)
+
+        cycles_run += 1
+        if max_cycles is None or cycles_run < max_cycles:
+            sleep_fn(poll_interval)
+
+
+if __name__ == '__main__':
+    run_worker()
