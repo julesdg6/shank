@@ -46,7 +46,7 @@ docker compose up --build -d
 The API and Web UI are available at **http://localhost:8088**.
 
 ### 3. Open the dashboard
-Navigate to **http://localhost:8088/ui** in your browser to upload audio files or submit YouTube URLs.
+Navigate to **http://localhost:8088/** in your browser to upload audio files or submit YouTube URLs. The dashboard is also available at **http://localhost:8088/ui**.
 
 ### 4. Stop the service
 ```bash
@@ -57,7 +57,7 @@ docker compose down
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/` | Health check — returns `{"status": "online"}` |
+| `GET` | `/` | Browser landing page (dashboard) or JSON health check for API clients |
 | `POST` | `/tasks/upload` | Upload an audio file (MP3, WAV, FLAC, max 200 MB) |
 | `POST` | `/tasks/melody` | Upload audio and queue a melody-focused analysis task |
 | `POST` | `/tasks/url` | Submit a YouTube URL for download and analysis |

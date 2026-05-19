@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
@@ -123,8 +123,15 @@ async def _queue_audio_task(file: UploadFile, *, requested_type: str | None = No
 # Health check
 # ---------------------------------------------------------------------------
 
+_UI_DIR = Path(__file__).parent / 'ui'
+
+
 @app.get('/')
-def read_root():
+def read_root(request: Request):
+    accepts_html = 'text/html' in request.headers.get('accept', '').lower()
+    index_file = _UI_DIR / 'index.html'
+    if accepts_html and index_file.is_file():
+        return FileResponse(index_file, media_type='text/html')
     return {'status': 'online', 'service': 'SHANK API'}
 
 
@@ -381,6 +388,5 @@ def get_stem_backend_status():
 # Static UI — mount last so API routes take precedence
 # ---------------------------------------------------------------------------
 
-_UI_DIR = Path(__file__).parent / 'ui'
 if _UI_DIR.is_dir():
     app.mount('/ui', StaticFiles(directory=str(_UI_DIR), html=True), name='ui')

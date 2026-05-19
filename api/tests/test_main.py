@@ -26,11 +26,19 @@ def client(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_health_check(client):
-    response = client.get('/')
+    response = client.get('/', headers={'accept': 'application/json'})
     assert response.status_code == 200
     data = response.json()
     assert data['status'] == 'online'
     assert data['service'] == 'SHANK API'
+
+
+def test_root_serves_dashboard_html_for_browser_requests(client):
+    response = client.get('/', headers={'accept': 'text/html,application/xhtml+xml'})
+    assert response.status_code == 200
+    assert response.headers['content-type'].startswith('text/html')
+    assert 'SHANK — AI Song Analyzer' in response.text
+    assert 'Upload Audio File' in response.text
 
 
 # ---------------------------------------------------------------------------
