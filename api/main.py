@@ -26,16 +26,18 @@ MAX_UPLOAD_SIZE = 200 * 1024 * 1024  # 200 MB
 
 
 def _preferred_media_type(accept_header: str, media_type: str) -> float:
-    wanted_type, wanted_subtype = media_type.lower().split('/', 1)
+    wanted_type, sep, wanted_subtype = media_type.lower().partition('/')
+    if sep != '/' or not wanted_type or not wanted_subtype:
+        return 0.0
     best_q = 0.0
     for raw_part in accept_header.split(','):
         part = raw_part.strip()
         if not part:
             continue
         media_range, *params = [item.strip() for item in part.split(';') if item.strip()]
-        if '/' not in media_range:
+        range_type, sep, range_subtype = media_range.lower().partition('/')
+        if sep != '/' or not range_type or not range_subtype:
             continue
-        range_type, range_subtype = media_range.lower().split('/', 1)
         if range_type not in (wanted_type, '*'):
             continue
         if range_subtype not in (wanted_subtype, '*'):

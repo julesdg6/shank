@@ -4,6 +4,7 @@ import json
 import uuid
 
 import pytest
+import api.main as main_module
 from fastapi.testclient import TestClient
 
 
@@ -55,8 +56,6 @@ def test_root_serves_html_for_wildcard_accept_when_json_is_not_preferred(client)
 
 
 def test_root_logs_warning_when_dashboard_file_is_missing(client, monkeypatch, caplog, tmp_path):
-    import api.main as main_module  # noqa: PLC0415
-
     missing_ui_dir = tmp_path / 'missing-ui'
     missing_index = missing_ui_dir / 'index.html'
     monkeypatch.setattr(main_module, '_UI_DIR', missing_ui_dir)
