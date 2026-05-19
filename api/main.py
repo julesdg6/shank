@@ -26,6 +26,11 @@ MAX_UPLOAD_SIZE = 200 * 1024 * 1024  # 200 MB
 
 
 def _preferred_media_type(accept_header: str, media_type: str) -> float:
+    """Return the highest q-value that makes ``media_type`` acceptable.
+
+    The parser handles exact media types plus ``type/*`` and ``*/*`` wildcards.
+    Invalid entries are ignored. When no matching entry exists, this returns 0.0.
+    """
     wanted_type, sep, wanted_subtype = media_type.lower().partition('/')
     if sep != '/' or not wanted_type or not wanted_subtype:
         return 0.0
@@ -160,6 +165,11 @@ _UI_DIR = Path(__file__).parent / 'ui'
 
 @app.get('/')
 def read_root(request: Request):
+    """Serve the dashboard for browser-style requests and JSON for API clients.
+
+    When HTML and JSON are equally acceptable, prefer HTML so the bare root path
+    behaves as the product landing page in browsers.
+    """
     accept_header = request.headers.get('accept', '')
     if accept_header.strip():
         html_quality = _preferred_media_type(accept_header, 'text/html')
