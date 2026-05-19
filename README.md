@@ -150,9 +150,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-19T16:54:08Z
-- Latest commit: `e55960e`
-- Commit message: Merge pull request #60 from julesdg6/copilot/add-yt-dlp-ffmpeg  Backend container: add yt-dlp alongside ffmpeg for URL/audio processing
+- Last automated update: 2026-05-19T17:08:12Z
+- Latest commit: `b910792`
+- Commit message: Merge pull request #61 from julesdg6/copilot/fix-no-web-ui-dashboard  Serve the SHANK dashboard from `/` while preserving JSON health semantics
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
