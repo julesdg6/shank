@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
@@ -23,6 +23,43 @@ TASKS_DIR = DATA_DIR / 'tasks'
 ALLOWED_AUDIO_EXTENSIONS = {'.mp3', '.wav', '.flac'}
 ALLOWED_REQUESTED_TYPES = {'melody'}
 MAX_UPLOAD_SIZE = 200 * 1024 * 1024  # 200 MB
+
+
+def _get_media_type_quality(accept_header: str, media_type: str) -> float:
+    """Return the highest q-value that makes ``media_type`` acceptable.
+
+    The parser handles exact media types plus ``type/*`` and ``*/*`` wildcards.
+    Invalid entries are ignored. When no matching entry exists, this returns 0.0.
+    """
+    wanted_type, sep, wanted_subtype = media_type.lower().partition('/')
+    if sep != '/' or not wanted_type or not wanted_subtype:
+        return 0.0
+    best_q = 0.0
+    for raw_part in accept_header.split(','):
+        part = raw_part.strip()
+        if not part:
+            continue
+        media_range, *params = [item.strip() for item in part.split(';') if item.strip()]
+        range_type, sep, range_subtype = media_range.lower().partition('/')
+        if sep != '/' or not range_type or not range_subtype:
+            continue
+        if range_type not in (wanted_type, '*'):
+            continue
+        if range_subtype not in (wanted_subtype, '*'):
+            continue
+
+        q_value = 1.0
+        for param in params:
+            key, sep, value = param.partition('=')
+            if key.strip().lower() != 'q' or sep != '=':
+                continue
+            try:
+                q_value = float(value.strip())
+            except ValueError:
+                q_value = 0.0
+            break
+        best_q = max(best_q, q_value)
+    return best_q
 
 
 def _ensure_dirs() -> None:
@@ -123,8 +160,33 @@ async def _queue_audio_task(file: UploadFile, *, requested_type: str | None = No
 # Health check
 # ---------------------------------------------------------------------------
 
+_UI_DIR = Path(__file__).parent / 'ui'
+
+
 @app.get('/')
-def read_root():
+def read_root(request: Request):
+    """Serve the dashboard for browser-style requests and JSON for API clients.
+
+    When HTML and JSON are equally acceptable, prefer HTML so the bare root path
+    behaves as the product landing page in browsers. If the Accept header is
+    missing or does not express a preference for either HTML or JSON, default to
+    the dashboard for the same reason.
+    """
+    accept_header = request.headers.get('accept', '')
+    if accept_header.strip():
+        html_quality = _get_media_type_quality(accept_header, 'text/html')
+        json_quality = _get_media_type_quality(accept_header, 'application/json')
+    else:
+        html_quality = 1.0
+        json_quality = 0.0
+    if html_quality == 0 and json_quality == 0:
+        html_quality = 1.0
+    accepts_html = html_quality > 0 and html_quality >= json_quality
+    index_file = _UI_DIR / 'index.html'
+    if accepts_html:
+        if index_file.is_file():
+            return FileResponse(index_file, media_type='text/html')
+        log.warning('Dashboard HTML requested at / but %s is missing', index_file)
     return {'status': 'online', 'service': 'SHANK API'}
 
 
@@ -381,6 +443,5 @@ def get_stem_backend_status():
 # Static UI — mount last so API routes take precedence
 # ---------------------------------------------------------------------------
 
-_UI_DIR = Path(__file__).parent / 'ui'
 if _UI_DIR.is_dir():
     app.mount('/ui', StaticFiles(directory=str(_UI_DIR), html=True), name='ui')

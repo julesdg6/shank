@@ -4,6 +4,7 @@ import json
 import uuid
 
 import pytest
+import api.main as main_module
 from fastapi.testclient import TestClient
 
 
@@ -26,11 +27,52 @@ def client(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_health_check(client):
-    response = client.get('/')
+    response = client.get('/', headers={'accept': 'application/json'})
     assert response.status_code == 200
     data = response.json()
     assert data['status'] == 'online'
     assert data['service'] == 'SHANK API'
+
+
+def test_root_serves_dashboard_html_for_browser_requests(client):
+    response = client.get('/', headers={'accept': 'text/html,application/xhtml+xml'})
+    assert response.status_code == 200
+    assert response.headers['content-type'].startswith('text/html')
+    assert 'SHANK — AI Song Analyzer' in response.text
+    assert 'Upload Audio File' in response.text
+
+
+def test_root_keeps_json_for_non_html_accept_headers(client):
+    response = client.get('/', headers={'accept': 'application/xhtml+xml,application/json'})
+    assert response.status_code == 200
+    assert response.json() == {'status': 'online', 'service': 'SHANK API'}
+
+
+def test_root_defaults_to_html_when_accept_header_is_missing(client):
+    client.headers.pop('accept', None)
+    response = client.get('/')
+    assert response.status_code == 200
+    assert response.headers['content-type'].startswith('text/html')
+    assert 'Upload Audio File' in response.text
+
+
+def test_root_serves_html_for_wildcard_accept_when_json_is_not_preferred(client):
+    response = client.get('/', headers={'accept': 'application/json;q=0.5,*/*;q=0.8'})
+    assert response.status_code == 200
+    assert response.headers['content-type'].startswith('text/html')
+    assert 'Upload Audio File' in response.text
+
+
+def test_root_logs_warning_when_dashboard_file_is_missing(client, monkeypatch, caplog, tmp_path):
+    missing_ui_dir = tmp_path / 'missing-ui'
+    missing_index = missing_ui_dir / 'index.html'
+    monkeypatch.setattr(main_module, '_UI_DIR', missing_ui_dir)
+    with caplog.at_level('WARNING'):
+        response = client.get('/', headers={'accept': 'text/html'})
+
+    assert response.status_code == 200
+    assert response.json() == {'status': 'online', 'service': 'SHANK API'}
+    assert f'Dashboard HTML requested at / but {missing_index} is missing' in caplog.text
 
 
 # ---------------------------------------------------------------------------
