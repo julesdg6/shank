@@ -150,9 +150,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-19T17:15:01Z
-- Latest commit: `333c260`
-- Commit message: Merge pull request #69 from julesdg6/copilot/fix-add-frontend-static-assets  Verify: web UI already implemented — no changes needed
+- Last automated update: 2026-05-19T17:15:31Z
+- Latest commit: `3407765`
+- Commit message: Merge pull request #70 from julesdg6/copilot/fix-worker-container-task-processing  Verify worker placeholder issue is already resolved
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
