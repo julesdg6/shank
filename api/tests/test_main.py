@@ -544,7 +544,7 @@ def test_stem_backend_status_prefers_healthy_ace_step(client, monkeypatch):
     from unittest.mock import MagicMock, patch
 
     response_ctx = MagicMock()
-    response_ctx.__enter__.return_value = object()
+    response_ctx.__enter__.return_value = MagicMock()
 
     with (
         patch.object(main_module.urllib.request, 'urlopen', return_value=response_ctx) as mock_urlopen,
