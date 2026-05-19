@@ -150,9 +150,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-19T17:09:34Z
-- Latest commit: `e12fb74`
-- Commit message: Merge pull request #63 from julesdg6/copilot/fix-worker-placeholder-issue  Factor worker polling into a real backend entrypoint
+- Last automated update: 2026-05-19T17:15:01Z
+- Latest commit: `333c260`
+- Commit message: Merge pull request #69 from julesdg6/copilot/fix-add-frontend-static-assets  Verify: web UI already implemented — no changes needed
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
