@@ -37,3 +37,11 @@ def test_supervisord_runs_api_worker_and_mt3():
     assert '[program:api]' in text
     assert '[program:worker]' in text
     assert '[program:mt3]' not in text
+
+
+def test_dockerfile_installs_audio_processing_tools():
+    dockerfile = Path(__file__).resolve().parents[1] / 'Dockerfile'
+    text = dockerfile.read_text()
+
+    assert 'ffmpeg' in text
+    assert 'yt-dlp' in text
