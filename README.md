@@ -150,9 +150,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-13T22:25:11Z
-- Latest commit: `c5be2ee`
-- Commit message: Merge pull request #55 from julesdg6/copilot/add-daw-style-waving-timeline  Add DAW-style scrolling waveform timeline to song detail view
+- Last automated update: 2026-05-19T16:54:08Z
+- Latest commit: `e55960e`
+- Commit message: Merge pull request #60 from julesdg6/copilot/add-yt-dlp-ffmpeg  Backend container: add yt-dlp alongside ffmpeg for URL/audio processing
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
