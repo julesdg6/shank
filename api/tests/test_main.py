@@ -1,7 +1,10 @@
 """Tests for the SHANK FastAPI endpoints."""
+import importlib
 import io
 import json
+import shutil
 import uuid
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -536,18 +539,13 @@ def test_stem_backend_status_prefers_healthy_ace_step(client, monkeypatch):
     monkeypatch.setenv('ACE_STEP_API_URL', 'http://ace-step:8001')
     monkeypatch.setenv('ACE_STEP_API_KEY', 'secret-token')
     monkeypatch.setenv('STEM_BACKEND', 'auto')
-    import importlib
-    import shutil
-    import api.main as main_module  # noqa: PLC0415
+    import api.main as main_module  # noqa: PLC0415 - import inside test so monkey-patched env can be reloaded
     importlib.reload(main_module)
-    from fastapi.testclient import TestClient
-    from unittest.mock import MagicMock, patch
 
-    response_ctx = MagicMock()
-    response_ctx.__enter__.return_value = MagicMock()
+    mock_urlopen_response = MagicMock()
 
     with (
-        patch.object(main_module.urllib.request, 'urlopen', return_value=response_ctx) as mock_urlopen,
+        patch.object(main_module.urllib.request, 'urlopen', return_value=mock_urlopen_response) as mock_urlopen,
         patch.object(shutil, 'which', return_value=None),
     ):
         c = TestClient(main_module.app)
