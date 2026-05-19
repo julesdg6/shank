@@ -25,7 +25,7 @@ ALLOWED_REQUESTED_TYPES = {'melody'}
 MAX_UPLOAD_SIZE = 200 * 1024 * 1024  # 200 MB
 
 
-def _preferred_media_type(accept_header: str, media_type: str) -> float:
+def _get_media_type_quality(accept_header: str, media_type: str) -> float:
     """Return the highest q-value that makes ``media_type`` acceptable.
 
     The parser handles exact media types plus ``type/*`` and ``*/*`` wildcards.
@@ -168,15 +168,19 @@ def read_root(request: Request):
     """Serve the dashboard for browser-style requests and JSON for API clients.
 
     When HTML and JSON are equally acceptable, prefer HTML so the bare root path
-    behaves as the product landing page in browsers.
+    behaves as the product landing page in browsers. If the Accept header is
+    missing or does not express a preference for either HTML or JSON, default to
+    the dashboard for the same reason.
     """
     accept_header = request.headers.get('accept', '')
     if accept_header.strip():
-        html_quality = _preferred_media_type(accept_header, 'text/html')
-        json_quality = _preferred_media_type(accept_header, 'application/json')
+        html_quality = _get_media_type_quality(accept_header, 'text/html')
+        json_quality = _get_media_type_quality(accept_header, 'application/json')
     else:
         html_quality = 1.0
         json_quality = 0.0
+    if html_quality == 0 and json_quality == 0:
+        html_quality = 1.0
     accepts_html = html_quality > 0 and html_quality >= json_quality
     index_file = _UI_DIR / 'index.html'
     if accepts_html:

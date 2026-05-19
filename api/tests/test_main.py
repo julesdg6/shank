@@ -49,7 +49,8 @@ def test_root_keeps_json_for_non_html_accept_headers(client):
 
 
 def test_root_defaults_to_html_when_accept_header_is_missing(client):
-    response = client.get('/', headers={'accept': ''})
+    client.headers.pop('accept', None)
+    response = client.get('/')
     assert response.status_code == 200
     assert response.headers['content-type'].startswith('text/html')
     assert 'Upload Audio File' in response.text
