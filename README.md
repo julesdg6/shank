@@ -150,9 +150,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-19T17:15:50Z
-- Latest commit: `d7001b5`
-- Commit message: Merge pull request #71 from julesdg6/copilot/fix-stem-separation-functionality  Verify: stem-backend status endpoint already implemented
+- Last automated update: 2026-05-19T17:16:10Z
+- Latest commit: `a7fcd54`
+- Commit message: Merge pull request #68 from julesdg6/copilot/fix-youtube-url-processing  Verify: ffmpeg and yt-dlp packages already present in deployment Dockerfile
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
