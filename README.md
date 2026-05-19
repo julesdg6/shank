@@ -150,9 +150,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-19T17:08:12Z
-- Latest commit: `b910792`
-- Commit message: Merge pull request #61 from julesdg6/copilot/fix-no-web-ui-dashboard  Serve the SHANK dashboard from `/` while preserving JSON health semantics
+- Last automated update: 2026-05-19T17:08:57Z
+- Latest commit: `f5b5316`
+- Commit message: Merge pull request #62 from julesdg6/copilot/fix-stem-separation-issue  Cover healthy Ace-Step stem backend status in API tests
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
