@@ -274,3 +274,23 @@ def test_multiple_pending_tasks_all_processed(data_dir):
 
     assert mock_dl.call_count == 3
     assert count == 3
+
+
+def test_run_worker_polls_tasks_repeatedly(data_dir):
+    """run_worker should repeatedly poll for tasks and sleep between cycles."""
+    tasks_dir = data_dir / 'custom-tasks'
+    observed_tasks_dirs = []
+    sleep_calls = []
+
+    def fake_process_pending_tasks(arg):
+        observed_tasks_dirs.append(arg)
+        return 0
+
+    def fake_sleep(seconds):
+        sleep_calls.append(seconds)
+
+    with patch('worker_loop.process_pending_tasks', side_effect=fake_process_pending_tasks):
+        worker_loop.run_worker(tasks_dir, poll_interval=0.25, sleep_fn=fake_sleep, max_cycles=3)
+
+    assert observed_tasks_dirs == [tasks_dir, tasks_dir, tasks_dir]
+    assert sleep_calls == [0.25, 0.25]
