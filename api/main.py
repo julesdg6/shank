@@ -161,8 +161,12 @@ _UI_DIR = Path(__file__).parent / 'ui'
 @app.get('/')
 def read_root(request: Request):
     accept_header = request.headers.get('accept', '')
-    html_quality = _preferred_media_type(accept_header, 'text/html')
-    json_quality = _preferred_media_type(accept_header, 'application/json')
+    if accept_header.strip():
+        html_quality = _preferred_media_type(accept_header, 'text/html')
+        json_quality = _preferred_media_type(accept_header, 'application/json')
+    else:
+        html_quality = 1.0
+        json_quality = 0.0
     accepts_html = html_quality > 0 and html_quality >= json_quality
     index_file = _UI_DIR / 'index.html'
     if accepts_html:

@@ -48,6 +48,13 @@ def test_root_keeps_json_for_non_html_accept_headers(client):
     assert response.json() == {'status': 'online', 'service': 'SHANK API'}
 
 
+def test_root_defaults_to_html_when_accept_header_is_missing(client):
+    response = client.get('/', headers={'accept': ''})
+    assert response.status_code == 200
+    assert response.headers['content-type'].startswith('text/html')
+    assert 'Upload Audio File' in response.text
+
+
 def test_root_serves_html_for_wildcard_accept_when_json_is_not_preferred(client):
     response = client.get('/', headers={'accept': 'application/json;q=0.5,*/*;q=0.8'})
     assert response.status_code == 200
