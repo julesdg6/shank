@@ -150,9 +150,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-19T17:16:10Z
-- Latest commit: `a7fcd54`
-- Commit message: Merge pull request #68 from julesdg6/copilot/fix-youtube-url-processing  Verify: ffmpeg and yt-dlp packages already present in deployment Dockerfile
+- Last automated update: 2026-05-19T22:40:22Z
+- Latest commit: `85f6ae3`
+- Commit message: Merge pull request #73 from julesdg6/copilot/merge-all-into-one-container  Unify MT3 deployment into the main `shank` container
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
