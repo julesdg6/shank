@@ -150,9 +150,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-19T17:15:31Z
-- Latest commit: `3407765`
-- Commit message: Merge pull request #70 from julesdg6/copilot/fix-worker-container-task-processing  Verify worker placeholder issue is already resolved
+- Last automated update: 2026-05-19T17:15:50Z
+- Latest commit: `d7001b5`
+- Commit message: Merge pull request #71 from julesdg6/copilot/fix-stem-separation-functionality  Verify: stem-backend status endpoint already implemented
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
