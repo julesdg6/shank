@@ -179,7 +179,7 @@ MT3 transcription is controlled by the `MT3_ENABLED` variable (default: `false`)
 **Enabled**:
 ```dotenv
 MT3_ENABLED=true
-MT3_SERVICE_URL=http://shank-mt3:8090
+MT3_SERVICE_URL=http://127.0.0.1:8090
 ```
 The worker will call the internal MT3 service after each analysis and attach MIDI artifacts to the task result.
 
@@ -189,26 +189,20 @@ MT3_ENABLED=false
 ```
 All transcription steps are skipped entirely. The `mt3` object in the task result will show `"status": "disabled"`.
 
-### CPU/basic mode (default, MT3 off)
+### Unified container mode
 
 ```bash
 docker compose up --build -d
 ```
 
-### GPU/MT3 mode
-
-```bash
-docker compose --profile mt3 up --build -d
-```
-
 Set in `.env`:
 ```dotenv
 MT3_ENABLED=true
-MT3_SERVICE_URL=http://shank-mt3:8090
+MT3_SERVICE_URL=http://127.0.0.1:8090
 MT3_DEVICE=gpu
 ```
 
-Optional NVIDIA Docker Compose GPU reservation example in `docker-compose.yml` under `shank-mt3`:
+Optional NVIDIA Docker Compose GPU reservation example in `docker-compose.yml` under `shank`:
 ```yaml
 # gpus: all
 # deploy:
@@ -220,16 +214,7 @@ Optional NVIDIA Docker Compose GPU reservation example in `docker-compose.yml` u
 #           capabilities: [gpu]
 ```
 
-### MT3 disabled mode
-
-```bash
-docker compose up --build -d
-```
-
-Set in `.env`:
-```dotenv
-MT3_ENABLED=false
-```
+Leave `MT3_ENABLED=false` to keep transcription disabled while still running the same unified container.
 
 ### Full-Mix vs Stem Transcription
 
@@ -249,7 +234,7 @@ MT3_ENABLED=false
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MT3_ENABLED` | `false` | Enable (`true`) or disable (`false`) MT3 transcription |
-| `MT3_SERVICE_URL` | `http://shank-mt3:8090` | Internal URL of the optional MT3 FastAPI service |
+| `MT3_SERVICE_URL` | `http://127.0.0.1:8090` | Internal URL of the MT3 FastAPI service running inside the `shank` container |
 | `MT3_MODEL` | `multi_instrument` | MT3 model: `multi_instrument` (all instruments) or `ismir2021` (piano-only) |
 | `MT3_TIMEOUT` | `1800` | HTTP timeout (seconds) for a single transcription request |
 | `MT3_TRANSCRIBE_STEMS` | `true` | Also transcribe ACE-Step stems when available |
@@ -268,7 +253,7 @@ MT3_FAIL_TASK_ON_ERROR=false
 MT3_CHECKPOINT_ROOT=/srv/shank/models/mt3/checkpoints
 MT3_CACHE_DIR=/srv/shank/cache/mt3
 MT3_DEVICE=auto
-MT3_SERVICE_URL=http://shank-mt3:8090
+MT3_SERVICE_URL=http://127.0.0.1:8090
 ```
 
 ### Downloading MIDI Results
