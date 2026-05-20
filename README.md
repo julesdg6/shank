@@ -150,9 +150,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-19T22:40:22Z
-- Latest commit: `85f6ae3`
-- Commit message: Merge pull request #73 from julesdg6/copilot/merge-all-into-one-container  Unify MT3 deployment into the main `shank` container
+- Last automated update: 2026-05-20T23:59:45Z
+- Latest commit: `df032dc`
+- Commit message: Merge pull request #78 from julesdg6/copilot/add-yt-dlp-and-ffmpeg  Add yt-dlp to worker/Dockerfile for audio URL processing
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
