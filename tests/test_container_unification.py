@@ -45,3 +45,11 @@ def test_dockerfile_installs_audio_processing_tools():
 
     assert 'ffmpeg' in text
     assert 'yt-dlp' in text
+
+
+def test_worker_dockerfile_installs_audio_processing_tools():
+    dockerfile = Path(__file__).resolve().parents[1] / 'worker' / 'Dockerfile'
+    text = dockerfile.read_text()
+
+    assert 'ffmpeg' in text
+    assert 'yt-dlp' in text
