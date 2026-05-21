@@ -133,16 +133,6 @@ def _extract_track_files(data: Any) -> dict[str, str]:
 
     def collect(node):
         if isinstance(node, dict):
-            # Support APIs that return direct stem-key mappings:
-            # {"vocals": "...", "drums": "..."}
-            for stem_name, stem_ref in node.items():
-                if (
-                    isinstance(stem_name, str)
-                    and isinstance(stem_ref, str)
-                    and stem_name.strip().lower() in configured_stems
-                ):
-                    tracks[stem_name.strip()] = stem_ref
-
             track_name = (
                 node.get('track_name')
                 or node.get('track')
@@ -158,6 +148,17 @@ def _extract_track_files(data: Any) -> dict[str, str]:
                 or node.get('audio_url')
                 or node.get('file_path')
             )
+            # Support APIs that return direct stem-key mappings:
+            # {"vocals": "...", "drums": "..."}
+            if not isinstance(track_name, str) and not isinstance(file_url, str):
+                stem_items = [
+                    (stem_name.strip(), stem_ref)
+                    for stem_name, stem_ref in node.items()
+                    if isinstance(stem_name, str) and isinstance(stem_ref, str)
+                ]
+                if stem_items and all(stem_name.lower() in configured_stems for stem_name, _ in stem_items):
+                    for stem_name, stem_ref in stem_items:
+                        tracks[stem_name] = stem_ref
             if isinstance(track_name, str) and isinstance(file_url, str):
                 tracks[track_name] = file_url
             for value in node.values():
@@ -280,7 +281,7 @@ def separate_stems_with_ace_step(src_audio_path: str) -> dict:
                 task_entries = [entry for entry in query_data['task_list'] if isinstance(entry, dict)]
             elif isinstance(query_data.get(ace_task_id), dict):
                 task_entries = [query_data[ace_task_id]]
-            elif 'status' in query_data:
+            elif 'status' in query_data and any(key in query_data for key in ('result', 'error', 'task_id')):
                 task_entries = [query_data]
 
         if task_entries:
