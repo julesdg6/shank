@@ -129,11 +129,35 @@ def _ace_step_response_data(response_payload: dict[str, Any]) -> Any:
 def _extract_track_files(data: Any) -> dict[str, str]:
     """Collect ``track_name``/``file`` pairs from nested Ace-step result payloads."""
     tracks: dict[str, str] = {}
+    configured_stems = {stem.lower() for stem in ACE_STEP_STEMS}
 
     def collect(node):
         if isinstance(node, dict):
-            track_name = node.get('track_name') or node.get('track') or node.get('name')
-            file_url = node.get('file')
+            # Support APIs that return direct stem-key mappings:
+            # {"vocals": "...", "drums": "..."}
+            for stem_name, stem_ref in node.items():
+                if (
+                    isinstance(stem_name, str)
+                    and isinstance(stem_ref, str)
+                    and stem_name.strip().lower() in configured_stems
+                ):
+                    tracks[stem_name.strip()] = stem_ref
+
+            track_name = (
+                node.get('track_name')
+                or node.get('track')
+                or node.get('stem_name')
+                or node.get('stem')
+                or node.get('name')
+            )
+            file_url = (
+                node.get('file')
+                or node.get('url')
+                or node.get('uri')
+                or node.get('path')
+                or node.get('audio_url')
+                or node.get('file_path')
+            )
             if isinstance(track_name, str) and isinstance(file_url, str):
                 tracks[track_name] = file_url
             for value in node.values():
@@ -246,11 +270,24 @@ def separate_stems_with_ace_step(src_audio_path: str) -> dict:
 
     while time.time() < deadline:
         query_data = _ace_step_response_data(_ace_step_post('/query_result', {'task_id_list': [ace_task_id]}))
-        if isinstance(query_data, list) and query_data:
-            task_data = query_data[0]
+        task_entries: list[dict[str, Any]] = []
+        if isinstance(query_data, list):
+            task_entries = [entry for entry in query_data if isinstance(entry, dict)]
+        elif isinstance(query_data, dict):
+            if isinstance(query_data.get('tasks'), list):
+                task_entries = [entry for entry in query_data['tasks'] if isinstance(entry, dict)]
+            elif isinstance(query_data.get('task_list'), list):
+                task_entries = [entry for entry in query_data['task_list'] if isinstance(entry, dict)]
+            elif isinstance(query_data.get(ace_task_id), dict):
+                task_entries = [query_data[ace_task_id]]
+            elif 'status' in query_data:
+                task_entries = [query_data]
+
+        if task_entries:
+            task_data = task_entries[0]
             status = task_data.get('status')
             status_str = str(status).lower()
-            if status_str in ('1', 'succeeded', 'done'):
+            if status_str in ('1', 'succeeded', 'done', 'success', 'completed'):
                 result = task_data.get('result')
                 if isinstance(result, str):
                     try:
@@ -261,7 +298,7 @@ def separate_stems_with_ace_step(src_audio_path: str) -> dict:
                     'task_id': ace_task_id,
                     'tracks': _extract_track_files(result),
                 }
-            if status_str in ('2', 'failed', 'error'):
+            if status_str in ('2', 'failed', 'error', 'fail'):
                 raise RuntimeError(task_data.get('error') or 'Ace-step stem separation failed')
         time.sleep(ACE_STEP_POLL_INTERVAL)
 
