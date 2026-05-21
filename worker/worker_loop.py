@@ -151,14 +151,17 @@ def _extract_track_files(data: Any) -> dict[str, str]:
             # Support APIs that return direct stem-key mappings:
             # {"vocals": "...", "drums": "..."}
             if not isinstance(track_name, str) and not isinstance(file_url, str):
-                stem_items = [
+                recognized_stem_items = [
                     (stem_name.strip(), stem_ref)
                     for stem_name, stem_ref in node.items()
-                    if isinstance(stem_name, str) and isinstance(stem_ref, str)
+                    if (
+                        isinstance(stem_name, str)
+                        and isinstance(stem_ref, str)
+                        and stem_name.strip().lower() in configured_stems
+                    )
                 ]
-                if stem_items and all(stem_name.lower() in configured_stems for stem_name, _ in stem_items):
-                    for stem_name, stem_ref in stem_items:
-                        tracks[stem_name] = stem_ref
+                for stem_name, stem_ref in recognized_stem_items:
+                    tracks[stem_name] = stem_ref
             if isinstance(track_name, str) and isinstance(file_url, str):
                 tracks[track_name] = file_url
             for value in node.values():
