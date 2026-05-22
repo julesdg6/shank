@@ -150,9 +150,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-20T23:59:45Z
-- Latest commit: `df032dc`
-- Commit message: Merge pull request #78 from julesdg6/copilot/add-yt-dlp-and-ffmpeg  Add yt-dlp to worker/Dockerfile for audio URL processing
+- Last automated update: 2026-05-22T13:13:29Z
+- Latest commit: `9f3437d`
+- Commit message: Merge pull request #79 from julesdg6/copilot/fix-ace-step-stem-creation  Harden ACE-Step stem extraction against response shape mismatches
 <!-- readme-update:end -->
 
 ## 🎚 Optional ACE-Step Stem Separation
