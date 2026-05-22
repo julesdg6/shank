@@ -237,6 +237,54 @@ def test_pending_upload_task_records_ace_step_stems_when_enabled(data_dir, monke
     assert updated['analysis']['stems']['drums']['bpm'] == 110.0
 
 
+def test_extract_track_files_supports_direct_stem_mappings(data_dir, monkeypatch):
+    """Ace-step payloads with direct stem key/value maps should be parsed."""
+    monkeypatch.setenv('ACE_STEP_STEMS', 'vocals,drums,bass,other')
+    importlib.reload(worker_loop)
+
+    tracks = worker_loop._extract_track_files({
+        'vocals': '/tmp/vocals.wav',
+        'nested': {
+            'drums': 'http://ace-step:8001/drums.wav',
+        },
+        'items': [
+            {'stem_name': 'bass', 'audio_url': 'http://ace-step:8001/bass.wav'},
+            {'track_name': 'other', 'file_path': '/tmp/other.wav'},
+        ],
+    })
+
+    assert tracks['vocals'] == '/tmp/vocals.wav'
+    assert tracks['drums'] == 'http://ace-step:8001/drums.wav'
+    assert tracks['bass'] == 'http://ace-step:8001/bass.wav'
+    assert tracks['other'] == '/tmp/other.wav'
+
+
+def test_separate_stems_with_ace_step_accepts_dict_query_shape(data_dir, monkeypatch):
+    """Ace-step query payloads with a dict-wrapped task list should be accepted."""
+    monkeypatch.setenv('ACE_STEP_API_URL', 'http://ace-step:8001')
+    monkeypatch.setenv('ACE_STEP_STEMS', 'vocals,drums')
+    importlib.reload(worker_loop)
+
+    with patch('worker_loop._ace_step_post', side_effect=[
+        {'data': {'task_id': 'ace-task-1'}},
+        {'data': {'tasks': [{'status': 'completed', 'result': {'vocals': '/tmp/vocals.wav'}}]}},
+    ]) as mock_post:
+        result = worker_loop.separate_stems_with_ace_step('/tmp/input.wav')
+
+    assert result['task_id'] == 'ace-task-1'
+    assert result['tracks'] == {'vocals': '/tmp/vocals.wav'}
+    assert mock_post.call_args_list[0].args == (
+        '/release_task',
+        {
+            'task_type': 'extract',
+            'src_audio_path': '/tmp/input.wav',
+            'track_classes': ['vocals', 'drums'],
+            'audio_format': 'wav',
+        },
+    )
+    assert mock_post.call_args_list[1].args == ('/query_result', {'task_id_list': ['ace-task-1']})
+
+
 def test_pending_upload_task_marks_failed_when_ace_step_fails_strict_mode(data_dir, monkeypatch):
     """In STEM_BACKEND=acestep strict mode, an Ace-Step failure must mark the task failed."""
     monkeypatch.setenv('ACE_STEP_API_URL', 'http://ace-step:8001')
