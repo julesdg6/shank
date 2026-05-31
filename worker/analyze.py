@@ -21,6 +21,15 @@ _MINOR_THIRD = 3
 _PERFECT_FIFTH = 7
 # Ignore effectively silent chroma frames so low-level noise does not create false chord segments.
 _CHROMA_ACTIVITY_THRESHOLD = 1e-8
+_HIGH_BEAT_CONFIDENCE = 0.9
+_LOW_BEAT_CONFIDENCE = 0.2
+_SINGLE_BEAT_CONFIDENCE = 0.4
+_KEY_MARGIN_NORMALIZER = 2.0
+_TEMPO_WINDOW_BEATS = 4
+_TEMPO_CHANGE_THRESHOLD_BPM = 6.0
+_BARS_PER_SECTION = 8
+_OUTRO_OFFSET_SECONDS = 8.0
+_SILENT_LUFS = -70.0
 
 
 def _clamp(value: float, minimum: float, maximum: float) -> float:
@@ -66,7 +75,7 @@ def _detect_key_and_confidence(y: np.ndarray, sr: int) -> tuple[str, float]:
             second_best_corr = minor_corr
 
     margin = best_corr - second_best_corr
-    key_confidence = _clamp(float((margin + 1.0) / 2.0), 0.0, 1.0)
+    key_confidence = _clamp(float(margin / _KEY_MARGIN_NORMALIZER), 0.0, 1.0)
     return best_key, round(key_confidence, 3)
 
 
@@ -138,7 +147,7 @@ def _librosa_beats(y: np.ndarray, sr: int) -> tuple[float, list[float], float]:
     bpm = round(float(np.atleast_1d(tempo)[0]), 2)
     beat_times = librosa.frames_to_time(beat_frames, sr=sr)
     beats = [round(float(value), 3) for value in beat_times.tolist()]
-    confidence = 0.9 if len(beats) >= 2 else 0.2
+    confidence = _HIGH_BEAT_CONFIDENCE if len(beats) >= 2 else _LOW_BEAT_CONFIDENCE
     return bpm, beats, confidence
 
 
@@ -160,10 +169,11 @@ def _madmom_beats(file_path: str) -> tuple[float | None, list[float], float] | N
         if len(beats) > 1:
             beat_intervals = np.diff(np.array(beats))
             bpm = round(float(60.0 / np.mean(beat_intervals)), 2)
-            confidence = _clamp(float(1.0 - np.std(beat_intervals)), 0.0, 1.0)
+            coefficient_of_variation = np.std(beat_intervals) / np.mean(beat_intervals)
+            confidence = _clamp(float(1.0 / (1.0 + coefficient_of_variation)), 0.0, 1.0)
         else:
             bpm = None
-            confidence = 0.4
+            confidence = _SINGLE_BEAT_CONFIDENCE
         return bpm, beats, round(confidence, 3)
     except Exception:  # pragma: no cover - optional dependency
         return None
@@ -205,13 +215,13 @@ def _detect_tempo_changes(beats: list[float]) -> list[dict]:
 
     reference_bpm = 60.0 / np.mean(intervals)
     tempo_changes: list[dict] = []
-    window = 4
+    window = _TEMPO_WINDOW_BEATS
     for index in range(0, len(intervals) - window + 1):
         local_interval = float(np.mean(intervals[index:index + window]))
         if local_interval <= 0:
             continue
         local_bpm = 60.0 / local_interval
-        if abs(local_bpm - reference_bpm) >= 6.0:
+        if abs(local_bpm - reference_bpm) >= _TEMPO_CHANGE_THRESHOLD_BPM:
             change_point = beats[index + 1]
             if tempo_changes and abs(tempo_changes[-1]['start_seconds'] - change_point) < 1.0:
                 continue
@@ -224,7 +234,7 @@ def _detect_tempo_changes(beats: list[float]) -> list[dict]:
 
 def _measure_lufs(y: np.ndarray, sr: int) -> float:
     if not y.size:
-        return -70.0
+        return _SILENT_LUFS
     if pyln is not None:
         meter = pyln.Meter(sr)
         try:
@@ -233,7 +243,7 @@ def _measure_lufs(y: np.ndarray, sr: int) -> float:
             pass
     rms = float(np.sqrt(np.mean(np.square(y))))
     if rms <= 0.0:
-        return -70.0
+        return _SILENT_LUFS
     return round(float(20.0 * np.log10(rms)), 2)
 
 
@@ -241,15 +251,17 @@ def _derive_sections(downbeats: list[float], duration_seconds: float) -> list[di
     if not downbeats:
         return [{'start_seconds': 0.0, 'end_seconds': duration_seconds, 'label': 'full_mix'}]
 
-    bars_per_section = 8
     sections: list[dict] = []
-    for index in range(0, len(downbeats), bars_per_section):
+    for index in range(0, len(downbeats), _BARS_PER_SECTION):
         start = downbeats[index]
-        end = downbeats[index + bars_per_section] if index + bars_per_section < len(downbeats) else duration_seconds
+        end = downbeats[index + _BARS_PER_SECTION] if index + _BARS_PER_SECTION < len(downbeats) else duration_seconds
+        section_number = (index // _BARS_PER_SECTION) + 1
+        if end < start:
+            end = start
         sections.append({
             'start_seconds': round(float(start), 3),
-            'end_seconds': round(float(max(end, start)), 3),
-            'label': f'section_{len(sections) + 1}',
+            'end_seconds': round(float(end), 3),
+            'label': f'section_{section_number}',
         })
     return sections
 
@@ -261,7 +273,7 @@ def _derive_cue_points(downbeats: list[float], beats: list[float], duration_seco
     if downbeats:
         cue_points.append({'name': 'first_downbeat', 'time_seconds': downbeats[0]})
     if duration_seconds > 0:
-        cue_points.append({'name': 'outro', 'time_seconds': round(max(0.0, duration_seconds - 8.0), 3)})
+        cue_points.append({'name': 'outro', 'time_seconds': round(max(0.0, duration_seconds - _OUTRO_OFFSET_SECONDS), 3)})
     unique: dict[str, dict] = {}
     for cue in cue_points:
         unique[cue['name']] = cue
