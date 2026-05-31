@@ -316,7 +316,6 @@ def test_poll_once_processes_pending_task(tmp_path, reloaded_worker_loop):
 
     normalized_dir = tmp_path / 'normalized'
     normalized_dir.mkdir(parents=True, exist_ok=True)
-    normalized_wav = normalized_dir / f'{task_id}.wav'
 
     def fake_normalize(input_path, output_path):
         # Copy the source WAV so analyze_audio has a real file to read

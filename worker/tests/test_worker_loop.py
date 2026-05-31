@@ -265,8 +265,7 @@ def test_read_task_returns_none_for_corrupt_file(data_dir, tmp_path):
 
 def test_multiple_pending_tasks_all_processed(data_dir):
     """All pending URL tasks in the directory should be processed."""
-    ids = [_make_task(data_dir)[0] for _ in range(3)]
-    uploads_dir = data_dir / 'uploads'
+    [_make_task(data_dir)[0] for _ in range(3)]
 
     def fake_download(url, output_dir, task_id):
         return output_dir / f'{task_id}.mp3'

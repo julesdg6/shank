@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg yt-dlp supervisor && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg yt-dlp supervisor build-essential && rm -rf /var/lib/apt/lists/*
 ARG INSTALL_BASIC_PITCH=false
 
 WORKDIR /app
@@ -18,5 +18,7 @@ COPY services /app/services
 COPY docker /app/docker
 
 RUN chmod +x /app/docker/start.sh
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=5 CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/openapi.json', timeout=5)"
 
 CMD ["/app/docker/start.sh"]
