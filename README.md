@@ -188,9 +188,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-31T18:41:08Z
-- Latest commit: `24cdcb4`
-- Commit message: Merge pull request #94 from julesdg6/copilot/fix-mt3-configuration-drift  Align MT3 configuration across runtime, tests, and deployment docs
+- Last automated update: 2026-05-31T18:42:32Z
+- Latest commit: `c191991`
+- Commit message: Merge pull request #97 from julesdg6/copilot/add-structured-result-artifact-model  Add deterministic per-task structured result artifacts and expose them via task artifact API
 <!-- readme-update:end -->
 
 ## 🎸 Chord Detection
