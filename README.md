@@ -230,9 +230,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-31T19:01:05Z
-- Latest commit: `583171f`
-- Commit message: Merge pull request #98 from julesdg6/copilot/add-web-ui-task-list  Add task-monitoring dashboard surfaces: progress/logs, artifact downloads, spectrogram, and MIDI piano-roll preview
+- Last automated update: 2026-05-31T19:27:45Z
+- Latest commit: `196e45d`
+- Commit message: Merge pull request #99 from julesdg6/copilot/improve-dev-quality-ci-typing-linting-docker-healt  Add pinned dev quality baseline: CI (ruff/mypy/pytest + Docker), healthchecks, and local workflow docs
 <!-- readme-update:end -->
 
 ## 🎸 Chord Detection
