@@ -689,7 +689,9 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                         task_id, exc,
                     )
 
+            audio_separator_attempted = False
             if stem_tracks is None and _is_audio_separator_available():
+                audio_separator_attempted = True
                 try:
                     stem_data = separate_stems_with_audio_separator(normalized_path, task_id)
                     task_updates = {'stem_backend': 'audio_separator'}
@@ -716,15 +718,28 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                         stem_tracks = stem_data['tracks']
                         task_updates['stems'] = stem_tracks
                     _update_task(task_file, task_updates)
-                    log.info('Task %s: Demucs fallback succeeded', task_id)
+                    prior = []
+                    if ace_step_attempted:
+                        prior.append('Ace-Step')
+                    if audio_separator_attempted:
+                        prior.append('audio-separator')
+                    if prior:
+                        log.info(
+                            'Task %s: Demucs fallback succeeded after %s failure',
+                            task_id, ' and '.join(prior),
+                        )
+                    else:
+                        log.info('Task %s: Demucs separation succeeded', task_id)
                 except Exception as exc:
                     log.warning(
                         'Task %s Demucs fallback also failed, continuing without stems: %s',
                         task_id, exc,
                     )
-            elif stem_tracks is None and ace_step_attempted:
+
+            if stem_tracks is None and (ace_step_attempted or audio_separator_attempted):
                 log.warning(
-                    'Task %s: all stem backends failed or unavailable; continuing without stems',
+                    'Task %s: no stem backends available or all attempted backends failed;'
+                    ' continuing without stems',
                     task_id,
                 )
 
