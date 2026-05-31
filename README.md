@@ -190,9 +190,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-31T18:45:17Z
-- Latest commit: `965afaf`
-- Commit message: Merge pull request #96 from julesdg6/copilot/replace-mt3-stub-with-basic-pitch  Replace MT3 stub with configurable transcription backend (Basic Pitch first)
+- Last automated update: 2026-05-31T19:01:05Z
+- Latest commit: `583171f`
+- Commit message: Merge pull request #98 from julesdg6/copilot/add-web-ui-task-list  Add task-monitoring dashboard surfaces: progress/logs, artifact downloads, spectrogram, and MIDI piano-roll preview
 <!-- readme-update:end -->
 
 ## 🎸 Chord Detection
