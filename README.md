@@ -184,9 +184,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-31T18:29:21Z
-- Latest commit: `0113513`
-- Commit message: Merge pull request #85 from julesdg6/copilot/implement-mcp-for-automation  Add MCP server entrypoint for SHANK automation workflows
+- Last automated update: 2026-05-31T18:29:42Z
+- Latest commit: `62d14b6`
+- Commit message: Merge pull request #87 from julesdg6/copilot/add-advanced-musical-analysis-pipeline  Add optional advanced beat/downbeat/loudness analysis outputs to worker pipeline
 <!-- readme-update:end -->
 
 ## 🎛 Stem Separation (python-audio-separator)
