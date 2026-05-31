@@ -14,7 +14,7 @@ To provide users with an automated pipeline that transforms raw audio/URLs into 
     - **Chord Progressions**: *(planned)*
     - **Melody to MIDI**: *(planned)*
     - **Song Structure**: Detection of intro, verse, chorus, etc. *(planned)*
-- **Optional Stem Separation**: Integration with **ACE-Step** to separate vocals, drums, bass, and other instruments.
+- **Built-in Stem Separation**: [python-audio-separator](https://github.com/nomadkaraoke/python-audio-separator) separates vocals, drums, bass, and other instruments (4-stem or 6-stem) — no external service required. Optional **ACE-Step** integration for comparison.
 - **Optional MT3 Transcription**: Worker can call a dedicated `shank-mt3` service to generate MIDI + note metadata from normalized mix and stems.
 - **Asynchronous Workflow**: A background worker polls a filesystem task queue and processes jobs independently of the API.
 - **Web Dashboard**: A built-in UI at `/ui` to submit tasks, monitor progress, and inspect results.
@@ -102,14 +102,20 @@ Environment variables (set in `.env` or `docker-compose.yml`):
 |----------|---------|-------------|
 | `DATA_DIR` | `/srv/shank/data` | Directory for uploads, task files, and normalized audio |
 | `POLL_INTERVAL` | `10` | Worker polling interval in seconds |
+| `STEM_BACKEND` | `auto` | Stem separation backend: `auto`, `audio_separator`, `acestep`, `demucs`, or `none` |
+| `AUDIO_SEPARATOR_MODEL` | `htdemucs_ft.yaml` | python-audio-separator model (4-stem default; `htdemucs_6s.yaml` for 6-stem) |
+| `AUDIO_SEPARATOR_MODEL_DIR` | `/srv/shank/models/separator` | Directory for cached model weights |
+| `AUDIO_SEPARATOR_DEVICE` | `cpu` | Inference device for audio-separator: `cpu` or `cuda` |
 | `ACE_STEP_API_URL` | *(empty)* | Base URL of an ACE-Step API for stem separation |
-| `ACE_STEP_API_KEY` | *(empty)* | Optional Bearer token for the ACE-Step API |
-| `ACE_STEP_STEMS` | `vocals,drums,bass,other` | Comma-separated list of stems to request |
+| `ACE_STEP_API_KEY` | *(empty)* | Optional ****** for the ACE-Step API |
+| `ACE_STEP_STEMS` | `vocals,drums,bass,other` | Comma-separated list of stems to request from ACE-Step |
+| `DEMUCS_MODEL` | `htdemucs` | Model name passed to the `demucs` CLI (legacy backend) |
+| `DEMUCS_DEVICE` | `cpu` | Device flag passed to the `demucs` CLI (`cpu`, `cuda`, `mps`) |
 | `MT3_ENABLED` | `false` | Enable MT3 transcription in worker |
 | `MT3_SERVICE_URL` | `http://shank-mt3:8090` | Base URL for the optional MT3 FastAPI service |
 | `MT3_MODEL` | `multi_instrument` | Requested model identifier to send to MT3 service |
 | `MT3_TIMEOUT` | `1800` | MT3 HTTP timeout in seconds |
-| `MT3_TRANSCRIBE_STEMS` | `true` | Also transcribe Ace-Step stems when present |
+| `MT3_TRANSCRIBE_STEMS` | `true` | Also transcribe separated stems when present |
 | `MT3_FAIL_TASK_ON_ERROR` | `false` | If true, MT3 failure marks task as failed |
 | `MT3_CHECKPOINT_ROOT` | `/srv/shank/models/mt3/checkpoints` | Mount path for MT3 checkpoints in MT3 service |
 | `MT3_CACHE_DIR` | `/srv/shank/cache/mt3` | Mount path for MT3 runtime cache |
@@ -138,7 +144,8 @@ Environment variables (set in `.env` or `docker-compose.yml`):
 
 ### Phase 4: Stem Separation & Optimization
 - [x] Integrate ACE-Step for optional stem separation
-- [ ] Implement GPU support for faster processing
+- [x] Integrate python-audio-separator (4-stem and 6-stem models, CPU default)
+- [x] GPU support via CUDA for audio-separator (see README instructions)
 
 ### Phase 5: Ecosystem Integration
 - [ ] WordPress Build Log automation
@@ -154,6 +161,92 @@ This project is for research and personal use. Ensure you have the rights to any
 - Latest commit: `9f3437d`
 - Commit message: Merge pull request #79 from julesdg6/copilot/fix-ace-step-stem-creation  Harden ACE-Step stem extraction against response shape mismatches
 <!-- readme-update:end -->
+
+## 🎛 Stem Separation (python-audio-separator)
+
+SHANK bundles [python-audio-separator](https://github.com/nomadkaraoke/python-audio-separator) as the default stem separation backend. No external service is required — it runs entirely inside the container.
+
+### Supported stem counts
+
+| Model | Stems produced |
+|-------|---------------|
+| `htdemucs_ft.yaml` *(default)* | 4 — vocals, drums, bass, other |
+| `htdemucs_6s.yaml` | 6 — vocals, drums, bass, other, guitar, piano |
+| `htdemucs.yaml` | 4 — vocals, drums, bass, other |
+
+### Default CPU configuration (no GPU required)
+
+```dotenv
+STEM_BACKEND=auto                          # auto: Ace-Step (if configured) → audio-separator → Demucs
+AUDIO_SEPARATOR_MODEL=htdemucs_ft.yaml     # 4-stem model (default)
+AUDIO_SEPARATOR_MODEL_DIR=/srv/shank/models/separator
+AUDIO_SEPARATOR_DEVICE=cpu
+```
+
+Model weights are downloaded automatically on first use and cached in `AUDIO_SEPARATOR_MODEL_DIR`. Mount a host directory to persist the cache across container restarts:
+
+```yaml
+volumes:
+  - ./models/separator:/srv/shank/models/separator
+```
+
+### GPU acceleration (CUDA)
+
+To use a CUDA GPU for faster separation, install the GPU variant of audio-separator and set `AUDIO_SEPARATOR_DEVICE=cuda`. Update your `Dockerfile` to replace the CPU extra:
+
+```dockerfile
+RUN pip install --no-cache-dir audio-separator[gpu]
+```
+
+Then set in `.env` or `docker-compose.yml`:
+
+```dotenv
+AUDIO_SEPARATOR_DEVICE=cuda
+```
+
+Enable the NVIDIA runtime in `docker-compose.yml`:
+
+```yaml
+services:
+  shank:
+    # ...
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+```
+
+Ensure `nvidia-container-toolkit` is installed on the Docker host before enabling GPU passthrough.
+
+### Choosing a backend explicitly
+
+```dotenv
+# Use audio-separator only (fail if unavailable)
+STEM_BACKEND=audio_separator
+
+# Use Ace-Step only (requires ACE_STEP_API_URL)
+STEM_BACKEND=acestep
+
+# Use legacy Demucs CLI only (requires demucs in PATH)
+STEM_BACKEND=demucs
+
+# Disable stem separation entirely
+STEM_BACKEND=none
+
+# Auto (default): Ace-Step (if ACE_STEP_API_URL set) → audio-separator → Demucs → skip
+STEM_BACKEND=auto
+```
+
+### 6-stem separation
+
+To separate guitar and piano in addition to the standard 4 stems:
+
+```dotenv
+AUDIO_SEPARATOR_MODEL=htdemucs_6s.yaml
+```
 
 ## 🎚 Optional ACE-Step Stem Separation
 To enable stem separation in the worker (vocals, drums, bass, other), set `ACE_STEP_API_URL` in your environment:

@@ -1027,3 +1027,179 @@ def test_transcribe_with_service_uses_notes_path_from_response(tmp_path):
         )
 
     assert result['notes_path'] == notes_path_str
+
+
+# ---------------------------------------------------------------------------
+# _parse_audio_separator_stem_name
+# ---------------------------------------------------------------------------
+
+def test_parse_audio_separator_stem_name_extracts_label_in_parentheses():
+    """_parse_audio_separator_stem_name should extract and lowercase the parenthesised label."""
+    assert worker_loop._parse_audio_separator_stem_name('song_(Vocals)_htdemucs_ft.wav') == 'vocals'
+    assert worker_loop._parse_audio_separator_stem_name('song_(Drums)_htdemucs_ft.wav') == 'drums'
+    assert worker_loop._parse_audio_separator_stem_name('song_(Bass)_htdemucs_ft.wav') == 'bass'
+    assert worker_loop._parse_audio_separator_stem_name('song_(Other)_htdemucs_ft.wav') == 'other'
+    assert worker_loop._parse_audio_separator_stem_name('song_(Guitar)_htdemucs_6s.wav') == 'guitar'
+    assert worker_loop._parse_audio_separator_stem_name('song_(Piano)_htdemucs_6s.wav') == 'piano'
+
+
+def test_parse_audio_separator_stem_name_falls_back_to_stem():
+    """_parse_audio_separator_stem_name should fall back to the bare filename stem."""
+    assert worker_loop._parse_audio_separator_stem_name('vocals.wav') == 'vocals'
+    assert worker_loop._parse_audio_separator_stem_name('drums') == 'drums'
+
+
+# ---------------------------------------------------------------------------
+# audio_separator backend – strict mode
+# ---------------------------------------------------------------------------
+
+def test_audio_separator_backend_strict_mode_fails_task_on_error(data_dir, monkeypatch):
+    """In STEM_BACKEND=audio_separator strict mode, a failure must mark the task failed."""
+    monkeypatch.setenv('STEM_BACKEND', 'audio_separator')
+    importlib.reload(worker_loop)
+    task, task_file = _make_upload_task(data_dir)
+
+    with patch('worker_loop.normalize_audio'), \
+         patch('worker_loop.separate_stems_with_audio_separator',
+               side_effect=RuntimeError('audio-separator error')), \
+         patch('worker_loop.analyze_audio') as mock_analyze:
+        count = worker_loop.process_pending_tasks()
+
+    assert count == 1
+    mock_analyze.assert_not_called()
+    updated = json.loads(task_file.read_text())
+    assert updated['status'] == 'failed'
+    assert 'audio-separator error' in updated['error']
+
+
+def test_audio_separator_backend_strict_mode_records_stems_on_success(data_dir, monkeypatch):
+    """In STEM_BACKEND=audio_separator, a successful run stores stems in the task."""
+    monkeypatch.setenv('STEM_BACKEND', 'audio_separator')
+    importlib.reload(worker_loop)
+    task, task_file = _make_upload_task(data_dir)
+
+    stems_dir = data_dir / 'stems' / task['task_id']
+    vocals = stems_dir / 'song_(Vocals)_htdemucs_ft.wav'
+    drums = stems_dir / 'song_(Drums)_htdemucs_ft.wav'
+    bass = stems_dir / 'song_(Bass)_htdemucs_ft.wav'
+    other = stems_dir / 'song_(Other)_htdemucs_ft.wav'
+
+    def fake_audio_separator(src_path, tid):
+        for f in (vocals, drums, bass, other):
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_bytes(b'fake-wav')
+        return {
+            'tracks': {
+                'vocals': str(vocals),
+                'drums': str(drums),
+                'bass': str(bass),
+                'other': str(other),
+            },
+        }
+
+    with patch('worker_loop.normalize_audio'), \
+         patch('worker_loop.separate_stems_with_audio_separator', side_effect=fake_audio_separator), \
+         patch('worker_loop.analyze_audio', return_value={'bpm': 120.0, 'key': 'C major'}):
+        count = worker_loop.process_pending_tasks()
+
+    assert count == 1
+    updated = json.loads(task_file.read_text())
+    assert updated['status'] == 'done'
+    assert updated.get('stem_backend') == 'audio_separator'
+    assert set(updated['stems'].keys()) == {'vocals', 'drums', 'bass', 'other'}
+
+
+# ---------------------------------------------------------------------------
+# audio_separator backend – auto mode fallback
+# ---------------------------------------------------------------------------
+
+def test_auto_mode_falls_back_to_audio_separator_when_ace_step_fails(data_dir, monkeypatch):
+    """In STEM_BACKEND=auto, Ace-Step failure should fall back to audio-separator."""
+    monkeypatch.setenv('ACE_STEP_API_URL', 'http://ace-step:8001')
+    monkeypatch.setenv('STEM_BACKEND', 'auto')
+    importlib.reload(worker_loop)
+    task, task_file = _make_upload_task(data_dir)
+
+    stems_dir = data_dir / 'stems' / task['task_id']
+    vocals = stems_dir / 'song_(Vocals)_htdemucs_ft.wav'
+    drums = stems_dir / 'song_(Drums)_htdemucs_ft.wav'
+    bass = stems_dir / 'song_(Bass)_htdemucs_ft.wav'
+    other = stems_dir / 'song_(Other)_htdemucs_ft.wav'
+
+    def fake_audio_separator(src_path, tid):
+        for f in (vocals, drums, bass, other):
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_bytes(b'fake-wav')
+        return {
+            'tracks': {
+                'vocals': str(vocals),
+                'drums': str(drums),
+                'bass': str(bass),
+                'other': str(other),
+            },
+        }
+
+    with patch('worker_loop.normalize_audio'), \
+         patch('worker_loop.separate_stems_with_ace_step', side_effect=RuntimeError('Ace-step down')), \
+         patch('worker_loop.separate_stems_with_audio_separator', side_effect=fake_audio_separator), \
+         patch('worker_loop._is_audio_separator_available', return_value=True), \
+         patch('worker_loop.analyze_audio', return_value={'bpm': 120.0, 'key': 'C major'}):
+        count = worker_loop.process_pending_tasks()
+
+    assert count == 1
+    updated = json.loads(task_file.read_text())
+    assert updated['status'] == 'done'
+    assert updated.get('stem_backend') == 'audio_separator'
+    assert set(updated['stems'].keys()) == {'vocals', 'drums', 'bass', 'other'}
+
+
+def test_auto_mode_falls_back_to_demucs_when_audio_separator_also_fails(data_dir, monkeypatch):
+    """In auto mode, if Ace-Step and audio-separator fail, the task should try Demucs."""
+    monkeypatch.setenv('ACE_STEP_API_URL', 'http://ace-step:8001')
+    monkeypatch.setenv('STEM_BACKEND', 'auto')
+    importlib.reload(worker_loop)
+    task, task_file = _make_upload_task(data_dir)
+
+    vocals = data_dir / 'stems' / task['task_id'] / 'htdemucs' / f"{task['task_id']}" / 'vocals.wav'
+    drums = vocals.parent / 'drums.wav'
+
+    def fake_demucs(src_path, tid):
+        for f in (vocals, drums):
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_bytes(b'fake-wav')
+        return {'tracks': {'vocals': str(vocals), 'drums': str(drums)}}
+
+    with patch('worker_loop.normalize_audio'), \
+         patch('worker_loop.separate_stems_with_ace_step', side_effect=RuntimeError('Ace-step down')), \
+         patch('worker_loop.separate_stems_with_audio_separator',
+               side_effect=RuntimeError('audio-separator error')), \
+         patch('worker_loop._is_audio_separator_available', return_value=True), \
+         patch('worker_loop.separate_stems_with_demucs', side_effect=fake_demucs), \
+         patch('worker_loop._is_demucs_available', return_value=True), \
+         patch('worker_loop.analyze_audio', return_value={'bpm': 120.0, 'key': 'C major'}):
+        count = worker_loop.process_pending_tasks()
+
+    assert count == 1
+    updated = json.loads(task_file.read_text())
+    assert updated['status'] == 'done'
+    assert updated.get('stem_backend') == 'demucs'
+    assert set(updated['stems'].keys()) == {'vocals', 'drums'}
+
+
+def test_auto_mode_continues_without_stems_when_audio_separator_unavailable(data_dir, monkeypatch):
+    """In auto mode with no backends configured, the task should still succeed without stems."""
+    monkeypatch.delenv('ACE_STEP_API_URL', raising=False)
+    monkeypatch.setenv('STEM_BACKEND', 'auto')
+    importlib.reload(worker_loop)
+    task, task_file = _make_upload_task(data_dir)
+
+    with patch('worker_loop.normalize_audio'), \
+         patch('worker_loop._is_audio_separator_available', return_value=False), \
+         patch('worker_loop._is_demucs_available', return_value=False), \
+         patch('worker_loop.analyze_audio', return_value={'bpm': 120.0, 'key': 'C major'}):
+        count = worker_loop.process_pending_tasks()
+
+    assert count == 1
+    updated = json.loads(task_file.read_text())
+    assert updated['status'] == 'done'
+    assert 'stems' not in updated

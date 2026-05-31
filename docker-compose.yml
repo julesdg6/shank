@@ -6,9 +6,15 @@ services:
     environment:
       - DATA_DIR=/srv/shank/data
       - POLL_INTERVAL=10
+      - STEM_BACKEND=${STEM_BACKEND:-auto}
       - ACE_STEP_API_URL=${ACE_STEP_API_URL:-}
       - ACE_STEP_API_KEY=${ACE_STEP_API_KEY:-}
       - ACE_STEP_STEMS=${ACE_STEP_STEMS:-vocals,drums,bass,other}
+      - AUDIO_SEPARATOR_MODEL=${AUDIO_SEPARATOR_MODEL:-htdemucs_ft.yaml}
+      - AUDIO_SEPARATOR_MODEL_DIR=${AUDIO_SEPARATOR_MODEL_DIR:-/srv/shank/models/separator}
+      - AUDIO_SEPARATOR_DEVICE=${AUDIO_SEPARATOR_DEVICE:-cpu}
+      - DEMUCS_MODEL=${DEMUCS_MODEL:-htdemucs}
+      - DEMUCS_DEVICE=${DEMUCS_DEVICE:-cpu}
       - MT3_ENABLED=${MT3_ENABLED:-false}
       - MT3_SERVICE_URL=${MT3_SERVICE_URL:-http://127.0.0.1:8090}
       - MT3_MODEL=${MT3_MODEL:-multi_instrument}
@@ -20,6 +26,7 @@ services:
       - MT3_CACHE_DIR=${MT3_CACHE_DIR:-/srv/shank/cache/mt3}
     volumes:
       - ./data:/srv/shank/data
+      - ./models/separator:/srv/shank/models/separator
       - ./cache/mt3:/srv/shank/cache/mt3
       - ./models/mt3/checkpoints:/srv/shank/models/mt3/checkpoints:ro
     # Optional NVIDIA GPU runtime example:
