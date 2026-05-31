@@ -43,6 +43,8 @@ def test_root_serves_dashboard_html_for_browser_requests(client):
     assert response.headers['content-type'].startswith('text/html')
     assert 'SHANK — AI Song Analyzer' in response.text
     assert 'Upload Audio File' in response.text
+    assert 'Spectrogram Preview' in response.text
+    assert 'MIDI Piano Roll' in response.text
 
 
 def test_root_keeps_json_for_non_html_accept_headers(client):
@@ -350,6 +352,11 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
     notes_file = tmp_path / 'mt3' / task_id / 'full_mix_notes.json'
     stem_midi = tmp_path / 'mt3' / task_id / 'vocals.mid'
     stem_wav = tmp_path / 'stems' / task_id / 'vocals.wav'
+    results_dir = tmp_path / 'results' / task_id
+    results_task_json = results_dir / 'task.json'
+    results_analysis_json = results_dir / 'analysis.json'
+    results_mt3_json = results_dir / 'mt3.json'
+    results_artifacts_json = results_dir / 'artifacts.json'
 
     normalized.parent.mkdir(parents=True, exist_ok=True)
     midi_file.parent.mkdir(parents=True, exist_ok=True)
@@ -359,6 +366,11 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
     stem_midi.write_bytes(b'MThd\x00\x00\x00\x06\x00\x00\x00\x01\x00`MTrk\x00\x00\x00\x04\x00\xff/\x00')
     stem_wav.parent.mkdir(parents=True, exist_ok=True)
     stem_wav.write_bytes(b'RIFF' + b'\x00' * 36)
+    results_dir.mkdir(parents=True, exist_ok=True)
+    results_task_json.write_text(json.dumps({'status': 'done'}))
+    results_analysis_json.write_text(json.dumps({'full_mix': {'bpm': 120.0}}))
+    results_mt3_json.write_text(json.dumps({'status': 'completed'}))
+    results_artifacts_json.write_text(json.dumps({'normalized_wav': str(normalized)}))
 
     tasks_dir = tmp_path / 'tasks'
     tasks_dir.mkdir(parents=True, exist_ok=True)
@@ -377,12 +389,29 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
                 'vocals': {'midi_path': str(stem_midi)},
             },
         },
+        'results': {
+            'dir': str(results_dir),
+            'task_json': str(results_task_json),
+            'analysis_json': str(results_analysis_json),
+            'mt3_json': str(results_mt3_json),
+            'artifacts_json': str(results_artifacts_json),
+        },
     }))
 
     response = client.get(f'/tasks/{task_id}/artifacts')
     assert response.status_code == 200
     assert response.json() == {
-        'artifacts': ['midi', 'normalized_wav', 'notes_json', 'stem_vocals_midi', 'stem_vocals_wav'],
+        'artifacts': [
+            'midi',
+            'normalized_wav',
+            'notes_json',
+            'results_analysis_json',
+            'results_artifacts_json',
+            'results_mt3_json',
+            'results_task_json',
+            'stem_vocals_midi',
+            'stem_vocals_wav',
+        ],
     }
 
 
@@ -602,3 +631,81 @@ def test_stem_backend_status_prefers_healthy_ace_step(client, monkeypatch):
     request = mock_urlopen.call_args.args[0]
     assert request.full_url == 'http://ace-step:8001'
     assert request.get_header('Authorization') == 'Bearer secret-token'
+
+
+# ---------------------------------------------------------------------------
+# GET /tasks/{task_id}/chords
+# ---------------------------------------------------------------------------
+
+def test_get_task_chords_returns_chord_data(client, tmp_path):
+    """GET /tasks/{task_id}/chords must return the chords dict from the task."""
+    task_id = str(uuid.uuid4())
+    chords_data = {
+        'segments': [
+            {
+                'symbol': 'Am',
+                'root': 'A',
+                'quality': 'minor',
+                'confidence': 0.72,
+                'start_seconds': 0.0,
+                'end_seconds': 3.8,
+            },
+            {
+                'symbol': 'F',
+                'root': 'F',
+                'quality': 'major',
+                'confidence': 0.68,
+                'start_seconds': 3.8,
+                'end_seconds': 7.6,
+            },
+        ],
+        'progression': ['Am', 'F'],
+    }
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'chords': chords_data,
+    }))
+
+    response = client.get(f'/tasks/{task_id}/chords')
+    assert response.status_code == 200
+    assert response.json() == chords_data
+
+
+def test_get_task_chords_returns_404_when_no_chords(client, tmp_path):
+    """GET /tasks/{task_id}/chords must return 404 when the task has no chord data."""
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'bpm': 120.0,
+    }))
+
+    response = client.get(f'/tasks/{task_id}/chords')
+    assert response.status_code == 404
+
+
+def test_get_task_chords_returns_404_for_unknown_task(client):
+    """GET /tasks/{task_id}/chords must return 404 for a nonexistent task."""
+    response = client.get(f'/tasks/{uuid.uuid4()}/chords')
+    assert response.status_code == 404
+
+
+def test_get_task_chords_returns_empty_when_disabled_backend(client, tmp_path):
+    """When chords was captured with disabled backend, the endpoint returns empty segments."""
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'chords': {'segments': [], 'progression': []},
+    }))
+
+    response = client.get(f'/tasks/{task_id}/chords')
+    assert response.status_code == 200
+    assert response.json() == {'segments': [], 'progression': []}

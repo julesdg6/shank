@@ -245,7 +245,8 @@
     }
     .status-badge::before { content: '●'; font-size: 0.55rem; }
     .s-pending   { background: rgba(245,158,11,0.12); color: var(--warning); }
-    .s-running   { background: rgba(108,99,255,0.15); color: var(--accent); }
+    .s-running, .s-processing
+                 { background: rgba(108,99,255,0.15); color: var(--accent); }
     .s-done, .s-complete, .s-completed
                  { background: rgba(34,197,94,0.12);  color: var(--success); }
     .s-failed, .s-error
@@ -481,6 +482,8 @@
               <th>Type</th>
               <th>Source</th>
               <th>Status</th>
+              <th>Progress</th>
+              <th>Latest log</th>
               <th>Created</th>
               <th></th>
             </tr>
@@ -515,7 +518,10 @@
   <div class="card" id="song-detail-view" style="display:none">
     <div class="tasks-header" style="margin-bottom:0.5rem">
       <h2><span class="icon">🎼</span> Song Analysis</h2>
-      <a href="/ui/" class="btn btn-ghost btn-sm">Back</a>
+      <div style="display:flex;align-items:center;gap:0.5rem">
+        <button class="btn btn-ghost btn-sm" id="detail-refresh">Refresh</button>
+        <a href="/ui/" class="btn btn-ghost btn-sm">Back</a>
+      </div>
     </div>
     <div class="alert" id="detail-alert"></div>
     <ul class="detail-list" id="detail-list"></ul>
@@ -559,8 +565,20 @@
             <h4>Selected Stem Analysis</h4>
             <ul id="stem-analysis-list"></ul>
           </div>
+          <div class="panel">
+            <h4>Spectrogram Preview</h4>
+            <canvas class="histogram-canvas" id="spectrogram-canvas"></canvas>
+          </div>
         </div>
       </div>
+    </div>
+    <div class="panel" style="margin-top:1rem">
+      <h4 style="margin-bottom:0.5rem">Downloads</h4>
+      <div id="download-buttons" style="display:flex;flex-wrap:wrap;gap:0.5rem"></div>
+    </div>
+    <div class="panel" style="margin-top:1rem">
+      <h4 style="margin-bottom:0.5rem">MIDI Piano Roll</h4>
+      <canvas class="timeline-canvas" id="midi-piano-roll"></canvas>
     </div>
     <h3 style="font-size:0.95rem;margin-bottom:0.5rem">Full Task JSON</h3>
     <pre id="detail-pre"></pre>
@@ -580,6 +598,7 @@
   // ── Config ──────────────────────────────────────────────────────────────
   const API = ''; // same origin; API served from same host
   const TASK_ID_PREFIX_LEN = 8; // characters shown before "…" in the task table
+  const MAX_UI_TASK_LOGS = 8;
 
   // ── State ───────────────────────────────────────────────────────────────
   let tasks = JSON.parse(localStorage.getItem('shank_tasks') || '[]');
@@ -626,7 +645,7 @@
 
   function statusBadge(status) {
     const s = (status || 'unknown').toLowerCase();
-    const cls = ['pending','running','done','complete','completed','failed','error'].includes(s)
+    const cls = ['pending','running','processing','done','complete','completed','failed','error'].includes(s)
       ? `s-${s}` : 's-unknown';
     return `<span class="status-badge ${cls}">${status || 'unknown'}</span>`;
   }
@@ -648,10 +667,20 @@
     const secs = total % 60;
     return `${mins}:${String(secs).padStart(2, '0')}`;
   }
+  function fmtPercent(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return '—';
+    return `${Math.max(0, Math.min(100, Math.round(n)))}%`;
+  }
+  function latestTaskLog(task) {
+    const logs = Array.isArray(task?.logs) ? task.logs : [];
+    const latest = logs.length > 0 && typeof logs[logs.length - 1] === 'object' ? logs[logs.length - 1] : null;
+    return latest && typeof latest.message === 'string' ? latest.message : '—';
+  }
 
   function needsPoll(status) {
     const s = (status || '').toLowerCase();
-    return s === 'pending' || s === 'running';
+    return s === 'pending' || s === 'running' || s === 'processing';
   }
 
   function toFiniteNumber(value, fallback = 0) {
@@ -841,6 +870,115 @@
       ctx.stroke();
       ctx.globalAlpha = 1;
     });
+  }
+
+  function drawSpectrogram(taskData) {
+    const canvas = document.getElementById('spectrogram-canvas');
+    if (!canvas) return;
+    canvas.width = canvas.clientWidth * window.devicePixelRatio;
+    canvas.height = canvas.clientHeight * window.devicePixelRatio;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    ctx.clearRect(0, 0, width, height);
+
+    const selected = selectedAnalysisForStem(taskData);
+    const values = Array.isArray(selected?.spectrogram_summary) ? selected.spectrogram_summary : [];
+    if (values.length === 0) {
+      ctx.fillStyle = 'rgba(136,152,170,0.5)';
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('No spectrogram summary', width / 2, height / 2);
+      ctx.textAlign = 'left';
+      return;
+    }
+    const minValue = Math.min(...values);
+    const maxValue = Math.max(...values);
+    const span = Math.max(1, maxValue - minValue);
+    const barWidth = width / values.length;
+    values.forEach((rawValue, idx) => {
+      const normalized = (rawValue - minValue) / span;
+      const intensity = Math.max(0, Math.min(1, normalized));
+      const color = `rgba(${Math.round(40 + intensity * 215)}, ${Math.round(80 + intensity * 110)}, 255, 0.9)`;
+      ctx.fillStyle = color;
+      const barHeight = Math.max(4, intensity * height);
+      ctx.fillRect(idx * barWidth + 1, height - barHeight, Math.max(1, barWidth - 2), barHeight);
+    });
+  }
+
+  function renderArtifactDownloads(taskData) {
+    const container = document.getElementById('download-buttons');
+    if (!container) return;
+    const stems = taskData?.stems && typeof taskData.stems === 'object' ? taskData.stems : {};
+    const links = [
+      { href: `/tasks/${encodeURIComponent(taskData.task_id)}/artifacts/normalized_wav`, label: 'Full Mix WAV' },
+      ...Object.keys(stems).map((name) => ({
+        href: `/tasks/${encodeURIComponent(taskData.task_id)}/artifacts/${encodeURIComponent(`stem_${name}_wav`)}`,
+        label: `${name} stem`,
+      })),
+      { href: `/tasks/${encodeURIComponent(taskData.task_id)}/mt3/midi/full_mix`, label: 'Full Mix MIDI' },
+    ];
+    container.innerHTML = links
+      .map((link) => `<a class="btn btn-ghost btn-sm" href="${link.href}" target="_blank" rel="noopener noreferrer">${escapeHtml(link.label)}</a>`)
+      .join('');
+  }
+
+  async function drawMidiPianoRoll(taskData) {
+    const canvas = document.getElementById('midi-piano-roll');
+    if (!canvas) return;
+    const dpr = window.devicePixelRatio || 1;
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    canvas.width = Math.max(1, Math.round(width * dpr));
+    canvas.height = Math.max(1, Math.round(height * dpr));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = '#0d0f14';
+    ctx.fillRect(0, 0, width, height);
+
+    try {
+      const res = await fetch(`/tasks/${encodeURIComponent(taskData.task_id)}/mt3/notes/full_mix`, { cache: 'no-store' });
+      if (!res.ok) throw new Error('No MIDI notes');
+      const notes = await res.json();
+      if (!Array.isArray(notes) || notes.length === 0) throw new Error('No MIDI notes');
+
+      const numericNotes = notes
+        .map((note) => ({
+          pitch: Number(note?.pitch),
+          start: Number(note?.start),
+          end: Number(note?.end),
+        }))
+        .filter((note) => Number.isFinite(note.pitch) && Number.isFinite(note.start) && Number.isFinite(note.end) && note.end > note.start);
+      if (numericNotes.length === 0) throw new Error('No MIDI notes');
+
+      const minPitch = Math.min(...numericNotes.map((note) => note.pitch));
+      const maxPitch = Math.max(...numericNotes.map((note) => note.pitch));
+      const duration = Math.max(...numericNotes.map((note) => note.end), 1);
+      const pitchSpan = Math.max(1, maxPitch - minPitch + 1);
+      ctx.fillStyle = 'rgba(255,255,255,0.06)';
+      for (let p = minPitch; p <= maxPitch; p += 1) {
+        const y = height - ((p - minPitch + 1) / pitchSpan) * height;
+        ctx.fillRect(0, y, width, 1);
+      }
+      numericNotes.forEach((note) => {
+        const x = (note.start / duration) * width;
+        const w = Math.max(2, ((note.end - note.start) / duration) * width);
+        const y = height - ((note.pitch - minPitch + 1) / pitchSpan) * height;
+        const h = Math.max(3, height / pitchSpan - 1);
+        ctx.fillStyle = 'rgba(108,99,255,0.9)';
+        ctx.fillRect(x, y, w, h);
+      });
+    } catch (_) {
+      ctx.fillStyle = 'rgba(136,152,170,0.6)';
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('No MIDI notes available', width / 2, height / 2);
+      ctx.textAlign = 'left';
+    }
   }
 
   function drawTimeline() {
@@ -1169,6 +1307,7 @@
         stemPlayer.selectedStem = track.name;
         renderStemAnalysisPanel(taskData);
         drawHistogram(taskData);
+        drawSpectrogram(taskData);
       });
       row.querySelector('.stem-mute')?.addEventListener('click', () => {
         track.muted = !track.muted;
@@ -1204,6 +1343,7 @@
     updateTransportUi();
     renderStemAnalysisPanel(taskData);
     drawHistogram(taskData);
+    drawSpectrogram(taskData);
 
     // ── Timeline initialisation ───────────────────────────────────────────
     stemPlayer.timelineTaskData = taskData;
@@ -1265,6 +1405,8 @@
         <td>${typePill(t.type)}</td>
         <td class="td-source" title="${escapeHtml(t.source || '')}">${escapeHtml(t.source || '—')}</td>
         <td>${statusBadge(t.status)}${needsPoll(t.status) ? ' <span class="spin"></span>' : ''}</td>
+        <td style="white-space:nowrap">${fmtPercent(t.progress_percent)}</td>
+        <td class="td-source" title="${escapeHtml(latestTaskLog(t))}">${escapeHtml(latestTaskLog(t))}</td>
         <td style="white-space:nowrap;color:var(--text-muted);font-size:0.8rem">${fmtDate(t.created_at)}</td>
         <td>
           <button class="btn btn-ghost btn-sm view-btn" data-i="${i}">View</button>
@@ -1405,6 +1547,7 @@
         item('Task ID', escapeHtml(data.task_id || '—')),
         item('Type', escapeHtml(data.type || '—')),
         item('Status', escapeHtml(data.status || '—')),
+        item('Progress', fmtPercent(data.progress_percent)),
         item('Source', escapeHtml(data.source || '—')),
         item('Length', fmtDuration(data.duration_seconds)),
         item('BPM', typeof data.bpm === 'number' ? data.bpm.toFixed(2) : '—'),
@@ -1415,6 +1558,18 @@
         item('Original File', fileValue(data.file_path)),
         item('Normalized WAV', fileValue(data.normalized_path)),
       ].join('');
+      const taskLogs = Array.isArray(data.logs) ? data.logs : [];
+      if (taskLogs.length) {
+        const formattedLogs = taskLogs
+          .slice(-MAX_UI_TASK_LOGS)
+          .map((entry) => {
+            const ts = entry && typeof entry === 'object' ? fmtDate(entry.timestamp) : '—';
+            const msg = entry && typeof entry === 'object' ? (entry.message || '—') : '—';
+            return `[${ts}] ${msg}`;
+          })
+          .join('\n');
+        list.innerHTML += item('Task Logs', `<pre style="margin:0;white-space:pre-wrap;line-height:1.35">${escapeHtml(formattedLogs)}</pre>`);
+      }
       if (data.analysis && typeof data.analysis === 'object') {
         list.innerHTML += [
           item('Analysis Full Mix', data.analysis.full_mix ? 'available' : '—'),
@@ -1467,6 +1622,8 @@
       }
       pre.textContent = JSON.stringify(data, null, 2);
       await initStemWorkbench(data);
+      renderArtifactDownloads(data);
+      await drawMidiPianoRoll(data);
     } catch (_) {
       showAlert(alert, '❌ Failed to load task details.', 'error');
     }
@@ -1625,6 +1782,12 @@
 
   // ── Init ──────────────────────────────────────────────────────────────────
   const detailTaskId = new URLSearchParams(window.location.search).get('task_id');
+  const detailRefreshBtn = document.getElementById('detail-refresh');
+  if (detailRefreshBtn) {
+    detailRefreshBtn.addEventListener('click', () => {
+      if (detailTaskId) loadSongDetail(detailTaskId);
+    });
+  }
   if (detailTaskId) {
     document.getElementById('dashboard-view').style.display = 'none';
     document.getElementById('song-detail-view').style.display = '';

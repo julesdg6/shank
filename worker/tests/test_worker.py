@@ -10,9 +10,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+ROOT_DIR = Path(__file__).resolve().parents[2]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 # Make the worker package importable without installing it.
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from mt3_config import DEFAULT_MT3_SERVICE_URL  # noqa: E402
 import worker_loop  # noqa: E402
 
 
@@ -128,6 +133,18 @@ def test_pending_upload_task_is_normalized(data_dir):
     assert updated['duration_seconds'] == 95.75
     assert updated['analysis']['full_mix']['frequency_histogram'] == [0.2, 0.8]
     assert updated['analysis']['stems'] == {}
+    assert 'results' in updated
+    assert Path(updated['results']['dir']).name == task['task_id']
+    assert Path(updated['results']['analysis_json']).is_file()
+    assert Path(updated['results']['task_json']).is_file()
+    assert Path(updated['results']['mt3_json']).is_file()
+    assert Path(updated['results']['artifacts_json']).is_file()
+    structured_analysis = json.loads(Path(updated['results']['analysis_json']).read_text())
+    assert structured_analysis == updated['analysis']
+    structured_task = json.loads(Path(updated['results']['task_json']).read_text())
+    assert structured_task['status'] == 'done'
+    assert structured_task['bpm'] == 128.0
+    assert structured_task['key'] == 'A minor'
     mock_norm.assert_called_once()
 
 
@@ -441,18 +458,23 @@ def test_acestep_strict_mode_fails_when_url_not_configured(data_dir, monkeypatch
 def test_pending_upload_task_records_mt3_results_when_enabled(data_dir, monkeypatch):
     """When MT3 is enabled, transcription metadata should be persisted on the task."""
     monkeypatch.setenv('MT3_ENABLED', 'true')
-    monkeypatch.setenv('MT3_SERVICE_URL', 'http://shank-mt3:8001')
+    monkeypatch.setenv('MT3_SERVICE_URL', DEFAULT_MT3_SERVICE_URL)
     importlib.reload(worker_loop)
     task, task_file = _make_upload_task(data_dir)
 
     fake_mt3 = {
         'enabled': True,
+        'backend': 'basic_pitch',
         'status': 'completed',
         'model': 'mt3',
         'output_paths': ['/srv/shank/data/mt3/song.mid'],
         'warnings': [],
         'errors': [],
-        'full_mix': {'midi_path': '/srv/shank/data/mt3/song.mid', 'model': 'mt3'},
+        'full_mix': {
+            'midi_path': '/srv/shank/data/mt3/song.mid',
+            'model': 'mt3',
+            'notes': [{'start': 0.0, 'end': 0.5, 'pitch': 60}],
+        },
         'stems': {},
     }
     with patch('worker_loop.normalize_audio'), \
@@ -465,13 +487,17 @@ def test_pending_upload_task_records_mt3_results_when_enabled(data_dir, monkeypa
     assert updated['status'] == 'done'
     assert updated['mt3']['status'] == 'completed'
     assert updated['mt3']['full_mix']['midi_path'].endswith('.mid')
+    assert updated['transcription']['enabled'] is True
+    assert updated['transcription']['backend'] == 'basic_pitch'
+    assert updated['transcription']['midi_file'].endswith('.mid')
+    assert len(updated['transcription']['notes']) == 1
 
 
 def test_pending_upload_task_caches_ace_step_url_stems_for_mt3(data_dir, monkeypatch):
     """Ace-step URL stems should be downloaded to local cache paths before MT3."""
     monkeypatch.setenv('ACE_STEP_API_URL', 'http://ace-step:8001')
     monkeypatch.setenv('MT3_ENABLED', 'true')
-    monkeypatch.setenv('MT3_SERVICE_URL', 'http://shank-mt3:8001')
+    monkeypatch.setenv('MT3_SERVICE_URL', DEFAULT_MT3_SERVICE_URL)
     monkeypatch.setenv('ACE_STEP_STEMS', 'vocals,drums')
     importlib.reload(worker_loop)
     task, task_file = _make_upload_task(data_dir)
@@ -531,7 +557,7 @@ def test_pending_upload_task_caches_ace_step_url_stems_for_mt3(data_dir, monkeyp
 def test_mt3_failure_is_non_fatal_by_default(data_dir, monkeypatch):
     """MT3 errors should not fail the task unless strict mode is enabled."""
     monkeypatch.setenv('MT3_ENABLED', 'true')
-    monkeypatch.setenv('MT3_SERVICE_URL', 'http://shank-mt3:8001')
+    monkeypatch.setenv('MT3_SERVICE_URL', DEFAULT_MT3_SERVICE_URL)
     monkeypatch.delenv('MT3_FAIL_TASK_ON_ERROR', raising=False)
     importlib.reload(worker_loop)
     task, task_file = _make_upload_task(data_dir)
@@ -559,7 +585,7 @@ def test_mt3_failure_is_non_fatal_by_default(data_dir, monkeypatch):
 def test_mt3_failure_can_fail_task_when_strict_mode_enabled(data_dir, monkeypatch):
     """Strict mode should mark task failed if MT3 fails."""
     monkeypatch.setenv('MT3_ENABLED', 'true')
-    monkeypatch.setenv('MT3_SERVICE_URL', 'http://shank-mt3:8001')
+    monkeypatch.setenv('MT3_SERVICE_URL', DEFAULT_MT3_SERVICE_URL)
     monkeypatch.setenv('MT3_FAIL_TASK_ON_ERROR', 'true')
     importlib.reload(worker_loop)
     task, task_file = _make_upload_task(data_dir)
@@ -591,7 +617,7 @@ def test_mt3_failure_can_fail_task_when_strict_mode_enabled(data_dir, monkeypatc
 
 def test_transcribe_with_mt3_calls_transcribe_with_service(tmp_path, monkeypatch):
     """transcribe_with_mt3 should call transcribe_with_service with the right args."""
-    monkeypatch.setenv('MT3_SERVICE_URL', 'http://shank-mt3:8001')
+    monkeypatch.setenv('MT3_SERVICE_URL', DEFAULT_MT3_SERVICE_URL)
     monkeypatch.setenv('MT3_MODEL', 'multi_instrument')
     monkeypatch.setenv('MT3_TIMEOUT', '600')
     monkeypatch.setenv('DATA_DIR', str(tmp_path))
@@ -619,7 +645,7 @@ def test_transcribe_with_mt3_calls_transcribe_with_service(tmp_path, monkeypatch
 
 def test_transcribe_with_mt3_passes_custom_source_name(tmp_path, monkeypatch):
     """transcribe_with_mt3 should forward a custom source_name to the service."""
-    monkeypatch.setenv('MT3_SERVICE_URL', 'http://shank-mt3:8001')
+    monkeypatch.setenv('MT3_SERVICE_URL', DEFAULT_MT3_SERVICE_URL)
     monkeypatch.setenv('DATA_DIR', str(tmp_path))
     importlib.reload(worker_loop)
 
@@ -642,7 +668,7 @@ def test_transcribe_with_mt3_passes_custom_source_name(tmp_path, monkeypatch):
 def test_run_mt3_transcription_sets_error_field_on_failure(tmp_path, monkeypatch):
     """run_mt3_transcription should populate mt3.error (singular) when transcription fails."""
     monkeypatch.setenv('MT3_ENABLED', 'true')
-    monkeypatch.setenv('MT3_SERVICE_URL', 'http://shank-mt3:8001')
+    monkeypatch.setenv('MT3_SERVICE_URL', DEFAULT_MT3_SERVICE_URL)
     monkeypatch.setenv('DATA_DIR', str(tmp_path))
     importlib.reload(worker_loop)
 
@@ -658,7 +684,7 @@ def test_run_mt3_transcription_sets_error_field_on_failure(tmp_path, monkeypatch
 def test_run_mt3_transcription_no_error_field_on_success(tmp_path, monkeypatch):
     """run_mt3_transcription should not set mt3.error when transcription succeeds."""
     monkeypatch.setenv('MT3_ENABLED', 'true')
-    monkeypatch.setenv('MT3_SERVICE_URL', 'http://shank-mt3:8001')
+    monkeypatch.setenv('MT3_SERVICE_URL', DEFAULT_MT3_SERVICE_URL)
     monkeypatch.setenv('DATA_DIR', str(tmp_path))
     importlib.reload(worker_loop)
 
@@ -679,7 +705,7 @@ def test_run_mt3_transcription_no_error_field_on_success(tmp_path, monkeypatch):
 def test_run_mt3_transcription_uses_only_configured_stems(tmp_path, monkeypatch):
     """run_mt3_transcription should process only configured stem names."""
     monkeypatch.setenv('MT3_ENABLED', 'true')
-    monkeypatch.setenv('MT3_SERVICE_URL', 'http://shank-mt3:8001')
+    monkeypatch.setenv('MT3_SERVICE_URL', DEFAULT_MT3_SERVICE_URL)
     monkeypatch.setenv('ACE_STEP_STEMS', 'vocals,drums')
     monkeypatch.setenv('DATA_DIR', str(tmp_path))
     importlib.reload(worker_loop)
@@ -877,6 +903,8 @@ def test_process_pending_task_records_mt3_disabled_status(data_dir, monkeypatch)
     assert updated['status'] == 'done'
     assert updated['mt3']['enabled'] is False
     assert updated['mt3']['status'] == 'disabled'
+    assert updated['transcription']['enabled'] is False
+    assert updated['transcription']['status'] == 'disabled'
 
 
 # ---------------------------------------------------------------------------
@@ -926,6 +954,32 @@ def test_transcribe_with_service_raises_when_no_midi_output(tmp_path):
 
     with patch('mt3_client._post_json', return_value=fake_payload):
         with pytest.raises(RuntimeError, match='did not include MIDI output'):
+            mt3_client.transcribe_with_service(
+                service_url='http://localhost:8090',
+                audio_path='/tmp/audio.wav',
+                output_dir=output_dir,
+                task_id=task_id,
+                model='multi_instrument',
+                source='full_mix',
+                timeout=60,
+            )
+
+
+def test_transcribe_with_service_raises_when_service_reports_failed_status(tmp_path):
+    """transcribe_with_service should raise RuntimeError when service status is failed."""
+    import mt3_client
+
+    task_id = str(uuid.uuid4())
+    output_dir = tmp_path / 'mt3' / task_id
+    output_dir.mkdir(parents=True)
+
+    fake_payload = {
+        'status': 'failed',
+        'error': 'transcription produced no note events',
+    }
+
+    with patch('mt3_client._post_json', return_value=fake_payload):
+        with pytest.raises(RuntimeError, match='no note events'):
             mt3_client.transcribe_with_service(
                 service_url='http://localhost:8090',
                 audio_path='/tmp/audio.wav',

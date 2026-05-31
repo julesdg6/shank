@@ -14,6 +14,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+import mt3_config  # noqa: E402
 import mt3.transcribe as mt3_transcribe  # noqa: E402
 
 # Minimal valid MIDI bytes (single empty track) used in test fixtures.
@@ -140,11 +141,24 @@ def test_transcribe_default_output_dir_uses_data_dir(tmp_path, monkeypatch):
     wav = _make_wav(tmp_path / 'audio.wav')
     result = mt3_transcribe.transcribe(wav, service_url='', task_id='tid_default')
 
-    expected = tmp_path / 'mt3' / 'tid_default'
+    expected = mt3_config.get_mt3_output_path(tmp_path) / 'tid_default'
     assert Path(result['output_dir']) == expected
     assert Path(result['midi_path']).parent == expected
 
-    # Reload module to restore original DATA_DIR for subsequent tests
+
+def test_transcribe_uses_configured_mt3_output_path(tmp_path, monkeypatch):
+    """MT3 output path overrides should be shared with the standalone wrapper."""
+    custom_output = tmp_path / 'custom-mt3'
+    monkeypatch.setenv('DATA_DIR', str(tmp_path))
+    monkeypatch.setenv('MT3_OUTPUT_PATH', str(custom_output))
+    importlib.reload(mt3_transcribe)
+
+    wav = _make_wav(tmp_path / 'audio.wav')
+    result = mt3_transcribe.transcribe(wav, service_url='', task_id='tid_override')
+
+    assert Path(result['output_dir']) == custom_output / 'tid_override'
+
+    monkeypatch.delenv('MT3_OUTPUT_PATH', raising=False)
     importlib.reload(mt3_transcribe)
 
 
