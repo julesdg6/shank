@@ -26,11 +26,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from mt3_config import DEFAULT_MT3_MODEL, DEFAULT_MT3_TIMEOUT, get_mt3_output_path
+
 DATA_DIR = Path(os.getenv('DATA_DIR', '/srv/shank/data'))
-MT3_OUTPUT_DIR = DATA_DIR / 'mt3'
+MT3_OUTPUT_DIR = get_mt3_output_path(DATA_DIR)
 MT3_SERVICE_URL = os.getenv('MT3_SERVICE_URL', '').strip().rstrip('/')
-MT3_MODEL = os.getenv('MT3_MODEL', 'multi_instrument').strip() or 'multi_instrument'
-MT3_TIMEOUT = int(os.getenv('MT3_TIMEOUT', '1800'))
+MT3_MODEL = os.getenv('MT3_MODEL', DEFAULT_MT3_MODEL).strip() or DEFAULT_MT3_MODEL
+MT3_TIMEOUT = int(os.getenv('MT3_TIMEOUT', str(DEFAULT_MT3_TIMEOUT)))
 
 
 # ---------------------------------------------------------------------------
@@ -108,11 +110,18 @@ def transcribe(
     warnings: list[str] = []
     notes: list = []
     midi_bytes: bytes | None = None
+    backend: str | None = None
 
     if effective_url:
         payload = _call_service(
             effective_url, wav_path, effective_task_id, effective_model, effective_timeout,
         )
+        backend_raw = payload.get('backend')
+        if isinstance(backend_raw, str) and backend_raw:
+            backend = backend_raw
+        status_raw = payload.get('status')
+        if isinstance(status_raw, str) and status_raw.lower() in ('failed', 'error', 'low_confidence'):
+            raise RuntimeError(str(payload.get('error') or f'Transcription failed with status={status_raw}'))
         effective_model = payload.get('model') or effective_model
         midi_bytes = _decode_midi(payload)
 
@@ -163,6 +172,7 @@ def transcribe(
         'duration_seconds': note_stats['duration_seconds'],
         'program_count': note_stats['program_count'],
         'model': effective_model,
+        'backend': backend,
         'task_id': effective_task_id,
         'output_dir': str(out_dir),
         'transcribed_at': datetime.now(timezone.utc).isoformat(),

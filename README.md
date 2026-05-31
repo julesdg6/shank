@@ -14,11 +14,12 @@ To provide users with an automated pipeline that transforms raw audio/URLs into 
     - **Musical Key**: Krumhansl-Kessler key detection (e.g. `A minor`, `C major`).
     - **Chord Progressions**: Segment-level chord summaries.
     - **Loudness (LUFS)**: Optional `pyloudnorm` integrated loudness with fallback estimate.
-    - **Melody to MIDI**: *(planned)*
+    - **Melody to MIDI**: Optional transcription backend (`basic_pitch`, with `mt3`/`omnizart` placeholders)
     - **Song Structure**: Detection of intro, verse, chorus, etc. *(planned)*
 - **Built-in Stem Separation**: [python-audio-separator](https://github.com/nomadkaraoke/python-audio-separator) separates vocals, drums, bass, and other instruments (4-stem or 6-stem) — no external service required. Optional **ACE-Step** integration for comparison.
 - **Optional MT3 Transcription**: Worker can call a dedicated `shank-mt3` service to generate MIDI + note metadata from normalized mix and stems.
 - **Asynchronous Workflow**: A background worker polls a filesystem task queue and processes jobs independently of the API.
+- **Structured Result Artifacts**: Completed tasks now write a predictable `DATA_DIR/results/<task_id>/` folder with `task.json`, `analysis.json`, `mt3.json`, and `artifacts.json`.
 - **Web Dashboard**: A built-in UI at `/ui` to submit tasks, monitor progress, and inspect results.
 - **MCP Automation Server**: Optional MCP server exposing SHANK task operations for automation clients.
 
@@ -65,6 +66,7 @@ docker compose down
 | `POST` | `/tasks/melody` | Upload audio and queue a melody-focused analysis task |
 | `POST` | `/tasks/url` | Submit a YouTube URL for download and analysis |
 | `GET` | `/tasks/{task_id}` | Retrieve the status and results of a task |
+| `GET` | `/tasks/{task_id}/chords` | Return chord detection results for a completed task |
 | `GET` | `/tasks/completed` | List all completed (`done`) tasks |
 | `GET` | `/tasks/{task_id}/mt3/midi/{track_name}` | Download MT3 MIDI (`full_mix` or stem name) |
 | `GET` | `/tasks/{task_id}/mt3/notes/{track_name}` | Retrieve MT3 note metadata JSON |
@@ -127,6 +129,7 @@ Environment variables (set in `.env` or `docker-compose.yml`):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `CHORD_BACKEND` | `auto` | Chord detection backend: `auto` (librosa), `madmom`, or `disabled` |
 | `DATA_DIR` | `/srv/shank/data` | Directory for uploads, task files, and normalized audio |
 | `POLL_INTERVAL` | `10` | Worker polling interval in seconds |
 | `STEM_BACKEND` | `auto` | Stem separation backend: `auto`, `audio_separator`, `acestep`, `demucs`, or `none` |
@@ -139,13 +142,16 @@ Environment variables (set in `.env` or `docker-compose.yml`):
 | `DEMUCS_MODEL` | `htdemucs` | Model name passed to the `demucs` CLI (legacy backend) |
 | `DEMUCS_DEVICE` | `cpu` | Device flag passed to the `demucs` CLI (`cpu`, `cuda`, `mps`) |
 | `MT3_ENABLED` | `false` | Enable MT3 transcription in worker |
-| `MT3_SERVICE_URL` | `http://shank-mt3:8090` | Base URL for the optional MT3 FastAPI service |
+| `MT3_SERVICE_URL` | `http://127.0.0.1:8090` | Base URL for the optional MT3 FastAPI service running inside the unified `shank` container |
 | `MT3_MODEL` | `multi_instrument` | Requested model identifier to send to MT3 service |
+| `TRANSCRIPTION_BACKEND` | `basic_pitch` | Transcription backend in the service: `basic_pitch`, `mt3`, `omnizart`, `disabled` |
+| `MODEL_CACHE_DIR` | `/srv/shank/models/transcription` | Optional cache/model directory for transcription backends |
 | `MT3_TIMEOUT` | `1800` | MT3 HTTP timeout in seconds |
 | `MT3_TRANSCRIBE_STEMS` | `true` | Also transcribe separated stems when present |
 | `MT3_FAIL_TASK_ON_ERROR` | `false` | If true, MT3 failure marks task as failed |
 | `MT3_CHECKPOINT_ROOT` | `/srv/shank/models/mt3/checkpoints` | Mount path for MT3 checkpoints in MT3 service |
 | `MT3_CACHE_DIR` | `/srv/shank/cache/mt3` | Mount path for MT3 runtime cache |
+| `MT3_OUTPUT_PATH` | `/srv/shank/data/mt3` | Persisted output directory for generated MT3 MIDI and note JSON files |
 | `MT3_DEVICE` | `auto` | MT3 device hint (`auto`, `cpu`, or `gpu`) |
 
 ## 🗺 Roadmap & Implementation Plan
@@ -164,7 +170,7 @@ Environment variables (set in `.env` or `docker-compose.yml`):
 - [x] Implement `librosa` based analysis (BPM/Key)
 
 ### Phase 3: Advanced Analysis & UI
-- [ ] Implement Chord progression detection
+- [x] Implement Chord progression detection
 - [ ] Implement Melody -> MIDI extraction
 - [ ] Implement Song structure/segmentation detection
 - [x] Build Web UI (Dashboard, task list, result viewing)
@@ -184,12 +190,101 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-31T18:29:42Z
-- Latest commit: `62d14b6`
-- Commit message: Merge pull request #87 from julesdg6/copilot/add-advanced-musical-analysis-pipeline  Add optional advanced beat/downbeat/loudness analysis outputs to worker pipeline
+- Last automated update: 2026-05-31T18:45:17Z
+- Latest commit: `965afaf`
+- Commit message: Merge pull request #96 from julesdg6/copilot/replace-mt3-stub-with-basic-pitch  Replace MT3 stub with configurable transcription backend (Basic Pitch first)
 <!-- readme-update:end -->
 
+## 🎸 Chord Detection
+
+SHANK performs automatic chord detection on every analysed track and returns timestamped chord segments alongside BPM, key, beats, and downbeats.
+
+### Output format
+
+Chord data is available inside the task JSON as the `chords` object, and via the dedicated endpoint:
+
+```bash
+curl http://localhost:8088/tasks/<task_id>/chords
+```
+
+Example response:
+```json
+{
+  "segments": [
+    {
+      "symbol": "Am",
+      "root": "A",
+      "quality": "minor",
+      "confidence": 0.72,
+      "start_seconds": 0.0,
+      "end_seconds": 3.8
+    },
+    {
+      "symbol": "F",
+      "root": "F",
+      "quality": "major",
+      "confidence": 0.68,
+      "start_seconds": 3.8,
+      "end_seconds": 7.6
+    }
+  ],
+  "progression": ["Am", "F"]
+}
+```
+
+### Backends
+
+| `CHORD_BACKEND` | Description |
+|-----------------|-------------|
+| `auto` *(default)* | Librosa chroma-based chord estimation — no extra dependencies required |
+| `librosa` | Explicit alias for the same librosa backend |
+| `madmom` | Deep-learning chord recognition via [madmom](https://github.com/CPJKU/madmom); falls back to librosa if madmom is not installed |
+| `disabled` | Skips chord detection entirely; `chords` will contain empty `segments` and `progression` |
+
+### Enabling madmom chord recognition
+
+Install madmom in the worker container (add to `worker/requirements.txt` or your `Dockerfile`):
+
+```dockerfile
+RUN pip install --no-cache-dir madmom
+```
+
+Then set in `.env`:
+
+```dotenv
+CHORD_BACKEND=madmom
+```
+
+If madmom cannot be imported at runtime, SHANK automatically falls back to the librosa backend so the analysis still completes.
+
+### Disabling chord detection
+
+```dotenv
+CHORD_BACKEND=disabled
+```
+
+Chord detection is skipped entirely and `chords` will be `{"segments": [], "progression": []}`.
+
 ## 🎛 Stem Separation (python-audio-separator)
+
+## 🎹 Transcription backend (Basic Pitch)
+
+The transcription service now supports backend selection with `TRANSCRIPTION_BACKEND`.
+
+```dotenv
+TRANSCRIPTION_BACKEND=basic_pitch   # basic_pitch | mt3 | omnizart | disabled
+MODEL_CACHE_DIR=/srv/shank/models/transcription
+```
+
+- `basic_pitch`: real audio-to-MIDI transcription (requires `basic-pitch` dependency)
+- `disabled`: cleanly turns transcription off
+- empty-note outputs are returned as failed transcription results (not silent success)
+
+Enable Basic Pitch in Docker builds with:
+
+```bash
+docker build --build-arg INSTALL_BASIC_PITCH=true -t shank .
+```
 
 SHANK bundles [python-audio-separator](https://github.com/nomadkaraoke/python-audio-separator) as the default stem separation backend. No external service is required — it runs entirely inside the container.
 
@@ -345,7 +440,7 @@ Leave `MT3_ENABLED=false` to keep transcription disabled while still running the
 
 - The worker always attempts full-mix transcription first.
 - Stem transcription is attempted afterwards when both `ACE_STEP_API_URL` is set and `MT3_TRANSCRIBE_STEMS=true`.
-- MIDI outputs are stored under `DATA_DIR/mt3/<task_id>/`.
+- MIDI outputs are stored under `MT3_OUTPUT_PATH/<task_id>/` (defaults to `DATA_DIR/mt3/<task_id>/`).
 - The task JSON gains an `mt3` object with keys: `status`, `model`, `output_paths`, `full_mix`, `stems`, `warnings`, `errors`.
 - MT3 failures are **non-fatal** by default. Set `MT3_FAIL_TASK_ON_ERROR=true` to mark tasks as failed on MT3 error.
 
@@ -361,6 +456,7 @@ Leave `MT3_ENABLED=false` to keep transcription disabled while still running the
 | `MT3_FAIL_TASK_ON_ERROR` | `false` | Mark the whole task failed if MT3 errors occur |
 | `MT3_CHECKPOINT_ROOT` | `/srv/shank/models/mt3/checkpoints` | Host-mounted path for MT3 model checkpoints |
 | `MT3_CACHE_DIR` | `/srv/shank/cache/mt3` | Host-mounted path for MT3 runtime/compiled cache |
+| `MT3_OUTPUT_PATH` | `/srv/shank/data/mt3` | Persisted output path for generated MIDI and note JSON artifacts (covered by `./data:/srv/shank/data`) |
 | `MT3_DEVICE` | `auto` | Device hint: `auto`, `cpu`, or `gpu` |
 
 Example `.env` snippet:
@@ -372,9 +468,12 @@ MT3_TRANSCRIBE_STEMS=true
 MT3_FAIL_TASK_ON_ERROR=false
 MT3_CHECKPOINT_ROOT=/srv/shank/models/mt3/checkpoints
 MT3_CACHE_DIR=/srv/shank/cache/mt3
+MT3_OUTPUT_PATH=/srv/shank/data/mt3
 MT3_DEVICE=auto
 MT3_SERVICE_URL=http://127.0.0.1:8090
 ```
+
+The default MT3 paths are centralized in `mt3_config.py`, and `docker-compose.yml`, `.env.example`, and the MT3 tests are kept aligned with those defaults.
 
 ### Downloading MIDI Results
 

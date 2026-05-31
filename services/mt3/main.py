@@ -1,17 +1,29 @@
 import json
+import logging
 import os
 import posixpath
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+from transcription import (
+    BackendDependencyError,
+    EmptyTranscriptionError,
+    InvalidAudioError,
+    TranscriptionError,
+    get_backend,
+)
+
 app = FastAPI(title='SHANK MT3 Service')
+log = logging.getLogger(__name__)
 
 DATA_DIR = Path(os.getenv('DATA_DIR', '/srv/shank/data')).resolve()
 MT3_OUTPUT_DIR = DATA_DIR / 'mt3'
 DEFAULT_MODEL = os.getenv('MT3_MODEL', 'multi_instrument').strip() or 'multi_instrument'
+TRANSCRIPTION_BACKEND = os.getenv('TRANSCRIPTION_BACKEND', 'basic_pitch').strip() or 'basic_pitch'
 
 
 class TranscribeRequest(BaseModel):
@@ -72,11 +84,13 @@ def health() -> dict[str, str]:
 @app.post('/transcribe')
 def transcribe(body: TranscribeRequest) -> dict:
     model = body.model or DEFAULT_MODEL
+    backend_name = TRANSCRIPTION_BACKEND
     path_value = body.path or body.audio_path
     if not path_value:
         return {
             'status': 'failed',
             'error': 'path is required',
+            'backend': backend_name,
             'model': model,
             'midi_path': None,
             'notes_path': None,
@@ -87,6 +101,7 @@ def transcribe(body: TranscribeRequest) -> dict:
         return {
             'status': 'failed',
             'error': 'path must point to a file inside DATA_DIR',
+            'backend': backend_name,
             'model': model,
             'midi_path': None,
             'notes_path': None,
@@ -96,27 +111,82 @@ def transcribe(body: TranscribeRequest) -> dict:
         return {
             'status': 'failed',
             'error': 'path does not exist',
+            'backend': backend_name,
             'model': model,
             'midi_path': None,
             'notes_path': None,
         }
 
+    audio_file = DATA_DIR / normalized_path
     output_dir = MT3_OUTPUT_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
 
     file_id = uuid.uuid4().hex
     midi_path = output_dir / f'{file_id}.mid'
     notes_path = output_dir / f'{file_id}.notes.json'
-    notes: list[dict] = []
+    metadata_path = output_dir / f'{file_id}.meta.json'
 
-    midi_path.write_bytes(_empty_midi_bytes())
-    notes_path.write_text(json.dumps(notes))
+    warnings: list[str] = []
+    notes: list[dict] = []
+    error_message: str | None = None
+
+    try:
+        backend = get_backend(backend_name)
+        transcription = backend.transcribe(audio_file, model=model)
+        backend_name = transcription.backend
+        warnings.extend(transcription.warnings)
+        notes = transcription.notes
+        if not notes:
+            raise EmptyTranscriptionError('transcription produced no note events')
+        midi_path.write_bytes(transcription.midi_bytes)
+    except BackendDependencyError as exc:
+        log.warning('Transcription dependency unavailable: %s', exc)
+        error_message = 'transcription backend dependency is unavailable'
+    except InvalidAudioError as exc:
+        log.warning('Invalid transcription input: %s', exc)
+        error_message = 'invalid audio input for transcription'
+    except EmptyTranscriptionError:
+        error_message = 'transcription produced no note events'
+    except (TranscriptionError, ValueError, OSError) as exc:
+        log.warning('Transcription failed: %s', exc)
+        error_message = 'transcription failed'
+    except Exception as exc:  # pragma: no cover - defensive catch for backend failures
+        log.exception('Unexpected transcription backend error: %s', exc)
+        error_message = 'unexpected transcription backend error'
+
+    if error_message is not None:
+        if not midi_path.exists():
+            midi_path.write_bytes(_empty_midi_bytes())
+        notes = []
+        warnings.append(error_message)
+        status = 'failed'
+    else:
+        notes_path.write_text(json.dumps(notes, indent=2))
+        status = 'completed'
+
+    metadata = {
+        'status': status,
+        'error': error_message,
+        'backend': backend_name,
+        'model': model,
+        'audio_path': str(audio_file),
+        'midi_path': str(midi_path),
+        'notes_path': str(notes_path) if status == 'completed' else None,
+        'note_count': len(notes),
+        'created_at': datetime.now(timezone.utc).isoformat(),
+        'warnings': warnings,
+    }
+    metadata_path.write_text(json.dumps(metadata, indent=2))
 
     return {
-        'status': 'completed',
-        'error': None,
+        'status': status,
+        'error': error_message,
+        'backend': backend_name,
         'model': model,
         'midi_path': str(midi_path),
-        'notes_path': str(notes_path),
+        'notes_path': str(notes_path) if status == 'completed' else None,
         'notes': notes,
+        'note_count': len(notes),
+        'warnings': warnings,
+        'meta_path': str(metadata_path),
     }

@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 import logging
+import os
 
 import librosa
 import numpy as np
@@ -89,7 +90,11 @@ def _detect_key(y: np.ndarray, sr: int) -> str:
 
 
 def _detect_chords(y: np.ndarray, sr: int) -> dict:
-    """Return a lightweight, time-segmented chord progression summary."""
+    """Return a lightweight, time-segmented chord progression summary using librosa chroma.
+
+    Each segment includes a ``confidence`` score (0.0–1.0) reflecting how well
+    the detected chord tones dominate the chroma frame energy.
+    """
     hop_length = 1024
     chroma = librosa.feature.chroma_cqt(y=y, sr=sr, hop_length=hop_length)
     if chroma.size == 0:
@@ -112,12 +117,18 @@ def _detect_chords(y: np.ndarray, sr: int) -> dict:
 
         if major_score >= minor_score:
             quality = 'major'
+            chord_energy = major_score
         else:
             quality = 'minor'
+            chord_energy = minor_score
+
+        total_energy = float(np.sum(frame))
+        confidence = round(float(chord_energy / total_energy) if total_energy > 0 else 0.0, 3)
 
         frame_labels.append({
             'root': _PITCH_CLASSES[root_idx],
             'quality': quality,
+            'confidence': confidence,
             'start_seconds': float(frame_boundaries[frame_idx]),
             'end_seconds': float(frame_boundaries[frame_idx + 1]),
         })
@@ -126,6 +137,7 @@ def _detect_chords(y: np.ndarray, sr: int) -> dict:
         return {'segments': [], 'progression': []}
 
     segments: list[dict] = []
+    merged_frame_counts: list[int] = []
     for frame in frame_labels:
         root_name = _normalize_pitch_name(frame['root'])
         symbol = f'{root_name}{"m" if frame["quality"] == "minor" else ""}'
@@ -134,16 +146,110 @@ def _detect_chords(y: np.ndarray, sr: int) -> dict:
                 'symbol': symbol,
                 'root': root_name,
                 'quality': frame['quality'],
+                'confidence': frame['confidence'],
                 'start_seconds': round(frame['start_seconds'], 3),
                 'end_seconds': round(frame['end_seconds'], 3),
             })
+            merged_frame_counts.append(1)
             continue
-        segments[-1]['end_seconds'] = round(frame['end_seconds'], 3)
+        # Incrementally update running mean confidence for the merged segment.
+        prev = segments[-1]
+        n = merged_frame_counts[-1]
+        prev['confidence'] = round((prev['confidence'] * n + frame['confidence']) / (n + 1), 3)
+        merged_frame_counts[-1] = n + 1
+        prev['end_seconds'] = round(frame['end_seconds'], 3)
 
     return {
         'segments': segments,
         'progression': [segment['symbol'] for segment in segments],
     }
+
+
+def _madmom_chords(file_path: str) -> dict | None:
+    """Attempt chord recognition via madmom.
+
+    Returns a chord dict in the same format as :func:`_detect_chords`, or
+    ``None`` when madmom is unavailable or analysis fails.
+    """
+    try:
+        from madmom.audio.chroma import DeepChromaProcessor
+        from madmom.features.chords import DeepChromaChordRecognitionProcessor
+    except ImportError:  # pragma: no cover - optional dependency
+        return None
+
+    try:
+        chroma_proc = DeepChromaProcessor()
+        chord_proc = DeepChromaChordRecognitionProcessor(fps=10)
+        chroma = chroma_proc(file_path)
+        raw_chords = chord_proc(chroma)
+
+        if raw_chords is None or len(raw_chords) == 0:
+            return {'segments': [], 'progression': []}
+
+        segments: list[dict] = []
+        for i, item in enumerate(raw_chords):
+            # madmom structured array has fields: time, label (onset-only format)
+            # or start/end/label depending on processor version.
+            if hasattr(item, 'dtype') and item.dtype.names:
+                names = item.dtype.names
+                start = float(item['time']) if 'time' in names else float(item[0])
+                label_raw = str(item['label']) if 'label' in names else str(item[-1])
+                # Use the next element's start time as the end time for onset-only format.
+                if 'time' in names and i + 1 < len(raw_chords):
+                    end: float | None = float(raw_chords[i + 1]['time'])
+                else:
+                    end = None
+            elif hasattr(item, '__len__') and len(item) >= 3:
+                start, end, label_raw = float(item[0]), float(item[1]), str(item[2])
+            elif hasattr(item, '__len__') and len(item) == 2:
+                start, label_raw = float(item[0]), str(item[1])
+                end = None
+            else:
+                continue
+
+            label_raw = label_raw.strip()
+            if label_raw in ('N', 'X', ''):
+                continue
+
+            # Convert madmom chord label (e.g. 'C:maj', 'A:min') to our symbol format.
+            root, _, quality_str = label_raw.partition(':')
+            root = root.strip()
+            quality_str = quality_str.strip().lower()
+            if quality_str in ('min', 'minor', 'm'):
+                quality = 'minor'
+                symbol = f'{root}m'
+            else:
+                quality = 'major'
+                symbol = root
+
+            try:
+                root = _normalize_pitch_name(root)
+                symbol = f'{root}m' if quality == 'minor' else root
+            except Exception as norm_exc:
+                log.debug('Could not normalize pitch name %r: %s', root, norm_exc)
+
+            seg: dict = {
+                'symbol': symbol,
+                'root': root,
+                'quality': quality,
+                'confidence': 1.0,
+                'start_seconds': round(start, 3),
+                'end_seconds': round(end, 3) if end is not None else round(start, 3),
+            }
+            segments.append(seg)
+
+        # Fill in end times from next segment start when missing.
+        for i in range(len(segments) - 1):
+            if segments[i]['end_seconds'] == segments[i]['start_seconds']:
+                segments[i]['end_seconds'] = segments[i + 1]['start_seconds']
+
+        return {
+            'segments': segments,
+            'progression': [s['symbol'] for s in segments],
+        }
+    except Exception as exc:  # pragma: no cover - optional dependency
+        log.debug('madmom chord analysis unavailable: %s', exc)
+        return None
 
 
 def _librosa_beats(y: np.ndarray, sr: int) -> tuple[float, list[float], float]:
@@ -319,7 +425,15 @@ def analyze_audio(file_path: str) -> dict:
     duration_seconds = round(float(librosa.get_duration(y=y, sr=sr)), 2)
 
     key, key_confidence = _detect_key_and_confidence(y, sr)
-    chords = _detect_chords(y, sr)
+
+    chord_backend = os.getenv('CHORD_BACKEND', 'auto').strip().lower()
+    if chord_backend == 'disabled':
+        chords: dict = {'segments': [], 'progression': []}
+    elif chord_backend == 'madmom':
+        chords = _madmom_chords(file_path) or _detect_chords(y, sr)
+    else:
+        chords = _detect_chords(y, sr)
+
     downbeats = _beatnet_downbeats(file_path) or _fallback_downbeats(beats)
     tempo_changes = _detect_tempo_changes(beats)
     lufs = _measure_lufs(y, sr)

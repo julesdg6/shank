@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 import urllib.request
 import uuid
@@ -17,6 +18,12 @@ from urllib.parse import urljoin, urlparse
 from analyze import analyze_audio
 from downloader import download_youtube
 from mt3_client import transcribe_with_service
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
+
+from mt3_config import DEFAULT_MT3_MODEL, DEFAULT_MT3_SERVICE_URL, DEFAULT_MT3_TIMEOUT, get_mt3_output_path
 
 logging.basicConfig(
     level=logging.INFO,
@@ -50,19 +57,21 @@ AUDIO_SEPARATOR_MODEL = os.getenv('AUDIO_SEPARATOR_MODEL', 'htdemucs_ft.yaml').s
 AUDIO_SEPARATOR_MODEL_DIR = os.getenv('AUDIO_SEPARATOR_MODEL_DIR', '/srv/shank/models/separator').strip()
 AUDIO_SEPARATOR_DEVICE = os.getenv('AUDIO_SEPARATOR_DEVICE', 'cpu').strip().lower() or 'cpu'
 MT3_ENABLED = os.getenv('MT3_ENABLED', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
-MT3_SERVICE_URL = os.getenv('MT3_SERVICE_URL', '').strip().rstrip('/')
-MT3_MODEL = os.getenv('MT3_MODEL', 'multi_instrument').strip() or 'multi_instrument'
-MT3_TIMEOUT = int(os.getenv('MT3_TIMEOUT', '1800'))
+MT3_SERVICE_URL = os.getenv('MT3_SERVICE_URL', DEFAULT_MT3_SERVICE_URL).strip().rstrip('/')
+MT3_MODEL = os.getenv('MT3_MODEL', DEFAULT_MT3_MODEL).strip() or DEFAULT_MT3_MODEL
+MT3_TIMEOUT = int(os.getenv('MT3_TIMEOUT', str(DEFAULT_MT3_TIMEOUT)))
 MT3_TRANSCRIBE_STEMS = os.getenv('MT3_TRANSCRIBE_STEMS', 'true').strip().lower() in ('1', 'true', 'yes', 'on')
 MT3_FAIL_TASK_ON_ERROR = os.getenv('MT3_FAIL_TASK_ON_ERROR', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
+TRANSCRIPTION_BACKEND = os.getenv('TRANSCRIPTION_BACKEND', 'basic_pitch').strip() or 'basic_pitch'
 
 # Standard WAV output format
 WAV_SAMPLE_RATE = '44100'
 WAV_CHANNELS = '2'
 WAV_CODEC = 'pcm_s16le'
-MT3_OUTPUTS_DIR = DATA_DIR / 'mt3'
+MT3_OUTPUTS_DIR = get_mt3_output_path(DATA_DIR)
 STEMS_CACHE_DIR = DATA_DIR / 'stems'
 MAX_TASK_LOGS = 50
+RESULTS_DIR = DATA_DIR / 'results'
 
 
 def _ensure_dirs() -> None:
@@ -70,6 +79,7 @@ def _ensure_dirs() -> None:
     TASKS_DIR.mkdir(parents=True, exist_ok=True)
     NORMALIZED_DIR.mkdir(parents=True, exist_ok=True)
     STEMS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     if MT3_ENABLED:
         MT3_OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -108,6 +118,80 @@ def _record_task_progress(task_file: Path, progress_percent: int, message: str |
             })
         task['logs'] = logs[-MAX_TASK_LOGS:]
     _write_task(task_file, task)
+
+
+def _task_artifact_paths(
+    normalized_path: str,
+    stem_tracks: dict[str, str] | None,
+    mt3_result: dict[str, Any] | None,
+) -> dict[str, Any]:
+    artifacts: dict[str, Any] = {'normalized_wav': normalized_path}
+
+    if stem_tracks:
+        artifacts['stems_wav'] = {stem_name: stem_path for stem_name, stem_path in stem_tracks.items()}
+
+    if mt3_result is not None:
+        full_mix = mt3_result.get('full_mix')
+        if isinstance(full_mix, dict):
+            full_mix_artifacts = {
+                key: full_mix[key]
+                for key in ('midi_path', 'notes_path')
+                if isinstance(full_mix.get(key), str) and full_mix.get(key)
+            }
+            if full_mix_artifacts:
+                artifacts['mt3_full_mix'] = full_mix_artifacts
+
+        mt3_stems = mt3_result.get('stems')
+        if isinstance(mt3_stems, dict):
+            stem_artifacts: dict[str, dict[str, str]] = {}
+            for stem_name, stem_data in mt3_stems.items():
+                if not isinstance(stem_name, str) or not isinstance(stem_data, dict):
+                    continue
+                values = {
+                    key: stem_data[key]
+                    for key in ('midi_path', 'notes_path')
+                    if isinstance(stem_data.get(key), str) and stem_data.get(key)
+                }
+                if values:
+                    stem_artifacts[stem_name] = values
+            if stem_artifacts:
+                artifacts['mt3_stems'] = stem_artifacts
+
+    return artifacts
+
+
+def _structured_result_paths(task_id: str) -> dict[str, str]:
+    result_dir = RESULTS_DIR / task_id
+    return {
+        'dir': str(result_dir),
+        'task_json': str(result_dir / 'task.json'),
+        'analysis_json': str(result_dir / 'analysis.json'),
+        'mt3_json': str(result_dir / 'mt3.json'),
+        'artifacts_json': str(result_dir / 'artifacts.json'),
+    }
+
+
+def _write_structured_results(
+    result_artifacts: dict[str, str],
+    task_payload: dict[str, Any],
+    normalized_path: str,
+    analysis_payload: dict[str, Any],
+    mt3_result: dict[str, Any] | None,
+    stem_tracks: dict[str, str] | None,
+) -> None:
+    result_dir = Path(result_artifacts['dir'])
+    result_dir.mkdir(parents=True, exist_ok=True)
+
+    task_path = Path(result_artifacts['task_json'])
+    analysis_path = Path(result_artifacts['analysis_json'])
+    mt3_path = Path(result_artifacts['mt3_json'])
+    artifacts_path = Path(result_artifacts['artifacts_json'])
+
+    task_path.write_text(json.dumps(task_payload, indent=2))
+    analysis_path.write_text(json.dumps(analysis_payload, indent=2))
+    mt3_payload = mt3_result if isinstance(mt3_result, dict) else {}
+    mt3_path.write_text(json.dumps(mt3_payload, indent=2))
+    artifacts_path.write_text(json.dumps(_task_artifact_paths(normalized_path, stem_tracks, mt3_payload), indent=2))
 
 
 def normalize_audio(input_path: str, output_path: str) -> None:
@@ -462,6 +546,7 @@ def run_mt3_transcription(task_id: str, normalized_path: str, stems: dict[str, s
     """Run MT3 transcription (full mix first, then optional stems)."""
     result: dict[str, Any] = {
         'enabled': MT3_ENABLED,
+        'backend': TRANSCRIPTION_BACKEND,
         'status': 'disabled',
         'model': MT3_MODEL,
         'output_paths': [],
@@ -481,6 +566,9 @@ def run_mt3_transcription(task_id: str, normalized_path: str, stems: dict[str, s
 
     def transcribe_one(source: str, audio_path: str) -> dict[str, Any]:
         transcription = transcribe_with_mt3(audio_path, task_id, source_name=source)
+        backend_name = transcription.get('backend')
+        if isinstance(backend_name, str) and backend_name:
+            result['backend'] = backend_name
         if isinstance(transcription.get('midi_path'), str):
             result['output_paths'].append(transcription['midi_path'])
         if isinstance(transcription.get('warnings'), list):
@@ -518,6 +606,27 @@ def run_mt3_transcription(task_id: str, normalized_path: str, stems: dict[str, s
         result['error'] = '; '.join(str(e) for e in result['errors'])
 
     return result
+
+
+def _transcription_payload_from_mt3(mt3_result: dict[str, Any]) -> dict[str, Any]:
+    full_mix = mt3_result.get('full_mix')
+    notes: list[Any] = []
+    midi_file = None
+    if isinstance(full_mix, dict):
+        midi_candidate = full_mix.get('midi_path')
+        if isinstance(midi_candidate, str) and midi_candidate:
+            midi_file = midi_candidate
+        notes_candidate = full_mix.get('notes')
+        if isinstance(notes_candidate, list):
+            notes = notes_candidate
+
+    return {
+        'enabled': bool(mt3_result.get('enabled')),
+        'backend': mt3_result.get('backend') or TRANSCRIPTION_BACKEND,
+        'status': mt3_result.get('status'),
+        'midi_file': midi_file,
+        'notes': notes,
+    }
 
 
 def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
@@ -779,7 +888,10 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
 
         _record_task_progress(task_file, 78, 'Transcribing MIDI')
         mt3_result = run_mt3_transcription(task_id, normalized_path, stems=stem_tracks)
-        _update_task(task_file, {'mt3': mt3_result})
+        _update_task(task_file, {
+            'mt3': mt3_result,
+            'transcription': _transcription_payload_from_mt3(mt3_result),
+        })
         if MT3_FAIL_TASK_ON_ERROR and mt3_result.get('status') in ('failed', 'partial'):
             error_msg = '; '.join(mt3_result.get('errors') or []) or 'MT3 transcription failed'
             _update_task(task_file, {
@@ -811,7 +923,8 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
             if analysis_warnings:
                 analysis_payload['warnings'] = analysis_warnings
 
-            _update_task(task_file, {
+            current_task = _read_task(task_file) or {}
+            completion_updates: dict[str, Any] = {
                 'status': 'done',
                 'normalized_path': normalized_path,
                 'analysis': analysis_payload,
@@ -819,7 +932,19 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                 'key': full_mix_analysis['key'],
                 **({'duration_seconds': full_mix_analysis.get('duration_seconds')} if full_mix_analysis.get('duration_seconds') is not None else {}),
                 'completed_at': datetime.now(timezone.utc).isoformat(),
-            })
+            }
+            result_artifacts = _structured_result_paths(task_id)
+            completion_updates['results'] = result_artifacts
+            completed_task_payload = {**current_task, **completion_updates}
+            _write_structured_results(
+                result_artifacts=result_artifacts,
+                task_payload=completed_task_payload,
+                normalized_path=normalized_path,
+                analysis_payload=analysis_payload,
+                mt3_result=mt3_result,
+                stem_tracks=stem_tracks,
+            )
+            _update_task(task_file, completion_updates)
             _record_task_progress(task_file, 100, 'Task completed')
             log.info('Task %s done: bpm=%s key=%s', task_id, full_mix_analysis['bpm'], full_mix_analysis['key'])
         except Exception as exc:

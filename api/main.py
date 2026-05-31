@@ -329,6 +329,21 @@ def _task_artifacts(task: dict) -> dict[str, Path]:
                     continue
                 artifacts[f'stem_{stem_name}_midi'] = resolved
 
+    structured_results = task.get('results')
+    if isinstance(structured_results, dict):
+        structured_files = {
+            'results_task_json': structured_results.get('task_json'),
+            'results_analysis_json': structured_results.get('analysis_json'),
+            'results_mt3_json': structured_results.get('mt3_json'),
+            'results_artifacts_json': structured_results.get('artifacts_json'),
+        }
+        for artifact_name, artifact_path in structured_files.items():
+            if not isinstance(artifact_path, str) or not artifact_path:
+                continue
+            resolved = _resolve_data_path(artifact_path)
+            if resolved is not None:
+                artifacts[artifact_name] = resolved
+
     return artifacts
 
 
@@ -378,6 +393,21 @@ def get_mt3_notes(task_id: str, track_name: str):
         return json.loads(resolved.read_text())
     except (OSError, json.JSONDecodeError):
         raise HTTPException(status_code=500, detail='MT3 note metadata is unreadable')
+
+
+@app.get('/tasks/{task_id}/chords')
+def get_task_chords(task_id: str):
+    """Return the chord detection results for a completed task.
+
+    The response mirrors the ``chords`` field of the task JSON and includes
+    ``segments`` (each with ``symbol``, ``root``, ``quality``, ``confidence``,
+    ``start_seconds``, ``end_seconds``) and a flat ``progression`` list.
+    """
+    task = _load_task(task_id)
+    chords = task.get('chords')
+    if not isinstance(chords, dict):
+        raise HTTPException(status_code=404, detail='Chord data not available for this task')
+    return chords
 
 
 # ---------------------------------------------------------------------------
