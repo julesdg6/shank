@@ -190,9 +190,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-31T18:42:32Z
-- Latest commit: `c191991`
-- Commit message: Merge pull request #97 from julesdg6/copilot/add-structured-result-artifact-model  Add deterministic per-task structured result artifacts and expose them via task artifact API
+- Last automated update: 2026-05-31T18:45:17Z
+- Latest commit: `965afaf`
+- Commit message: Merge pull request #96 from julesdg6/copilot/replace-mt3-stub-with-basic-pitch  Replace MT3 stub with configurable transcription backend (Basic Pitch first)
 <!-- readme-update:end -->
 
 ## 🎸 Chord Detection
