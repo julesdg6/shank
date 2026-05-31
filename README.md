@@ -157,9 +157,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-22T13:13:29Z
-- Latest commit: `9f3437d`
-- Commit message: Merge pull request #79 from julesdg6/copilot/fix-ace-step-stem-creation  Harden ACE-Step stem extraction against response shape mismatches
+- Last automated update: 2026-05-31T18:28:46Z
+- Latest commit: `5627ac6`
+- Commit message: Merge pull request #83 from julesdg6/copilot/add-stem-separation-tools  feat: add python-audio-separator as default stem separation backend
 <!-- readme-update:end -->
 
 ## 🎛 Stem Separation (python-audio-separator)
