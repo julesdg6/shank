@@ -145,9 +145,6 @@ def test_transcribe_default_output_dir_uses_data_dir(tmp_path, monkeypatch):
     assert Path(result['output_dir']) == expected
     assert Path(result['midi_path']).parent == expected
 
-    # Reload module to restore original DATA_DIR for subsequent tests
-    importlib.reload(mt3_transcribe)
-
 
 def test_transcribe_uses_configured_mt3_output_path(tmp_path, monkeypatch):
     """MT3 output path overrides should be shared with the standalone wrapper."""
