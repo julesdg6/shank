@@ -24,6 +24,7 @@ services:
       - MT3_FAIL_TASK_ON_ERROR=${MT3_FAIL_TASK_ON_ERROR:-false}
       - MT3_CHECKPOINT_ROOT=${MT3_CHECKPOINT_ROOT:-/srv/shank/models/mt3/checkpoints}
       - MT3_CACHE_DIR=${MT3_CACHE_DIR:-/srv/shank/cache/mt3}
+      - MT3_OUTPUT_PATH=${MT3_OUTPUT_PATH:-/srv/shank/data/mt3}
     volumes:
       - ./data:/srv/shank/data
       - ./models/separator:/srv/shank/models/separator

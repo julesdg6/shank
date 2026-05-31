@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 import urllib.request
 import uuid
@@ -17,6 +18,12 @@ from urllib.parse import urljoin, urlparse
 from analyze import analyze_audio
 from downloader import download_youtube
 from mt3_client import transcribe_with_service
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
+
+from mt3_config import DEFAULT_MT3_MODEL, DEFAULT_MT3_SERVICE_URL, DEFAULT_MT3_TIMEOUT, get_mt3_output_path
 
 logging.basicConfig(
     level=logging.INFO,
@@ -50,9 +57,9 @@ AUDIO_SEPARATOR_MODEL = os.getenv('AUDIO_SEPARATOR_MODEL', 'htdemucs_ft.yaml').s
 AUDIO_SEPARATOR_MODEL_DIR = os.getenv('AUDIO_SEPARATOR_MODEL_DIR', '/srv/shank/models/separator').strip()
 AUDIO_SEPARATOR_DEVICE = os.getenv('AUDIO_SEPARATOR_DEVICE', 'cpu').strip().lower() or 'cpu'
 MT3_ENABLED = os.getenv('MT3_ENABLED', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
-MT3_SERVICE_URL = os.getenv('MT3_SERVICE_URL', '').strip().rstrip('/')
-MT3_MODEL = os.getenv('MT3_MODEL', 'multi_instrument').strip() or 'multi_instrument'
-MT3_TIMEOUT = int(os.getenv('MT3_TIMEOUT', '1800'))
+MT3_SERVICE_URL = os.getenv('MT3_SERVICE_URL', DEFAULT_MT3_SERVICE_URL).strip().rstrip('/')
+MT3_MODEL = os.getenv('MT3_MODEL', DEFAULT_MT3_MODEL).strip() or DEFAULT_MT3_MODEL
+MT3_TIMEOUT = int(os.getenv('MT3_TIMEOUT', str(DEFAULT_MT3_TIMEOUT)))
 MT3_TRANSCRIBE_STEMS = os.getenv('MT3_TRANSCRIBE_STEMS', 'true').strip().lower() in ('1', 'true', 'yes', 'on')
 MT3_FAIL_TASK_ON_ERROR = os.getenv('MT3_FAIL_TASK_ON_ERROR', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
 
@@ -60,7 +67,7 @@ MT3_FAIL_TASK_ON_ERROR = os.getenv('MT3_FAIL_TASK_ON_ERROR', 'false').strip().lo
 WAV_SAMPLE_RATE = '44100'
 WAV_CHANNELS = '2'
 WAV_CODEC = 'pcm_s16le'
-MT3_OUTPUTS_DIR = DATA_DIR / 'mt3'
+MT3_OUTPUTS_DIR = get_mt3_output_path(DATA_DIR)
 STEMS_CACHE_DIR = DATA_DIR / 'stems'
 
 

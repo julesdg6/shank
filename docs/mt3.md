@@ -59,6 +59,7 @@ All variables can be set in `.env` or passed directly in `docker-compose.yml`.
 | `MT3_FAIL_TASK_ON_ERROR` | `false` | Mark the whole task failed on MT3 error |
 | `MT3_CHECKPOINT_ROOT` | `/srv/shank/models/mt3/checkpoints` | Container path for MT3 model checkpoints (volume-mounted read-only) |
 | `MT3_CACHE_DIR` | `/srv/shank/cache/mt3` | Container path for MT3 compiled/runtime cache (volume-mounted) |
+| `MT3_OUTPUT_PATH` | `/srv/shank/data/mt3` | Persisted path for generated MIDI and note JSON artifacts |
 | `MT3_DEVICE` | `auto` | Device hint: `auto`, `cpu`, or `gpu` |
 
 The corresponding volume mounts in `docker-compose.yml`:
@@ -69,6 +70,8 @@ volumes:
   - ./models/mt3/checkpoints:/srv/shank/models/mt3/checkpoints:ro
   - ./cache/mt3:/srv/shank/cache/mt3
 ```
+
+`MT3_OUTPUT_PATH` defaults to `/srv/shank/data/mt3`, so MT3 outputs are persisted by the existing `./data:/srv/shank/data` volume mount. The shared defaults used by runtime code and tests live in `mt3_config.py`.
 
 ---
 
@@ -112,7 +115,7 @@ Leave `MT3_ENABLED=false` to keep transcription disabled while still using the s
 
 - Full-mix transcription always runs first.
 - Stem transcription is best-effort: if a stem file is not accessible locally, that stem is skipped and a warning is logged.
-- MIDI outputs are stored under `DATA_DIR/mt3/<task_id>/`.
+- MIDI outputs are stored under `MT3_OUTPUT_PATH/<task_id>/` (defaults to `DATA_DIR/mt3/<task_id>/`).
 
 ### Choosing a model
 
