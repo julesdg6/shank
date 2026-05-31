@@ -186,9 +186,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-31T18:29:42Z
-- Latest commit: `62d14b6`
-- Commit message: Merge pull request #87 from julesdg6/copilot/add-advanced-musical-analysis-pipeline  Add optional advanced beat/downbeat/loudness analysis outputs to worker pipeline
+- Last automated update: 2026-05-31T18:40:03Z
+- Latest commit: `2eea4ee`
+- Commit message: Merge pull request #95 from julesdg6/copilot/add-chord-detection-pipeline  Add chord detection pipeline with CHORD_BACKEND selection (librosa/madmom/disabled)
 <!-- readme-update:end -->
 
 ## 🎸 Chord Detection
