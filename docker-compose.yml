@@ -18,6 +18,8 @@ services:
       - MT3_ENABLED=${MT3_ENABLED:-false}
       - MT3_SERVICE_URL=${MT3_SERVICE_URL:-http://127.0.0.1:8090}
       - MT3_MODEL=${MT3_MODEL:-multi_instrument}
+      - TRANSCRIPTION_BACKEND=${TRANSCRIPTION_BACKEND:-basic_pitch}
+      - MODEL_CACHE_DIR=${MODEL_CACHE_DIR:-/srv/shank/models/transcription}
       - MT3_DEVICE=${MT3_DEVICE:-auto}
       - MT3_TIMEOUT=${MT3_TIMEOUT:-1800}
       - MT3_TRANSCRIBE_STEMS=${MT3_TRANSCRIBE_STEMS:-true}
@@ -27,6 +29,7 @@ services:
     volumes:
       - ./data:/srv/shank/data
       - ./models/separator:/srv/shank/models/separator
+      - ./models/transcription:/srv/shank/models/transcription
       - ./cache/mt3:/srv/shank/cache/mt3
       - ./models/mt3/checkpoints:/srv/shank/models/mt3/checkpoints:ro
     # Optional NVIDIA GPU runtime example:

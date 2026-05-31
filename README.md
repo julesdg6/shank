@@ -14,7 +14,7 @@ To provide users with an automated pipeline that transforms raw audio/URLs into 
     - **Musical Key**: Krumhansl-Kessler key detection (e.g. `A minor`, `C major`).
     - **Chord Progressions**: Segment-level chord summaries.
     - **Loudness (LUFS)**: Optional `pyloudnorm` integrated loudness with fallback estimate.
-    - **Melody to MIDI**: *(planned)*
+    - **Melody to MIDI**: Optional transcription backend (`basic_pitch`, with `mt3`/`omnizart` placeholders)
     - **Song Structure**: Detection of intro, verse, chorus, etc. *(planned)*
 - **Built-in Stem Separation**: [python-audio-separator](https://github.com/nomadkaraoke/python-audio-separator) separates vocals, drums, bass, and other instruments (4-stem or 6-stem) — no external service required. Optional **ACE-Step** integration for comparison.
 - **Optional MT3 Transcription**: Worker can call a dedicated `shank-mt3` service to generate MIDI + note metadata from normalized mix and stems.
@@ -141,6 +141,8 @@ Environment variables (set in `.env` or `docker-compose.yml`):
 | `MT3_ENABLED` | `false` | Enable MT3 transcription in worker |
 | `MT3_SERVICE_URL` | `http://shank-mt3:8090` | Base URL for the optional MT3 FastAPI service |
 | `MT3_MODEL` | `multi_instrument` | Requested model identifier to send to MT3 service |
+| `TRANSCRIPTION_BACKEND` | `basic_pitch` | Transcription backend in the service: `basic_pitch`, `mt3`, `omnizart`, `disabled` |
+| `MODEL_CACHE_DIR` | `/srv/shank/models/transcription` | Optional cache/model directory for transcription backends |
 | `MT3_TIMEOUT` | `1800` | MT3 HTTP timeout in seconds |
 | `MT3_TRANSCRIBE_STEMS` | `true` | Also transcribe separated stems when present |
 | `MT3_FAIL_TASK_ON_ERROR` | `false` | If true, MT3 failure marks task as failed |
@@ -190,6 +192,25 @@ This project is for research and personal use. Ensure you have the rights to any
 <!-- readme-update:end -->
 
 ## 🎛 Stem Separation (python-audio-separator)
+
+## 🎹 Transcription backend (Basic Pitch)
+
+The transcription service now supports backend selection with `TRANSCRIPTION_BACKEND`.
+
+```dotenv
+TRANSCRIPTION_BACKEND=basic_pitch   # basic_pitch | mt3 | omnizart | disabled
+MODEL_CACHE_DIR=/srv/shank/models/transcription
+```
+
+- `basic_pitch`: real audio-to-MIDI transcription (requires `basic-pitch` dependency)
+- `disabled`: cleanly turns transcription off
+- empty-note outputs are returned as failed transcription results (not silent success)
+
+Enable Basic Pitch in Docker builds with:
+
+```bash
+docker build --build-arg INSTALL_BASIC_PITCH=true -t shank .
+```
 
 SHANK bundles [python-audio-separator](https://github.com/nomadkaraoke/python-audio-separator) as the default stem separation backend. No external service is required — it runs entirely inside the container.
 

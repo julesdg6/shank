@@ -102,10 +102,16 @@ def transcribe_with_service(
     if not isinstance(payload, dict):
         raise RuntimeError('MT3 service returned an invalid response payload')
 
+    status = payload.get('status')
+    if isinstance(status, str) and status.lower() in ('failed', 'error', 'low_confidence'):
+        error_message = payload.get('error') or f'MT3 service returned status={status}'
+        raise RuntimeError(str(error_message))
+
     safe_source = _safe_name(source)
     result: dict[str, Any] = {
         'source': source,
         'model': payload.get('model') or model,
+        'backend': payload.get('backend'),
     }
 
     midi_bytes = _decode_midi_bytes(payload)
@@ -125,6 +131,7 @@ def transcribe_with_service(
         notes_file.write_text(json.dumps(notes, indent=2))
         result['notes_path'] = str(notes_file)
         if isinstance(notes, list):
+            result['notes'] = notes
             stats = _note_stats(notes)
             result['note_count'] = stats['note_count']
             result['pitch_range'] = stats['pitch_range']
