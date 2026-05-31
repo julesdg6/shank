@@ -1,7 +1,9 @@
 """SHANK worker loop – polls for pending tasks and processes them."""
+import importlib.util
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -37,10 +39,16 @@ ACE_STEP_STEMS = tuple(
 ACE_STEP_POLL_INTERVAL = float(os.getenv('ACE_STEP_POLL_INTERVAL', '2'))
 ACE_STEP_TIMEOUT = int(os.getenv('ACE_STEP_TIMEOUT', '300'))
 ACE_STEP_MAX_DOWNLOAD_BYTES = int(os.getenv('ACE_STEP_MAX_DOWNLOAD_BYTES', str(100 * 1024 * 1024)))
-# Stem backend selection: 'auto' (default), 'acestep', 'demucs', or 'none'
+# Stem backend selection: 'auto' (default), 'audio_separator', 'acestep', 'demucs', or 'none'
 STEM_BACKEND = os.getenv('STEM_BACKEND', 'auto').strip().lower()
 DEMUCS_MODEL = os.getenv('DEMUCS_MODEL', 'htdemucs').strip() or 'htdemucs'
 DEMUCS_DEVICE = os.getenv('DEMUCS_DEVICE', 'cpu').strip() or 'cpu'
+# python-audio-separator settings (https://github.com/nomadkaraoke/python-audio-separator)
+# Default model: htdemucs_ft.yaml (4-stem: vocals, drums, bass, other)
+# For 6-stem separation (adds guitar + piano) use: htdemucs_6s.yaml
+AUDIO_SEPARATOR_MODEL = os.getenv('AUDIO_SEPARATOR_MODEL', 'htdemucs_ft.yaml').strip() or 'htdemucs_ft.yaml'
+AUDIO_SEPARATOR_MODEL_DIR = os.getenv('AUDIO_SEPARATOR_MODEL_DIR', '/srv/shank/models/separator').strip()
+AUDIO_SEPARATOR_DEVICE = os.getenv('AUDIO_SEPARATOR_DEVICE', 'cpu').strip().lower() or 'cpu'
 MT3_ENABLED = os.getenv('MT3_ENABLED', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
 MT3_SERVICE_URL = os.getenv('MT3_SERVICE_URL', '').strip().rstrip('/')
 MT3_MODEL = os.getenv('MT3_MODEL', 'multi_instrument').strip() or 'multi_instrument'
@@ -309,6 +317,70 @@ def separate_stems_with_ace_step(src_audio_path: str) -> dict:
     raise RuntimeError('Ace-step stem separation timed out')
 
 
+def _is_audio_separator_available() -> bool:
+    """Return True if the ``audio_separator`` package is importable."""
+    return importlib.util.find_spec('audio_separator') is not None
+
+
+def _parse_audio_separator_stem_name(filename: str) -> str:
+    """Extract a normalised stem name from an audio-separator output filename.
+
+    audio-separator names output files like::
+
+        song_(Vocals)_htdemucs_ft.wav  →  vocals
+        song_(Drums)_htdemucs_ft.wav   →  drums
+        song_(Bass)_htdemucs_ft.wav    →  bass
+        song_(Other)_htdemucs_ft.wav   →  other
+        song_(Guitar)_htdemucs_ft.wav  →  guitar  (6-stem model)
+        song_(Piano)_htdemucs_ft.wav   →  piano   (6-stem model)
+
+    Falls back to the bare filename stem (without extension) when no
+    parenthesised label is found.
+    """
+    m = re.search(r'\(([^)]+)\)', filename)
+    if m:
+        return m.group(1).lower()
+    return Path(filename).stem.lower()
+
+
+def separate_stems_with_audio_separator(src_audio_path: str, task_id: str) -> dict:
+    """Run python-audio-separator stem separation and return ``{'tracks': dict[str, str]}``.
+
+    Output stems are stored under ``DATA_DIR/stems/<task_id>/``.
+    The model is downloaded automatically on first use if not already cached in
+    ``AUDIO_SEPARATOR_MODEL_DIR``.
+
+    Raises ``RuntimeError`` if separation fails or produces no output stems.
+    """
+    from audio_separator.separator import Separator  # noqa: PLC0415 – lazy import
+
+    out_dir = STEMS_CACHE_DIR / task_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    use_cpu = AUDIO_SEPARATOR_DEVICE != 'cuda'
+    separator = Separator(
+        model_file_dir=AUDIO_SEPARATOR_MODEL_DIR,
+        output_dir=str(out_dir),
+        output_format='wav',
+        use_cpu=use_cpu,
+    )
+    separator.load_model(model_filename=AUDIO_SEPARATOR_MODEL)
+    output_files = separator.separate(src_audio_path)
+
+    if not output_files:
+        raise RuntimeError(f'audio-separator produced no output stems for {src_audio_path}')
+
+    tracks: dict[str, str] = {}
+    for file_path in output_files:
+        stem_name = _parse_audio_separator_stem_name(Path(file_path).name)
+        tracks[stem_name] = str(file_path)
+
+    if not tracks:
+        raise RuntimeError(f'audio-separator produced no usable tracks for {src_audio_path}')
+
+    return {'tracks': tracks}
+
+
 def _is_demucs_available() -> bool:
     """Return True if the ``demucs`` command-line tool is found in PATH."""
     return shutil.which('demucs') is not None
@@ -559,6 +631,24 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                 })
                 continue
 
+        elif effective_backend == 'audio_separator':
+            # Strict audio-separator mode: fail the task if unavailable or separation fails.
+            try:
+                stem_data = separate_stems_with_audio_separator(normalized_path, task_id)
+                task_updates = {'stem_backend': 'audio_separator'}
+                if stem_data.get('tracks'):
+                    stem_tracks = stem_data['tracks']
+                    task_updates['stems'] = stem_tracks
+                _update_task(task_file, task_updates)
+            except Exception as exc:
+                log.exception('Task %s audio-separator stem separation failed: %s', task_id, exc)
+                _update_task(task_file, {
+                    'status': 'failed',
+                    'error': str(exc),
+                    'completed_at': datetime.now(timezone.utc).isoformat(),
+                })
+                continue
+
         elif effective_backend == 'demucs':
             # Strict Demucs mode: fail the task if Demucs is unavailable or fails.
             try:
@@ -578,7 +668,7 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                 continue
 
         elif effective_backend == 'auto':
-            # Auto mode: try Ace-Step first (if configured), then fall back to Demucs.
+            # Auto mode: try Ace-Step first (if configured), then audio-separator, then Demucs.
             # Neither failure is fatal – the task continues without stems.
             ace_step_attempted = False
             if ACE_STEP_API_URL:
@@ -595,7 +685,26 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                     _update_task(task_file, task_updates)
                 except Exception as exc:
                     log.warning(
-                        'Task %s Ace-Step stem separation failed, trying Demucs fallback: %s',
+                        'Task %s Ace-Step stem separation failed, trying audio-separator fallback: %s',
+                        task_id, exc,
+                    )
+
+            if stem_tracks is None and _is_audio_separator_available():
+                try:
+                    stem_data = separate_stems_with_audio_separator(normalized_path, task_id)
+                    task_updates = {'stem_backend': 'audio_separator'}
+                    if stem_data.get('tracks'):
+                        stem_tracks = stem_data['tracks']
+                        task_updates['stems'] = stem_tracks
+                    _update_task(task_file, task_updates)
+                    if ace_step_attempted:
+                        log.info(
+                            'Task %s: audio-separator fallback succeeded after Ace-Step failure',
+                            task_id,
+                        )
+                except Exception as exc:
+                    log.warning(
+                        'Task %s audio-separator fallback failed, trying Demucs: %s',
                         task_id, exc,
                     )
 
@@ -607,8 +716,7 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                         stem_tracks = stem_data['tracks']
                         task_updates['stems'] = stem_tracks
                     _update_task(task_file, task_updates)
-                    if ace_step_attempted:
-                        log.info('Task %s: Demucs fallback succeeded after Ace-Step failure', task_id)
+                    log.info('Task %s: Demucs fallback succeeded', task_id)
                 except Exception as exc:
                     log.warning(
                         'Task %s Demucs fallback also failed, continuing without stems: %s',
@@ -616,7 +724,7 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                     )
             elif stem_tracks is None and ace_step_attempted:
                 log.warning(
-                    'Task %s: Ace-Step failed and Demucs is not available; continuing without stems',
+                    'Task %s: all stem backends failed or unavailable; continuing without stems',
                     task_id,
                 )
 

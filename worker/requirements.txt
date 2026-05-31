@@ -3,3 +3,4 @@ numpy
 soundfile
 yt-dlp
 music21
+audio-separator[cpu]
