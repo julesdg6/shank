@@ -67,6 +67,8 @@ def test_pending_url_task_is_downloaded_and_analyzed(data_dir):
     assert task['duration_seconds'] == 180.2
     assert 'normalized_path' in task
     assert 'completed_at' in task
+    assert task['progress_percent'] == 100
+    assert any(entry.get('message') == 'Task completed' for entry in task.get('logs', []))
 
 
 def test_no_tasks_returns_zero(data_dir):
@@ -228,6 +230,8 @@ def test_failed_download_marks_task_failed(data_dir):
     assert task['status'] == 'failed'
     assert 'boom' in task['error']
     assert 'completed_at' in task
+    assert task['progress_percent'] == 100
+    assert any('Download failed:' in entry.get('message', '') for entry in task.get('logs', []))
 
 
 def test_task_status_set_to_processing_before_download(data_dir):

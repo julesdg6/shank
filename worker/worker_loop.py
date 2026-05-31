@@ -70,6 +70,7 @@ WAV_CHANNELS = '2'
 WAV_CODEC = 'pcm_s16le'
 MT3_OUTPUTS_DIR = get_mt3_output_path(DATA_DIR)
 STEMS_CACHE_DIR = DATA_DIR / 'stems'
+MAX_TASK_LOGS = 50
 RESULTS_DIR = DATA_DIR / 'results'
 
 
@@ -98,6 +99,24 @@ def _write_task(task_file: Path, task: dict) -> None:
 def _update_task(task_file: Path, updates: dict) -> None:
     task = _read_task(task_file) or {}
     task.update(updates)
+    _write_task(task_file, task)
+
+
+def _record_task_progress(task_file: Path, progress_percent: int, message: str | None = None) -> None:
+    task = _read_task(task_file) or {}
+    clamped_progress = max(0, min(100, int(progress_percent)))
+    task['progress_percent'] = clamped_progress
+    if message:
+        logs = task.get('logs')
+        if not isinstance(logs, list):
+            logs = []
+        last_message = logs[-1].get('message') if logs and isinstance(logs[-1], dict) else None
+        if not logs or last_message != message:
+            logs.append({
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'message': message,
+            })
+        task['logs'] = logs[-MAX_TASK_LOGS:]
     _write_task(task_file, task)
 
 
@@ -658,10 +677,13 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                 'status': 'processing',
                 'started_at': datetime.now(timezone.utc).isoformat(),
             })
+            _record_task_progress(task_file, 5, 'Task started')
+            _record_task_progress(task_file, 12, 'Downloading source audio')
 
             try:
                 downloaded_path = download_youtube(url, UPLOADS_DIR, task_id)
                 _update_task(task_file, {'file_path': str(downloaded_path)})
+                _record_task_progress(task_file, 25, 'Download complete')
                 log.info('Task %s downloaded → %s', task_id, downloaded_path)
             except Exception as exc:
                 log.exception('Task %s download failed: %s', task_id, exc)
@@ -670,6 +692,7 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                     'error': str(exc),
                     'completed_at': datetime.now(timezone.utc).isoformat(),
                 })
+                _record_task_progress(task_file, 100, f'Download failed: {str(exc)}')
                 continue
 
             # Re-read so we have the latest file_path written above.
@@ -687,6 +710,7 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                 'status': 'processing',
                 'started_at': datetime.now(timezone.utc).isoformat(),
             })
+            _record_task_progress(task_file, 5, 'Task started')
             task = _read_task(task_file) or task
 
         else:
@@ -698,7 +722,9 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
         normalized_path = str(NORMALIZED_DIR / f'{task_id}.wav')
 
         try:
+            _record_task_progress(task_file, 40, 'Normalizing audio')
             normalize_audio(input_path, normalized_path)
+            _record_task_progress(task_file, 55, 'Audio normalized')
             log.info('Task %s normalized → %s', task_id, normalized_path)
         except Exception as exc:
             log.exception('Task %s normalization failed: %s', task_id, exc)
@@ -707,10 +733,12 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                 'error': str(exc),
                 'completed_at': datetime.now(timezone.utc).isoformat(),
             })
+            _record_task_progress(task_file, 100, f'Normalization failed: {str(exc)}')
             continue
 
         stem_tracks: dict[str, str] | None = None
         effective_backend = STEM_BACKEND
+        _record_task_progress(task_file, 65, 'Separating stems')
 
         if effective_backend == 'acestep':
             # Strict Ace-Step mode: fail the task if Ace-Step is unavailable or fails.
@@ -720,6 +748,7 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                     'error': 'STEM_BACKEND=acestep but ACE_STEP_API_URL is not configured',
                     'completed_at': datetime.now(timezone.utc).isoformat(),
                 })
+                _record_task_progress(task_file, 100, 'Stem separation failed: Ace-Step URL is not configured')
                 continue
             try:
                 stem_data = separate_stems_with_ace_step(normalized_path)
@@ -738,6 +767,7 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                     'error': str(exc),
                     'completed_at': datetime.now(timezone.utc).isoformat(),
                 })
+                _record_task_progress(task_file, 100, f'Stem separation failed: {str(exc)}')
                 continue
 
         elif effective_backend == 'audio_separator':
@@ -756,6 +786,7 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                     'error': str(exc),
                     'completed_at': datetime.now(timezone.utc).isoformat(),
                 })
+                _record_task_progress(task_file, 100, f'Stem separation failed: {str(exc)}')
                 continue
 
         elif effective_backend == 'demucs':
@@ -774,6 +805,7 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                     'error': str(exc),
                     'completed_at': datetime.now(timezone.utc).isoformat(),
                 })
+                _record_task_progress(task_file, 100, f'Stem separation failed: {str(exc)}')
                 continue
 
         elif effective_backend == 'auto':
@@ -854,6 +886,7 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
 
         # effective_backend == 'none' (or any unrecognized value): skip stem separation.
 
+        _record_task_progress(task_file, 78, 'Transcribing MIDI')
         mt3_result = run_mt3_transcription(task_id, normalized_path, stems=stem_tracks)
         _update_task(task_file, {
             'mt3': mt3_result,
@@ -867,9 +900,11 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                 'normalized_path': normalized_path,
                 'completed_at': datetime.now(timezone.utc).isoformat(),
             })
+            _record_task_progress(task_file, 100, f'MIDI transcription failed: {error_msg}')
             continue
 
         try:
+            _record_task_progress(task_file, 90, 'Running audio analysis')
             full_mix_analysis = analyze_audio(normalized_path)
             stem_analysis: dict[str, Any] = {}
             analysis_warnings: list[str] = []
@@ -910,6 +945,7 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                 stem_tracks=stem_tracks,
             )
             _update_task(task_file, completion_updates)
+            _record_task_progress(task_file, 100, 'Task completed')
             log.info('Task %s done: bpm=%s key=%s', task_id, full_mix_analysis['bpm'], full_mix_analysis['key'])
         except Exception as exc:
             log.exception('Task %s analysis failed: %s', task_id, exc)
@@ -918,6 +954,7 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                 'error': str(exc),
                 'completed_at': datetime.now(timezone.utc).isoformat(),
             })
+            _record_task_progress(task_file, 100, f'Analysis failed: {str(exc)}')
 
     return picked_up
 

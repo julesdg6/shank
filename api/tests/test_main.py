@@ -43,6 +43,8 @@ def test_root_serves_dashboard_html_for_browser_requests(client):
     assert response.headers['content-type'].startswith('text/html')
     assert 'SHANK — AI Song Analyzer' in response.text
     assert 'Upload Audio File' in response.text
+    assert 'Spectrogram Preview' in response.text
+    assert 'MIDI Piano Roll' in response.text
 
 
 def test_root_keeps_json_for_non_html_accept_headers(client):
