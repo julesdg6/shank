@@ -62,6 +62,7 @@ WAV_CHANNELS = '2'
 WAV_CODEC = 'pcm_s16le'
 MT3_OUTPUTS_DIR = DATA_DIR / 'mt3'
 STEMS_CACHE_DIR = DATA_DIR / 'stems'
+MAX_TASK_LOGS = 50
 
 
 def _ensure_dirs() -> None:
@@ -105,7 +106,7 @@ def _record_task_progress(task_file: Path, progress_percent: int, message: str |
                 'timestamp': datetime.now(timezone.utc).isoformat(),
                 'message': message,
             })
-        task['logs'] = logs[-50:]
+        task['logs'] = logs[-MAX_TASK_LOGS:]
     _write_task(task_file, task)
 
 

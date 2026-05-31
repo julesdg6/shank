@@ -598,6 +598,7 @@
   // ── Config ──────────────────────────────────────────────────────────────
   const API = ''; // same origin; API served from same host
   const TASK_ID_PREFIX_LEN = 8; // characters shown before "…" in the task table
+  const MAX_UI_TASK_LOGS = 8;
 
   // ── State ───────────────────────────────────────────────────────────────
   let tasks = JSON.parse(localStorage.getItem('shank_tasks') || '[]');
@@ -1560,7 +1561,7 @@
       const taskLogs = Array.isArray(data.logs) ? data.logs : [];
       if (taskLogs.length) {
         const formattedLogs = taskLogs
-          .slice(-8)
+          .slice(-MAX_UI_TASK_LOGS)
           .map((entry) => {
             const ts = entry && typeof entry === 'object' ? fmtDate(entry.timestamp) : '—';
             const msg = entry && typeof entry === 'object' ? (entry.message || '—') : '—';
