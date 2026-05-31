@@ -65,6 +65,7 @@ docker compose down
 | `POST` | `/tasks/melody` | Upload audio and queue a melody-focused analysis task |
 | `POST` | `/tasks/url` | Submit a YouTube URL for download and analysis |
 | `GET` | `/tasks/{task_id}` | Retrieve the status and results of a task |
+| `GET` | `/tasks/{task_id}/chords` | Return chord detection results for a completed task |
 | `GET` | `/tasks/completed` | List all completed (`done`) tasks |
 | `GET` | `/tasks/{task_id}/mt3/midi/{track_name}` | Download MT3 MIDI (`full_mix` or stem name) |
 | `GET` | `/tasks/{task_id}/mt3/notes/{track_name}` | Retrieve MT3 note metadata JSON |
@@ -127,6 +128,7 @@ Environment variables (set in `.env` or `docker-compose.yml`):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `CHORD_BACKEND` | `auto` | Chord detection backend: `auto` (librosa), `madmom`, or `disabled` |
 | `DATA_DIR` | `/srv/shank/data` | Directory for uploads, task files, and normalized audio |
 | `POLL_INTERVAL` | `10` | Worker polling interval in seconds |
 | `STEM_BACKEND` | `auto` | Stem separation backend: `auto`, `audio_separator`, `acestep`, `demucs`, or `none` |
@@ -164,7 +166,7 @@ Environment variables (set in `.env` or `docker-compose.yml`):
 - [x] Implement `librosa` based analysis (BPM/Key)
 
 ### Phase 3: Advanced Analysis & UI
-- [ ] Implement Chord progression detection
+- [x] Implement Chord progression detection
 - [ ] Implement Melody -> MIDI extraction
 - [ ] Implement Song structure/segmentation detection
 - [x] Build Web UI (Dashboard, task list, result viewing)
@@ -188,6 +190,76 @@ This project is for research and personal use. Ensure you have the rights to any
 - Latest commit: `62d14b6`
 - Commit message: Merge pull request #87 from julesdg6/copilot/add-advanced-musical-analysis-pipeline  Add optional advanced beat/downbeat/loudness analysis outputs to worker pipeline
 <!-- readme-update:end -->
+
+## 🎸 Chord Detection
+
+SHANK performs automatic chord detection on every analysed track and returns timestamped chord segments alongside BPM, key, beats, and downbeats.
+
+### Output format
+
+Chord data is available inside the task JSON as the `chords` object, and via the dedicated endpoint:
+
+```bash
+curl http://localhost:8088/tasks/<task_id>/chords
+```
+
+Example response:
+```json
+{
+  "segments": [
+    {
+      "symbol": "Am",
+      "root": "A",
+      "quality": "minor",
+      "confidence": 0.72,
+      "start_seconds": 0.0,
+      "end_seconds": 3.8
+    },
+    {
+      "symbol": "F",
+      "root": "F",
+      "quality": "major",
+      "confidence": 0.68,
+      "start_seconds": 3.8,
+      "end_seconds": 7.6
+    }
+  ],
+  "progression": ["Am", "F"]
+}
+```
+
+### Backends
+
+| `CHORD_BACKEND` | Description |
+|-----------------|-------------|
+| `auto` *(default)* | Librosa chroma-based chord estimation — no extra dependencies required |
+| `librosa` | Explicit alias for the same librosa backend |
+| `madmom` | Deep-learning chord recognition via [madmom](https://github.com/CPJKU/madmom); falls back to librosa if madmom is not installed |
+| `disabled` | Skips chord detection entirely; `chords` will contain empty `segments` and `progression` |
+
+### Enabling madmom chord recognition
+
+Install madmom in the worker container (add to `worker/requirements.txt` or your `Dockerfile`):
+
+```dockerfile
+RUN pip install --no-cache-dir madmom
+```
+
+Then set in `.env`:
+
+```dotenv
+CHORD_BACKEND=madmom
+```
+
+If madmom cannot be imported at runtime, SHANK automatically falls back to the librosa backend so the analysis still completes.
+
+### Disabling chord detection
+
+```dotenv
+CHORD_BACKEND=disabled
+```
+
+Chord detection is skipped entirely and `chords` will be `{"segments": [], "progression": []}`.
 
 ## 🎛 Stem Separation (python-audio-separator)
 

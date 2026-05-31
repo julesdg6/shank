@@ -1,7 +1,9 @@
 """Tests for worker/analyze.py – librosa-based BPM and key detection."""
 
+import builtins
 import importlib
 import json
+import sys
 import wave
 
 import librosa
@@ -168,7 +170,7 @@ def test_detect_chords_returns_structured_data(tmp_path):
 
     if result['segments']:
         first = result['segments'][0]
-        assert all(key in first for key in ['symbol', 'root', 'quality', 'start_seconds', 'end_seconds'])
+        assert all(key in first for key in ['symbol', 'root', 'quality', 'confidence', 'start_seconds', 'end_seconds'])
         assert first['quality'] in {'major', 'minor'}
         assert first['end_seconds'] >= first['start_seconds']
 
@@ -205,6 +207,80 @@ def test_detect_chords_returns_empty_for_silence(tmp_path):
     y, sr = librosa.load(str(wav), mono=True)
     result = _detect_chords(y, sr)
     assert result == {'segments': [], 'progression': []}
+
+
+def test_detect_chords_segments_include_confidence(tmp_path):
+    """Each chord segment should include a numeric confidence field between 0 and 1."""
+    wav = _write_chord_wav(tmp_path / 'c_major.wav', frequencies=(261.63, 329.63, 392.0))
+    y, sr = librosa.load(str(wav), mono=True)
+    result = _detect_chords(y, sr)
+
+    assert result['segments'], 'Expected at least one chord segment'
+    for seg in result['segments']:
+        assert 'confidence' in seg, f'Segment missing confidence key: {seg!r}'
+        assert isinstance(seg['confidence'], float)
+        assert 0.0 <= seg['confidence'] <= 1.0
+
+
+def test_analyze_audio_chord_backend_disabled(tmp_path, monkeypatch):
+    """When CHORD_BACKEND=disabled the chords result must be empty."""
+    monkeypatch.setenv('CHORD_BACKEND', 'disabled')
+    wav = _write_chord_wav(tmp_path / 'c_major.wav', frequencies=(261.63, 329.63, 392.0))
+    result = analyze_audio(str(wav))
+    assert result['chords'] == {'segments': [], 'progression': []}
+
+
+def test_analyze_audio_chord_backend_auto_returns_chords(tmp_path, monkeypatch):
+    """When CHORD_BACKEND=auto (default) chord detection runs and returns results."""
+    monkeypatch.setenv('CHORD_BACKEND', 'auto')
+    wav = _write_chord_wav(tmp_path / 'c_major.wav', frequencies=(261.63, 329.63, 392.0))
+    result = analyze_audio(str(wav))
+    chords = result['chords']
+    assert isinstance(chords, dict)
+    assert 'segments' in chords
+    assert 'progression' in chords
+    assert chords['segments'], 'Expected at least one chord segment for non-silent audio'
+
+
+def test_analyze_audio_chord_backend_madmom_falls_back_to_librosa(tmp_path, monkeypatch):
+    """When CHORD_BACKEND=madmom but madmom is unavailable, librosa fallback is used."""
+    monkeypatch.setenv('CHORD_BACKEND', 'madmom')
+    wav = _write_chord_wav(tmp_path / 'c_major.wav', frequencies=(261.63, 329.63, 392.0))
+
+    # Ensure madmom import fails so the fallback path is exercised.
+    madmom_backup = sys.modules.pop('madmom', None)
+    madmom_audio_backup = sys.modules.pop('madmom.audio', None)
+    madmom_audio_chroma_backup = sys.modules.pop('madmom.audio.chroma', None)
+    madmom_features_backup = sys.modules.pop('madmom.features', None)
+    madmom_features_chords_backup = sys.modules.pop('madmom.features.chords', None)
+    try:
+        real_import = builtins.__import__
+
+        def patched_import(name, *args, **kwargs):
+            if name.startswith('madmom'):
+                raise ImportError(f'Mocked: {name} not available')
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, '__import__', patched_import)
+
+        result = analyze_audio(str(wav))
+        chords = result['chords']
+        assert isinstance(chords, dict)
+        assert 'segments' in chords
+        assert 'progression' in chords
+        # The fallback librosa implementation should still detect a chord.
+        assert chords['segments'], 'Fallback librosa chord detection should produce results'
+    finally:
+        # Restore any madmom modules that were popped.
+        for mod_name, mod in [
+            ('madmom', madmom_backup),
+            ('madmom.audio', madmom_audio_backup),
+            ('madmom.audio.chroma', madmom_audio_chroma_backup),
+            ('madmom.features', madmom_features_backup),
+            ('madmom.features.chords', madmom_features_chords_backup),
+        ]:
+            if mod is not None:
+                sys.modules[mod_name] = mod
 
 
 # ---------------------------------------------------------------------------

@@ -602,3 +602,81 @@ def test_stem_backend_status_prefers_healthy_ace_step(client, monkeypatch):
     request = mock_urlopen.call_args.args[0]
     assert request.full_url == 'http://ace-step:8001'
     assert request.get_header('Authorization') == 'Bearer secret-token'
+
+
+# ---------------------------------------------------------------------------
+# GET /tasks/{task_id}/chords
+# ---------------------------------------------------------------------------
+
+def test_get_task_chords_returns_chord_data(client, tmp_path):
+    """GET /tasks/{task_id}/chords must return the chords dict from the task."""
+    task_id = str(uuid.uuid4())
+    chords_data = {
+        'segments': [
+            {
+                'symbol': 'Am',
+                'root': 'A',
+                'quality': 'minor',
+                'confidence': 0.72,
+                'start_seconds': 0.0,
+                'end_seconds': 3.8,
+            },
+            {
+                'symbol': 'F',
+                'root': 'F',
+                'quality': 'major',
+                'confidence': 0.68,
+                'start_seconds': 3.8,
+                'end_seconds': 7.6,
+            },
+        ],
+        'progression': ['Am', 'F'],
+    }
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'chords': chords_data,
+    }))
+
+    response = client.get(f'/tasks/{task_id}/chords')
+    assert response.status_code == 200
+    assert response.json() == chords_data
+
+
+def test_get_task_chords_returns_404_when_no_chords(client, tmp_path):
+    """GET /tasks/{task_id}/chords must return 404 when the task has no chord data."""
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'bpm': 120.0,
+    }))
+
+    response = client.get(f'/tasks/{task_id}/chords')
+    assert response.status_code == 404
+
+
+def test_get_task_chords_returns_404_for_unknown_task(client):
+    """GET /tasks/{task_id}/chords must return 404 for a nonexistent task."""
+    response = client.get(f'/tasks/{uuid.uuid4()}/chords')
+    assert response.status_code == 404
+
+
+def test_get_task_chords_returns_empty_when_disabled_backend(client, tmp_path):
+    """When chords was captured with disabled backend, the endpoint returns empty segments."""
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'chords': {'segments': [], 'progression': []},
+    }))
+
+    response = client.get(f'/tasks/{task_id}/chords')
+    assert response.status_code == 200
+    assert response.json() == {'segments': [], 'progression': []}
