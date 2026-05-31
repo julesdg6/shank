@@ -187,9 +187,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-31T18:40:03Z
-- Latest commit: `2eea4ee`
-- Commit message: Merge pull request #95 from julesdg6/copilot/add-chord-detection-pipeline  Add chord detection pipeline with CHORD_BACKEND selection (librosa/madmom/disabled)
+- Last automated update: 2026-05-31T18:41:08Z
+- Latest commit: `24cdcb4`
+- Commit message: Merge pull request #94 from julesdg6/copilot/fix-mt3-configuration-drift  Align MT3 configuration across runtime, tests, and deployment docs
 <!-- readme-update:end -->
 
 ## 🎸 Chord Detection
