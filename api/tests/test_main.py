@@ -350,6 +350,11 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
     notes_file = tmp_path / 'mt3' / task_id / 'full_mix_notes.json'
     stem_midi = tmp_path / 'mt3' / task_id / 'vocals.mid'
     stem_wav = tmp_path / 'stems' / task_id / 'vocals.wav'
+    results_dir = tmp_path / 'results' / task_id
+    results_task_json = results_dir / 'task.json'
+    results_analysis_json = results_dir / 'analysis.json'
+    results_mt3_json = results_dir / 'mt3.json'
+    results_artifacts_json = results_dir / 'artifacts.json'
 
     normalized.parent.mkdir(parents=True, exist_ok=True)
     midi_file.parent.mkdir(parents=True, exist_ok=True)
@@ -359,6 +364,11 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
     stem_midi.write_bytes(b'MThd\x00\x00\x00\x06\x00\x00\x00\x01\x00`MTrk\x00\x00\x00\x04\x00\xff/\x00')
     stem_wav.parent.mkdir(parents=True, exist_ok=True)
     stem_wav.write_bytes(b'RIFF' + b'\x00' * 36)
+    results_dir.mkdir(parents=True, exist_ok=True)
+    results_task_json.write_text(json.dumps({'status': 'done'}))
+    results_analysis_json.write_text(json.dumps({'full_mix': {'bpm': 120.0}}))
+    results_mt3_json.write_text(json.dumps({'status': 'completed'}))
+    results_artifacts_json.write_text(json.dumps({'normalized_wav': str(normalized)}))
 
     tasks_dir = tmp_path / 'tasks'
     tasks_dir.mkdir(parents=True, exist_ok=True)
@@ -377,12 +387,29 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
                 'vocals': {'midi_path': str(stem_midi)},
             },
         },
+        'results': {
+            'dir': str(results_dir),
+            'task_json': str(results_task_json),
+            'analysis_json': str(results_analysis_json),
+            'mt3_json': str(results_mt3_json),
+            'artifacts_json': str(results_artifacts_json),
+        },
     }))
 
     response = client.get(f'/tasks/{task_id}/artifacts')
     assert response.status_code == 200
     assert response.json() == {
-        'artifacts': ['midi', 'normalized_wav', 'notes_json', 'stem_vocals_midi', 'stem_vocals_wav'],
+        'artifacts': [
+            'midi',
+            'normalized_wav',
+            'notes_json',
+            'results_analysis_json',
+            'results_artifacts_json',
+            'results_mt3_json',
+            'results_task_json',
+            'stem_vocals_midi',
+            'stem_vocals_wav',
+        ],
     }
 
 
