@@ -1,6 +1,7 @@
 """Audio analysis helpers with optional advanced beat/downbeat/loudness detectors."""
 
 from functools import lru_cache
+import logging
 
 import librosa
 import numpy as np
@@ -8,8 +9,10 @@ from music21 import pitch as m21_pitch
 
 try:
     import pyloudnorm as pyln
-except Exception:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover - optional dependency
     pyln = None
+
+log = logging.getLogger(__name__)
 
 # Krumhansl-Kessler key profiles (tonic at index 0)
 _MAJOR_PROFILE = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
@@ -24,9 +27,10 @@ _CHROMA_ACTIVITY_THRESHOLD = 1e-8
 _HIGH_BEAT_CONFIDENCE = 0.9
 _LOW_BEAT_CONFIDENCE = 0.2
 _SINGLE_BEAT_CONFIDENCE = 0.4
-_KEY_MARGIN_NORMALIZER = 2.0
+_KEY_CONFIDENCE_DIVISOR = 2.0
 _TEMPO_WINDOW_BEATS = 4
 _TEMPO_CHANGE_THRESHOLD_BPM = 6.0
+_TEMPO_CHANGE_MIN_GAP_SECONDS = 1.0
 _BARS_PER_SECTION = 8
 _OUTRO_OFFSET_SECONDS = 8.0
 _SILENT_LUFS = -70.0
@@ -75,7 +79,7 @@ def _detect_key_and_confidence(y: np.ndarray, sr: int) -> tuple[str, float]:
             second_best_corr = minor_corr
 
     margin = best_corr - second_best_corr
-    key_confidence = _clamp(float(margin / _KEY_MARGIN_NORMALIZER), 0.0, 1.0)
+    key_confidence = _clamp(float(margin / _KEY_CONFIDENCE_DIVISOR), 0.0, 1.0)
     return best_key, round(key_confidence, 3)
 
 
@@ -154,7 +158,7 @@ def _librosa_beats(y: np.ndarray, sr: int) -> tuple[float, list[float], float]:
 def _madmom_beats(file_path: str) -> tuple[float | None, list[float], float] | None:
     try:
         from madmom.features.beats import DBNBeatTrackingProcessor, RNNBeatProcessor
-    except Exception:  # pragma: no cover - optional dependency
+    except ImportError:  # pragma: no cover - optional dependency
         return None
 
     try:
@@ -169,20 +173,22 @@ def _madmom_beats(file_path: str) -> tuple[float | None, list[float], float] | N
         if len(beats) > 1:
             beat_intervals = np.diff(np.array(beats))
             bpm = round(float(60.0 / np.mean(beat_intervals)), 2)
+            # Lower interval variation means steadier beat timing, so confidence increases.
             coefficient_of_variation = np.std(beat_intervals) / np.mean(beat_intervals)
             confidence = _clamp(float(1.0 / (1.0 + coefficient_of_variation)), 0.0, 1.0)
         else:
             bpm = None
             confidence = _SINGLE_BEAT_CONFIDENCE
         return bpm, beats, round(confidence, 3)
-    except Exception:  # pragma: no cover - optional dependency
+    except Exception as exc:  # pragma: no cover - optional dependency
+        log.debug('madmom beat analysis unavailable: %s', exc)
         return None
 
 
 def _beatnet_downbeats(file_path: str) -> list[float] | None:
     try:
         from BeatNet.BeatNet import BeatNet
-    except Exception:  # pragma: no cover - optional dependency
+    except ImportError:  # pragma: no cover - optional dependency
         return None
 
     try:
@@ -197,7 +203,8 @@ def _beatnet_downbeats(file_path: str) -> list[float] | None:
             if beat_index == 1:
                 downbeats.append(round(timestamp, 3))
         return downbeats or None
-    except Exception:  # pragma: no cover - optional dependency
+    except Exception as exc:  # pragma: no cover - optional dependency
+        log.debug('BeatNet downbeat analysis unavailable: %s', exc)
         return None
 
 
@@ -223,7 +230,8 @@ def _detect_tempo_changes(beats: list[float]) -> list[dict]:
         local_bpm = 60.0 / local_interval
         if abs(local_bpm - reference_bpm) >= _TEMPO_CHANGE_THRESHOLD_BPM:
             change_point = beats[index + 1]
-            if tempo_changes and abs(tempo_changes[-1]['start_seconds'] - change_point) < 1.0:
+            # Keep a minimum gap so we do not emit near-duplicate tempo change points.
+            if tempo_changes and abs(tempo_changes[-1]['start_seconds'] - change_point) < _TEMPO_CHANGE_MIN_GAP_SECONDS:
                 continue
             tempo_changes.append({
                 'start_seconds': round(change_point, 3),
@@ -239,8 +247,8 @@ def _measure_lufs(y: np.ndarray, sr: int) -> float:
         meter = pyln.Meter(sr)
         try:
             return round(float(meter.integrated_loudness(y.astype(np.float64))), 2)
-        except Exception:  # pragma: no cover - optional dependency
-            pass
+        except Exception as exc:  # pragma: no cover - optional dependency
+            log.debug('pyloudnorm loudness analysis unavailable: %s', exc)
     rms = float(np.sqrt(np.mean(np.square(y))))
     if rms <= 0.0:
         return _SILENT_LUFS
@@ -257,7 +265,8 @@ def _derive_sections(downbeats: list[float], duration_seconds: float) -> list[di
         end = downbeats[index + _BARS_PER_SECTION] if index + _BARS_PER_SECTION < len(downbeats) else duration_seconds
         section_number = (index // _BARS_PER_SECTION) + 1
         if end < start:
-            end = start
+            log.debug('Section boundary corrected: end=%s < start=%s', end, start)
+        end = max(end, start)
         sections.append({
             'start_seconds': round(float(start), 3),
             'end_seconds': round(float(end), 3),
