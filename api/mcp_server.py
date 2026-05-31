@@ -8,6 +8,9 @@ from urllib import error, request
 
 DEFAULT_API_BASE_URL = os.getenv('SHANK_API_URL', 'http://127.0.0.1:8088').rstrip('/')
 DEFAULT_TIMEOUT_SECONDS = int(os.getenv('SHANK_API_TIMEOUT', '30'))
+UPLOAD_TIMEOUT_SECONDS = int(os.getenv('SHANK_API_UPLOAD_TIMEOUT', '120'))
+DEFAULT_UPLOAD_CONTENT_TYPE = 'application/octet-stream'
+VALID_REQUEST_TYPES = {'upload', 'melody'}
 
 
 def _base_url(api_base_url: str | None = None) -> str:
@@ -24,7 +27,7 @@ def _request_json(
     headers: dict[str, str] | None = None,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> dict:
-    req_headers = {'accept': 'application/json'}
+    req_headers = {'Accept': 'application/json'}
     if headers:
         req_headers.update(headers)
     data = raw_body
@@ -32,7 +35,7 @@ def _request_json(
         raise ValueError('Only one of payload or raw_body may be provided')
     if payload is not None:
         data = json.dumps(payload).encode('utf-8')
-        req_headers['content-type'] = 'application/json'
+        req_headers['Content-Type'] = 'application/json'
     req = request.Request(
         f'{_base_url(api_base_url)}{path}',
         data=data,
@@ -56,7 +59,7 @@ def _request_json(
 
 
 def _build_multipart_upload(file_path: Path, boundary: str) -> bytes:
-    content_type = mimetypes.guess_type(file_path.name)[0] or 'application/octet-stream'
+    content_type = mimetypes.guess_type(file_path.name)[0] or DEFAULT_UPLOAD_CONTENT_TYPE
     header = (
         f'--{boundary}\r\n'
         f'Content-Disposition: form-data; name="file"; filename="{file_path.name}"\r\n'
@@ -80,6 +83,9 @@ def submit_audio_file(
     requested_type: str | None = None,
     api_base_url: str | None = None,
 ) -> dict:
+    if requested_type not in {None, 'melody'}:
+        raise ValueError("requested_type must be None or 'melody'")
+
     audio_path = Path(file_path).resolve()
     if not audio_path.is_file():
         raise FileNotFoundError(f'Audio file not found: {audio_path}')
@@ -91,10 +97,9 @@ def submit_audio_file(
         'POST',
         endpoint,
         api_base_url=api_base_url,
-        payload=None,
         raw_body=body,
-        headers={'content-type': f'multipart/form-data; boundary={boundary}'},
-        timeout=max(DEFAULT_TIMEOUT_SECONDS, 120),
+        headers={'Content-Type': f'multipart/form-data; boundary={boundary}'},
+        timeout=UPLOAD_TIMEOUT_SECONDS,
     )
 
 
@@ -117,30 +122,36 @@ def build_server(*, api_base_url: str | None = None):
 
     @mcp.tool()
     def shank_health() -> dict:
+        """Return SHANK API health and service metadata."""
         return get_health(api_base_url=api_base_url)
 
     @mcp.tool()
     def shank_submit_url(youtube_url: str) -> dict:
+        """Queue a YouTube URL task and return task_id/status."""
         return submit_url(youtube_url, api_base_url=api_base_url)
 
     @mcp.tool()
-    def shank_submit_audio(file_path: str, requested_type: str = 'upload') -> dict:
-        normalized_type = requested_type.strip().lower()
-        if normalized_type not in {'upload', 'melody'}:
+    def shank_submit_audio(file_path: str, requested_type: str | None = None) -> dict:
+        """Upload audio from a local path; pass requested_type='melody' for melody tasks."""
+        normalized_type = (requested_type or 'upload').strip().lower()
+        if normalized_type not in VALID_REQUEST_TYPES:
             raise ValueError("requested_type must be 'upload' or 'melody'")
-        actual_requested_type = 'melody' if normalized_type == 'melody' else None
+        actual_requested_type = None if normalized_type == 'upload' else normalized_type
         return submit_audio_file(file_path, requested_type=actual_requested_type, api_base_url=api_base_url)
 
     @mcp.tool()
     def shank_get_task(task_id: str) -> dict:
+        """Fetch task status/details by task_id."""
         return get_task(task_id, api_base_url=api_base_url)
 
     @mcp.tool()
     def shank_list_completed_tasks() -> dict:
+        """List completed SHANK tasks."""
         return list_completed_tasks(api_base_url=api_base_url)
 
     @mcp.tool()
     def shank_list_task_artifacts(task_id: str) -> dict:
+        """List available artifact names for a task."""
         return list_task_artifacts(task_id, api_base_url=api_base_url)
 
     return mcp

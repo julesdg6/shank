@@ -6,6 +6,14 @@ import pytest
 import api.mcp_server as mcp_server
 
 
+def _get_header_case_insensitive(headers: dict, key: str) -> str | None:
+    wanted = key.lower()
+    for actual_key, actual_value in headers.items():
+        if actual_key.lower() == wanted:
+            return actual_value
+    return None
+
+
 class _FakeResponse:
     def __init__(self, payload: dict):
         self._payload = payload
@@ -26,7 +34,7 @@ def test_request_json_posts_payload(monkeypatch):
     def fake_urlopen(req, timeout):
         captured['url'] = req.full_url
         captured['method'] = req.get_method()
-        captured['content_type'] = req.headers.get('Content-type')
+        captured['content_type'] = _get_header_case_insensitive(req.headers, 'Content-Type')
         captured['body'] = req.data
         captured['timeout'] = timeout
         return _FakeResponse({'ok': True})
@@ -56,7 +64,7 @@ def test_submit_audio_file_uploads_multipart(monkeypatch, tmp_path):
     def fake_urlopen(req, timeout):
         captured['url'] = req.full_url
         captured['method'] = req.get_method()
-        captured['content_type'] = req.headers.get('Content-type')
+        captured['content_type'] = _get_header_case_insensitive(req.headers, 'Content-Type')
         captured['body'] = req.data
         captured['timeout'] = timeout
         return _FakeResponse({'task_id': '123', 'status': 'pending'})
@@ -98,6 +106,13 @@ def test_submit_audio_file_raises_for_missing_file(tmp_path):
     missing = tmp_path / 'missing.wav'
     with pytest.raises(FileNotFoundError):
         mcp_server.submit_audio_file(str(missing))
+
+
+def test_submit_audio_file_rejects_invalid_requested_type(tmp_path):
+    wav_path = tmp_path / 'clip.wav'
+    wav_path.write_bytes(b'RIFF' + b'\x00' * 20)
+    with pytest.raises(ValueError):
+        mcp_server.submit_audio_file(str(wav_path), requested_type='upload')
 
 
 def test_request_json_rejects_payload_and_raw_body():
