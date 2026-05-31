@@ -92,15 +92,28 @@ def test_analyze_audio_returns_bpm_and_key(tmp_path):
 
     assert isinstance(result, dict)
     assert 'bpm' in result
+    assert 'bpm_confidence' in result
     assert 'key' in result
+    assert 'key_confidence' in result
+    assert 'lufs' in result
     assert 'duration_seconds' in result
+    assert 'beats' in result
+    assert 'downbeats' in result
+    assert 'sections' in result
+    assert 'cue_points' in result
     assert 'chords' in result
+    assert 'tempo_changes' in result
     assert 'waveform' in result
     assert 'frequency_histogram' in result
     assert 'spectrogram_summary' in result
     assert 'loudness_curve' in result
     assert 'energy_over_time' in result
     assert isinstance(result['chords'], dict)
+    assert isinstance(result['beats'], list)
+    assert isinstance(result['downbeats'], list)
+    assert isinstance(result['sections'], list)
+    assert isinstance(result['cue_points'], list)
+    assert isinstance(result['tempo_changes'], list)
     assert 'segments' in result['chords']
     assert 'progression' in result['chords']
 
@@ -112,6 +125,10 @@ def test_analyze_audio_bpm_is_positive(tmp_path):
 
     assert isinstance(result['bpm'], float)
     assert result['bpm'] > 0
+    assert 0.0 <= result['bpm_confidence'] <= 1.0
+    assert result['beats']
+    assert all(isinstance(ts, float) for ts in result['beats'])
+    assert all(isinstance(ts, float) for ts in result['downbeats'])
 
 
 def test_analyze_audio_key_is_valid(tmp_path):
@@ -120,6 +137,7 @@ def test_analyze_audio_key_is_valid(tmp_path):
     result = analyze_audio(str(wav))
 
     assert result['key'] in _VALID_KEYS, f"Unexpected key: {result['key']!r}"
+    assert 0.0 <= result['key_confidence'] <= 1.0
 
 
 def test_analyze_audio_duration_is_positive(tmp_path):
