@@ -9,9 +9,11 @@ To provide users with an automated pipeline that transforms raw audio/URLs into 
 - **Multi-Source Input**: Direct audio uploads (MP3, WAV, FLAC) and YouTube URLs (via `yt-dlp`).
 - **Audio Normalization**: Automatic conversion to standard 44100 Hz stereo WAV using `ffmpeg`.
 - **Musical Extraction**:
-    - **BPM & Tempo**: Precise beat tracking via `librosa`.
+    - **BPM & Tempo**: Beat tracking with confidence, beat grid, and tempo-change hints.
+    - **Downbeats**: Optional deep-learning downbeat detection (BeatNet) with automatic fallback.
     - **Musical Key**: Krumhansl-Kessler key detection (e.g. `A minor`, `C major`).
-    - **Chord Progressions**: *(planned)*
+    - **Chord Progressions**: Segment-level chord summaries.
+    - **Loudness (LUFS)**: Optional `pyloudnorm` integrated loudness with fallback estimate.
     - **Melody to MIDI**: *(planned)*
     - **Song Structure**: Detection of intro, verse, chorus, etc. *(planned)*
 - **Built-in Stem Separation**: [python-audio-separator](https://github.com/nomadkaraoke/python-audio-separator) separates vocals, drums, bass, and other instruments (4-stem or 6-stem) — no external service required. Optional **ACE-Step** integration for comparison.
@@ -104,7 +106,15 @@ A completed task response looks like:
   "source": "https://www.youtube.com/watch?v=...",
   "status": "done",
   "bpm": 113.45,
+  "bpm_confidence": 0.93,
   "key": "A minor",
+  "key_confidence": 0.88,
+  "lufs": -13.2,
+  "beats": [0.51, 1.04, 1.57],
+  "downbeats": [0.51],
+  "sections": [{"start_seconds": 0.51, "end_seconds": 245.31, "label": "section_1"}],
+  "cue_points": [{"name": "intro", "time_seconds": 0.51}],
+  "tempo_changes": [],
   "duration_seconds": 245.31,
   "created_at": "2025-01-01T00:00:00+00:00",
   "completed_at": "2025-01-01T00:01:00+00:00"
