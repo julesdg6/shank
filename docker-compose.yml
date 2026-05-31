@@ -29,6 +29,12 @@ services:
       - ./models/separator:/srv/shank/models/separator
       - ./cache/mt3:/srv/shank/cache/mt3
       - ./models/mt3/checkpoints:/srv/shank/models/mt3/checkpoints:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/openapi.json', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
     # Optional NVIDIA GPU runtime example:
     # gpus: all
     # deploy:

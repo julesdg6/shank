@@ -20,6 +20,8 @@ def test_compose_uses_single_unified_service():
     assert '- ./data:/srv/shank/data' in text
     assert '- ./cache/mt3:/srv/shank/cache/mt3' in text
     assert '- ./models/mt3/checkpoints:/srv/shank/models/mt3/checkpoints:ro' in text
+    assert 'healthcheck:' in text
+    assert "http://127.0.0.1:8080/openapi.json" in text
     assert '# Optional NVIDIA GPU runtime example:' in text
     assert '# gpus: all' in text
     assert 'capabilities: [gpu]' in text
@@ -45,6 +47,7 @@ def test_dockerfile_installs_audio_processing_tools():
 
     assert 'ffmpeg' in text
     assert 'yt-dlp' in text
+    assert 'HEALTHCHECK' in text
 
 
 def test_worker_dockerfile_installs_audio_processing_tools():

@@ -19,7 +19,6 @@ Usage (Python API)::
 import argparse
 import json
 import os
-import re
 import sys
 import uuid
 from datetime import datetime, timezone

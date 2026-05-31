@@ -56,6 +56,27 @@ Navigate to **http://localhost:8088/** in your browser to upload audio files or 
 docker compose down
 ```
 
+## 👩‍💻 Local Development Workflow
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+```
+
+Run checks locally:
+
+```bash
+ruff check .
+mypy
+python -m pytest api/tests/ -v
+python -m pytest worker/tests/ -v
+python -m pytest tests/ -v
+docker build -t shank:local .
+```
+
+`mypy` currently checks API modules (`api/main.py` and `api/mcp_server.py`). Worker modules are excluded because they rely heavily on dynamic third-party audio libraries.
+
 ## 📡 API Endpoints
 
 | Method | Path | Description |
@@ -80,6 +101,25 @@ curl -X POST http://localhost:8088/tasks/url \
 ### Example — check task status
 ```bash
 curl http://localhost:8088/tasks/<task_id>
+```
+
+### Example — OpenAPI schema
+```bash
+curl http://localhost:8088/openapi.json | python -m json.tool | head -n 30
+```
+
+```json
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "SHANK API"
+  },
+  "paths": {
+    "/tasks/upload": {},
+    "/tasks/url": {},
+    "/tasks/{task_id}": {}
+  }
+}
 ```
 
 ## 🤖 MCP Automation

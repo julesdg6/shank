@@ -802,7 +802,7 @@ def test_full_mix_result_contains_completed_at(tmp_path):
 
     assert 'completed_at' in result
     # Verify it's a valid ISO-8601 UTC timestamp reasonably close to the current time
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timezone
     ts = datetime.fromisoformat(result['completed_at'])
     assert ts.tzinfo is not None
     assert abs((ts - datetime.now(timezone.utc)).total_seconds()) < 5
