@@ -18,6 +18,7 @@ To provide users with an automated pipeline that transforms raw audio/URLs into 
 - **Optional MT3 Transcription**: Worker can call a dedicated `shank-mt3` service to generate MIDI + note metadata from normalized mix and stems.
 - **Asynchronous Workflow**: A background worker polls a filesystem task queue and processes jobs independently of the API.
 - **Web Dashboard**: A built-in UI at `/ui` to submit tasks, monitor progress, and inspect results.
+- **MCP Automation Server**: Optional MCP server exposing SHANK task operations for automation clients.
 
 ## 🛠 Technical Stack
 - **Backend**: FastAPI (Python) served by Uvicorn
@@ -78,6 +79,22 @@ curl -X POST http://localhost:8088/tasks/url \
 ```bash
 curl http://localhost:8088/tasks/<task_id>
 ```
+
+## 🤖 MCP Automation
+
+SHANK includes an MCP server entrypoint for automation workflows:
+
+```bash
+python -m api.mcp_server --api-url http://127.0.0.1:8088
+```
+
+Exposed MCP tools:
+- `shank_health`
+- `shank_submit_url`
+- `shank_submit_audio`
+- `shank_get_task`
+- `shank_list_completed_tasks`
+- `shank_list_task_artifacts`
 
 A completed task response looks like:
 ```json
