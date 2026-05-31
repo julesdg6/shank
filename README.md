@@ -139,13 +139,14 @@ Environment variables (set in `.env` or `docker-compose.yml`):
 | `DEMUCS_MODEL` | `htdemucs` | Model name passed to the `demucs` CLI (legacy backend) |
 | `DEMUCS_DEVICE` | `cpu` | Device flag passed to the `demucs` CLI (`cpu`, `cuda`, `mps`) |
 | `MT3_ENABLED` | `false` | Enable MT3 transcription in worker |
-| `MT3_SERVICE_URL` | `http://shank-mt3:8090` | Base URL for the optional MT3 FastAPI service |
+| `MT3_SERVICE_URL` | `http://127.0.0.1:8090` | Base URL for the optional MT3 FastAPI service running inside the unified `shank` container |
 | `MT3_MODEL` | `multi_instrument` | Requested model identifier to send to MT3 service |
 | `MT3_TIMEOUT` | `1800` | MT3 HTTP timeout in seconds |
 | `MT3_TRANSCRIBE_STEMS` | `true` | Also transcribe separated stems when present |
 | `MT3_FAIL_TASK_ON_ERROR` | `false` | If true, MT3 failure marks task as failed |
 | `MT3_CHECKPOINT_ROOT` | `/srv/shank/models/mt3/checkpoints` | Mount path for MT3 checkpoints in MT3 service |
 | `MT3_CACHE_DIR` | `/srv/shank/cache/mt3` | Mount path for MT3 runtime cache |
+| `MT3_OUTPUT_PATH` | `/srv/shank/data/mt3` | Persisted output directory for generated MT3 MIDI and note JSON files |
 | `MT3_DEVICE` | `auto` | MT3 device hint (`auto`, `cpu`, or `gpu`) |
 
 ## 🗺 Roadmap & Implementation Plan
@@ -345,7 +346,7 @@ Leave `MT3_ENABLED=false` to keep transcription disabled while still running the
 
 - The worker always attempts full-mix transcription first.
 - Stem transcription is attempted afterwards when both `ACE_STEP_API_URL` is set and `MT3_TRANSCRIBE_STEMS=true`.
-- MIDI outputs are stored under `DATA_DIR/mt3/<task_id>/`.
+- MIDI outputs are stored under `MT3_OUTPUT_PATH/<task_id>/` (defaults to `DATA_DIR/mt3/<task_id>/`).
 - The task JSON gains an `mt3` object with keys: `status`, `model`, `output_paths`, `full_mix`, `stems`, `warnings`, `errors`.
 - MT3 failures are **non-fatal** by default. Set `MT3_FAIL_TASK_ON_ERROR=true` to mark tasks as failed on MT3 error.
 
@@ -361,6 +362,7 @@ Leave `MT3_ENABLED=false` to keep transcription disabled while still running the
 | `MT3_FAIL_TASK_ON_ERROR` | `false` | Mark the whole task failed if MT3 errors occur |
 | `MT3_CHECKPOINT_ROOT` | `/srv/shank/models/mt3/checkpoints` | Host-mounted path for MT3 model checkpoints |
 | `MT3_CACHE_DIR` | `/srv/shank/cache/mt3` | Host-mounted path for MT3 runtime/compiled cache |
+| `MT3_OUTPUT_PATH` | `/srv/shank/data/mt3` | Persisted output path for generated MIDI and note JSON artifacts (covered by `./data:/srv/shank/data`) |
 | `MT3_DEVICE` | `auto` | Device hint: `auto`, `cpu`, or `gpu` |
 
 Example `.env` snippet:
@@ -372,9 +374,12 @@ MT3_TRANSCRIBE_STEMS=true
 MT3_FAIL_TASK_ON_ERROR=false
 MT3_CHECKPOINT_ROOT=/srv/shank/models/mt3/checkpoints
 MT3_CACHE_DIR=/srv/shank/cache/mt3
+MT3_OUTPUT_PATH=/srv/shank/data/mt3
 MT3_DEVICE=auto
 MT3_SERVICE_URL=http://127.0.0.1:8090
 ```
+
+The default MT3 paths are centralized in `mt3_config.py`, and `docker-compose.yml`, `.env.example`, and the MT3 tests are kept aligned with those defaults.
 
 ### Downloading MIDI Results
 
