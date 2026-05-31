@@ -19,6 +19,7 @@ To provide users with an automated pipeline that transforms raw audio/URLs into 
 - **Built-in Stem Separation**: [python-audio-separator](https://github.com/nomadkaraoke/python-audio-separator) separates vocals, drums, bass, and other instruments (4-stem or 6-stem) — no external service required. Optional **ACE-Step** integration for comparison.
 - **Optional MT3 Transcription**: Worker can call a dedicated `shank-mt3` service to generate MIDI + note metadata from normalized mix and stems.
 - **Asynchronous Workflow**: A background worker polls a filesystem task queue and processes jobs independently of the API.
+- **Structured Result Artifacts**: Completed tasks now write a predictable `DATA_DIR/results/<task_id>/` folder with `task.json`, `analysis.json`, `mt3.json`, and `artifacts.json`.
 - **Web Dashboard**: A built-in UI at `/ui` to submit tasks, monitor progress, and inspect results.
 - **MCP Automation Server**: Optional MCP server exposing SHANK task operations for automation clients.
 

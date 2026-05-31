@@ -128,6 +128,18 @@ def test_pending_upload_task_is_normalized(data_dir):
     assert updated['duration_seconds'] == 95.75
     assert updated['analysis']['full_mix']['frequency_histogram'] == [0.2, 0.8]
     assert updated['analysis']['stems'] == {}
+    assert 'results' in updated
+    assert Path(updated['results']['dir']).name == task['task_id']
+    assert Path(updated['results']['analysis_json']).is_file()
+    assert Path(updated['results']['task_json']).is_file()
+    assert Path(updated['results']['mt3_json']).is_file()
+    assert Path(updated['results']['artifacts_json']).is_file()
+    structured_analysis = json.loads(Path(updated['results']['analysis_json']).read_text())
+    assert structured_analysis == updated['analysis']
+    structured_task = json.loads(Path(updated['results']['task_json']).read_text())
+    assert structured_task['status'] == 'done'
+    assert structured_task['bpm'] == 128.0
+    assert structured_task['key'] == 'A minor'
     mock_norm.assert_called_once()
 
 

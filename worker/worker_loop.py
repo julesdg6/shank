@@ -62,6 +62,7 @@ WAV_CHANNELS = '2'
 WAV_CODEC = 'pcm_s16le'
 MT3_OUTPUTS_DIR = DATA_DIR / 'mt3'
 STEMS_CACHE_DIR = DATA_DIR / 'stems'
+RESULTS_DIR = DATA_DIR / 'results'
 
 
 def _ensure_dirs() -> None:
@@ -69,6 +70,7 @@ def _ensure_dirs() -> None:
     TASKS_DIR.mkdir(parents=True, exist_ok=True)
     NORMALIZED_DIR.mkdir(parents=True, exist_ok=True)
     STEMS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     if MT3_ENABLED:
         MT3_OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -89,6 +91,76 @@ def _update_task(task_file: Path, updates: dict) -> None:
     task = _read_task(task_file) or {}
     task.update(updates)
     _write_task(task_file, task)
+
+
+def _task_artifact_paths(
+    normalized_path: str,
+    stem_tracks: dict[str, str] | None,
+    mt3_result: dict[str, Any],
+) -> dict[str, Any]:
+    artifacts: dict[str, Any] = {'normalized_wav': normalized_path}
+
+    if stem_tracks:
+        artifacts['stems_wav'] = {stem_name: stem_path for stem_name, stem_path in stem_tracks.items()}
+
+    if isinstance(mt3_result, dict):
+        full_mix = mt3_result.get('full_mix')
+        if isinstance(full_mix, dict):
+            full_mix_artifacts = {
+                key: full_mix[key]
+                for key in ('midi_path', 'notes_path')
+                if isinstance(full_mix.get(key), str) and full_mix.get(key)
+            }
+            if full_mix_artifacts:
+                artifacts['mt3_full_mix'] = full_mix_artifacts
+
+        mt3_stems = mt3_result.get('stems')
+        if isinstance(mt3_stems, dict):
+            stem_artifacts: dict[str, dict[str, str]] = {}
+            for stem_name, stem_data in mt3_stems.items():
+                if not isinstance(stem_name, str) or not isinstance(stem_data, dict):
+                    continue
+                values = {
+                    key: stem_data[key]
+                    for key in ('midi_path', 'notes_path')
+                    if isinstance(stem_data.get(key), str) and stem_data.get(key)
+                }
+                if values:
+                    stem_artifacts[stem_name] = values
+            if stem_artifacts:
+                artifacts['mt3_stems'] = stem_artifacts
+
+    return artifacts
+
+
+def _write_structured_results(
+    task_id: str,
+    task_payload: dict[str, Any],
+    normalized_path: str,
+    analysis_payload: dict[str, Any],
+    mt3_result: dict[str, Any],
+    stem_tracks: dict[str, str] | None,
+) -> dict[str, str]:
+    result_dir = RESULTS_DIR / task_id
+    result_dir.mkdir(parents=True, exist_ok=True)
+
+    task_path = result_dir / 'task.json'
+    analysis_path = result_dir / 'analysis.json'
+    mt3_path = result_dir / 'mt3.json'
+    artifacts_path = result_dir / 'artifacts.json'
+
+    task_path.write_text(json.dumps(task_payload, indent=2))
+    analysis_path.write_text(json.dumps(analysis_payload, indent=2))
+    mt3_path.write_text(json.dumps(mt3_result, indent=2))
+    artifacts_path.write_text(json.dumps(_task_artifact_paths(normalized_path, stem_tracks, mt3_result), indent=2))
+
+    return {
+        'dir': str(result_dir),
+        'task_json': str(task_path),
+        'analysis_json': str(analysis_path),
+        'mt3_json': str(mt3_path),
+        'artifacts_json': str(artifacts_path),
+    }
 
 
 def normalize_audio(input_path: str, output_path: str) -> None:
@@ -776,7 +848,8 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
             if analysis_warnings:
                 analysis_payload['warnings'] = analysis_warnings
 
-            _update_task(task_file, {
+            current_task = _read_task(task_file) or task
+            completion_updates: dict[str, Any] = {
                 'status': 'done',
                 'normalized_path': normalized_path,
                 'analysis': analysis_payload,
@@ -784,7 +857,18 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                 'key': full_mix_analysis['key'],
                 **({'duration_seconds': full_mix_analysis.get('duration_seconds')} if full_mix_analysis.get('duration_seconds') is not None else {}),
                 'completed_at': datetime.now(timezone.utc).isoformat(),
-            })
+            }
+            completed_task_payload = {**current_task, **completion_updates}
+            result_artifacts = _write_structured_results(
+                task_id=task_id,
+                task_payload=completed_task_payload,
+                normalized_path=normalized_path,
+                analysis_payload=analysis_payload,
+                mt3_result=mt3_result,
+                stem_tracks=stem_tracks,
+            )
+            completion_updates['results'] = result_artifacts
+            _update_task(task_file, completion_updates)
             log.info('Task %s done: bpm=%s key=%s', task_id, full_mix_analysis['bpm'], full_mix_analysis['key'])
         except Exception as exc:
             log.exception('Task %s analysis failed: %s', task_id, exc)

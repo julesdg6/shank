@@ -329,6 +329,21 @@ def _task_artifacts(task: dict) -> dict[str, Path]:
                     continue
                 artifacts[f'stem_{stem_name}_midi'] = resolved
 
+    structured_results = task.get('results')
+    if isinstance(structured_results, dict):
+        structured_files = {
+            'results_task_json': structured_results.get('task_json'),
+            'results_analysis_json': structured_results.get('analysis_json'),
+            'results_mt3_json': structured_results.get('mt3_json'),
+            'results_artifacts_json': structured_results.get('artifacts_json'),
+        }
+        for artifact_name, artifact_path in structured_files.items():
+            if not isinstance(artifact_path, str) or not artifact_path:
+                continue
+            resolved = _resolve_data_path(artifact_path)
+            if resolved is not None:
+                artifacts[artifact_name] = resolved
+
     return artifacts
 
 
