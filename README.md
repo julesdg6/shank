@@ -174,9 +174,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-05-31T18:28:46Z
-- Latest commit: `5627ac6`
-- Commit message: Merge pull request #83 from julesdg6/copilot/add-stem-separation-tools  feat: add python-audio-separator as default stem separation backend
+- Last automated update: 2026-05-31T18:29:21Z
+- Latest commit: `0113513`
+- Commit message: Merge pull request #85 from julesdg6/copilot/implement-mcp-for-automation  Add MCP server entrypoint for SHANK automation workflows
 <!-- readme-update:end -->
 
 ## 🎛 Stem Separation (python-audio-separator)
