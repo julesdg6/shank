@@ -18,17 +18,6 @@ class BasicPitchBackend(TranscriptionBackend):
 
     def transcribe(self, audio_path: Path, model: str | None = None) -> TranscriptionResult:
         try:
-            resolved_audio = audio_path.resolve(strict=True)
-        except FileNotFoundError as exc:
-            raise InvalidAudioError(f'audio file not found: {audio_path}') from exc
-        if not resolved_audio.is_file():
-            raise InvalidAudioError(f'audio path is not a file: {resolved_audio}')
-        if resolved_audio.suffix.lower() not in {'.wav', '.mp3', '.flac', '.ogg', '.m4a'}:
-            raise InvalidAudioError(
-                f'unsupported audio extension for basic_pitch: {resolved_audio.suffix}'
-            )
-
-        try:
             from basic_pitch.inference import predict
         except ImportError as exc:
             raise BackendDependencyError(
@@ -36,7 +25,7 @@ class BasicPitchBackend(TranscriptionBackend):
             ) from exc
 
         try:
-            _model_output, midi_data, note_events = predict(str(resolved_audio))
+            _model_output, midi_data, note_events = predict(str(audio_path))
         except Exception as exc:
             raise InvalidAudioError(f'basic_pitch failed to process audio: {exc}') from exc
 
