@@ -380,6 +380,21 @@ def get_mt3_notes(task_id: str, track_name: str):
         raise HTTPException(status_code=500, detail='MT3 note metadata is unreadable')
 
 
+@app.get('/tasks/{task_id}/chords')
+def get_task_chords(task_id: str):
+    """Return the chord detection results for a completed task.
+
+    The response mirrors the ``chords`` field of the task JSON and includes
+    ``segments`` (each with ``symbol``, ``root``, ``quality``, ``confidence``,
+    ``start_seconds``, ``end_seconds``) and a flat ``progression`` list.
+    """
+    task = _load_task(task_id)
+    chords = task.get('chords')
+    if not isinstance(chords, dict):
+        raise HTTPException(status_code=404, detail='Chord data not available for this task')
+    return chords
+
+
 # ---------------------------------------------------------------------------
 # Stem backend status
 # ---------------------------------------------------------------------------
