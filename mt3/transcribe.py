@@ -110,11 +110,18 @@ def transcribe(
     warnings: list[str] = []
     notes: list = []
     midi_bytes: bytes | None = None
+    backend: str | None = None
 
     if effective_url:
         payload = _call_service(
             effective_url, wav_path, effective_task_id, effective_model, effective_timeout,
         )
+        backend_raw = payload.get('backend')
+        if isinstance(backend_raw, str) and backend_raw:
+            backend = backend_raw
+        status_raw = payload.get('status')
+        if isinstance(status_raw, str) and status_raw.lower() in ('failed', 'error', 'low_confidence'):
+            raise RuntimeError(str(payload.get('error') or f'Transcription failed with status={status_raw}'))
         effective_model = payload.get('model') or effective_model
         midi_bytes = _decode_midi(payload)
 
@@ -165,6 +172,7 @@ def transcribe(
         'duration_seconds': note_stats['duration_seconds'],
         'program_count': note_stats['program_count'],
         'model': effective_model,
+        'backend': backend,
         'task_id': effective_task_id,
         'output_dir': str(out_dir),
         'transcribed_at': datetime.now(timezone.utc).isoformat(),

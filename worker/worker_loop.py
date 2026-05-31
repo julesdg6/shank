@@ -62,6 +62,7 @@ MT3_MODEL = os.getenv('MT3_MODEL', DEFAULT_MT3_MODEL).strip() or DEFAULT_MT3_MOD
 MT3_TIMEOUT = int(os.getenv('MT3_TIMEOUT', str(DEFAULT_MT3_TIMEOUT)))
 MT3_TRANSCRIBE_STEMS = os.getenv('MT3_TRANSCRIBE_STEMS', 'true').strip().lower() in ('1', 'true', 'yes', 'on')
 MT3_FAIL_TASK_ON_ERROR = os.getenv('MT3_FAIL_TASK_ON_ERROR', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
+TRANSCRIPTION_BACKEND = os.getenv('TRANSCRIPTION_BACKEND', 'basic_pitch').strip() or 'basic_pitch'
 
 # Standard WAV output format
 WAV_SAMPLE_RATE = '44100'
@@ -526,6 +527,7 @@ def run_mt3_transcription(task_id: str, normalized_path: str, stems: dict[str, s
     """Run MT3 transcription (full mix first, then optional stems)."""
     result: dict[str, Any] = {
         'enabled': MT3_ENABLED,
+        'backend': TRANSCRIPTION_BACKEND,
         'status': 'disabled',
         'model': MT3_MODEL,
         'output_paths': [],
@@ -545,6 +547,9 @@ def run_mt3_transcription(task_id: str, normalized_path: str, stems: dict[str, s
 
     def transcribe_one(source: str, audio_path: str) -> dict[str, Any]:
         transcription = transcribe_with_mt3(audio_path, task_id, source_name=source)
+        backend_name = transcription.get('backend')
+        if isinstance(backend_name, str) and backend_name:
+            result['backend'] = backend_name
         if isinstance(transcription.get('midi_path'), str):
             result['output_paths'].append(transcription['midi_path'])
         if isinstance(transcription.get('warnings'), list):
@@ -582,6 +587,27 @@ def run_mt3_transcription(task_id: str, normalized_path: str, stems: dict[str, s
         result['error'] = '; '.join(str(e) for e in result['errors'])
 
     return result
+
+
+def _transcription_payload_from_mt3(mt3_result: dict[str, Any]) -> dict[str, Any]:
+    full_mix = mt3_result.get('full_mix')
+    notes: list[Any] = []
+    midi_file = None
+    if isinstance(full_mix, dict):
+        midi_candidate = full_mix.get('midi_path')
+        if isinstance(midi_candidate, str) and midi_candidate:
+            midi_file = midi_candidate
+        notes_candidate = full_mix.get('notes')
+        if isinstance(notes_candidate, list):
+            notes = notes_candidate
+
+    return {
+        'enabled': bool(mt3_result.get('enabled')),
+        'backend': mt3_result.get('backend') or TRANSCRIPTION_BACKEND,
+        'status': mt3_result.get('status'),
+        'midi_file': midi_file,
+        'notes': notes,
+    }
 
 
 def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
@@ -829,7 +855,10 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
         # effective_backend == 'none' (or any unrecognized value): skip stem separation.
 
         mt3_result = run_mt3_transcription(task_id, normalized_path, stems=stem_tracks)
-        _update_task(task_file, {'mt3': mt3_result})
+        _update_task(task_file, {
+            'mt3': mt3_result,
+            'transcription': _transcription_payload_from_mt3(mt3_result),
+        })
         if MT3_FAIL_TASK_ON_ERROR and mt3_result.get('status') in ('failed', 'partial'):
             error_msg = '; '.join(mt3_result.get('errors') or []) or 'MT3 transcription failed'
             _update_task(task_file, {

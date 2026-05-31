@@ -464,12 +464,17 @@ def test_pending_upload_task_records_mt3_results_when_enabled(data_dir, monkeypa
 
     fake_mt3 = {
         'enabled': True,
+        'backend': 'basic_pitch',
         'status': 'completed',
         'model': 'mt3',
         'output_paths': ['/srv/shank/data/mt3/song.mid'],
         'warnings': [],
         'errors': [],
-        'full_mix': {'midi_path': '/srv/shank/data/mt3/song.mid', 'model': 'mt3'},
+        'full_mix': {
+            'midi_path': '/srv/shank/data/mt3/song.mid',
+            'model': 'mt3',
+            'notes': [{'start': 0.0, 'end': 0.5, 'pitch': 60}],
+        },
         'stems': {},
     }
     with patch('worker_loop.normalize_audio'), \
@@ -482,6 +487,10 @@ def test_pending_upload_task_records_mt3_results_when_enabled(data_dir, monkeypa
     assert updated['status'] == 'done'
     assert updated['mt3']['status'] == 'completed'
     assert updated['mt3']['full_mix']['midi_path'].endswith('.mid')
+    assert updated['transcription']['enabled'] is True
+    assert updated['transcription']['backend'] == 'basic_pitch'
+    assert updated['transcription']['midi_file'].endswith('.mid')
+    assert len(updated['transcription']['notes']) == 1
 
 
 def test_pending_upload_task_caches_ace_step_url_stems_for_mt3(data_dir, monkeypatch):
@@ -894,6 +903,8 @@ def test_process_pending_task_records_mt3_disabled_status(data_dir, monkeypatch)
     assert updated['status'] == 'done'
     assert updated['mt3']['enabled'] is False
     assert updated['mt3']['status'] == 'disabled'
+    assert updated['transcription']['enabled'] is False
+    assert updated['transcription']['status'] == 'disabled'
 
 
 # ---------------------------------------------------------------------------
@@ -943,6 +954,32 @@ def test_transcribe_with_service_raises_when_no_midi_output(tmp_path):
 
     with patch('mt3_client._post_json', return_value=fake_payload):
         with pytest.raises(RuntimeError, match='did not include MIDI output'):
+            mt3_client.transcribe_with_service(
+                service_url='http://localhost:8090',
+                audio_path='/tmp/audio.wav',
+                output_dir=output_dir,
+                task_id=task_id,
+                model='multi_instrument',
+                source='full_mix',
+                timeout=60,
+            )
+
+
+def test_transcribe_with_service_raises_when_service_reports_failed_status(tmp_path):
+    """transcribe_with_service should raise RuntimeError when service status is failed."""
+    import mt3_client
+
+    task_id = str(uuid.uuid4())
+    output_dir = tmp_path / 'mt3' / task_id
+    output_dir.mkdir(parents=True)
+
+    fake_payload = {
+        'status': 'failed',
+        'error': 'transcription produced no note events',
+    }
+
+    with patch('mt3_client._post_json', return_value=fake_payload):
+        with pytest.raises(RuntimeError, match='no note events'):
             mt3_client.transcribe_with_service(
                 service_url='http://localhost:8090',
                 audio_path='/tmp/audio.wav',
