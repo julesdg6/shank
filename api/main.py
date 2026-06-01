@@ -430,6 +430,9 @@ def get_worker_status():
     try:
         raw = heartbeat_file.read_text().strip()
         last_beat = datetime.fromisoformat(raw)
+        # Ensure timezone-aware for comparison: assume UTC if naive
+        if last_beat.tzinfo is None:
+            last_beat = last_beat.replace(tzinfo=timezone.utc)
         now = datetime.now(timezone.utc)
         age_seconds = (now - last_beat).total_seconds()
         online = age_seconds <= stale_threshold

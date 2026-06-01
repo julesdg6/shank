@@ -336,18 +336,16 @@ def test_run_worker_writes_heartbeat_each_cycle(data_dir):
 # Pipeline log truthfulness
 # ---------------------------------------------------------------------------
 
-def test_stem_separation_log_skipped_when_backend_is_none(data_dir, monkeypatch):
+def test_stem_separation_log_skipped_when_backend_is_none(data_dir):
     """'Separating stems' must NOT appear in logs when STEM_BACKEND=none."""
-    monkeypatch.setenv('STEM_BACKEND', 'none')
-    importlib.reload(worker_loop)
-
     task_id, task_file = _make_task(data_dir, task_type='upload')
     task = json.loads(task_file.read_text())
     task['file_path'] = str(data_dir / f'{task_id}.mp3')
     (data_dir / f'{task_id}.mp3').write_bytes(b'\x00' * 16)
     task_file.write_text(json.dumps(task))
 
-    with patch('worker_loop.normalize_audio'), \
+    with patch.object(worker_loop, 'STEM_BACKEND', 'none'), \
+         patch('worker_loop.normalize_audio'), \
          patch('worker_loop.analyze_audio', return_value={'bpm': 120.0, 'key': 'C major'}):
         worker_loop.process_pending_tasks(data_dir / 'tasks')
 
@@ -356,18 +354,16 @@ def test_stem_separation_log_skipped_when_backend_is_none(data_dir, monkeypatch)
     assert 'Separating stems' not in log_messages
 
 
-def test_midi_transcription_log_skipped_when_mt3_disabled(data_dir, monkeypatch):
+def test_midi_transcription_log_skipped_when_mt3_disabled(data_dir):
     """'Transcribing MIDI' must NOT appear in logs when MT3_ENABLED is false."""
-    monkeypatch.setenv('MT3_ENABLED', 'false')
-    importlib.reload(worker_loop)
-
     task_id, task_file = _make_task(data_dir, task_type='upload')
     task = json.loads(task_file.read_text())
     task['file_path'] = str(data_dir / f'{task_id}.mp3')
     (data_dir / f'{task_id}.mp3').write_bytes(b'\x00' * 16)
     task_file.write_text(json.dumps(task))
 
-    with patch('worker_loop.normalize_audio'), \
+    with patch.object(worker_loop, 'MT3_ENABLED', False), \
+         patch('worker_loop.normalize_audio'), \
          patch('worker_loop.analyze_audio', return_value={'bpm': 120.0, 'key': 'C major'}):
         worker_loop.process_pending_tasks(data_dir / 'tasks')
 
