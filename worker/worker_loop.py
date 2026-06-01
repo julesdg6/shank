@@ -72,6 +72,7 @@ MT3_OUTPUTS_DIR = get_mt3_output_path(DATA_DIR)
 STEMS_CACHE_DIR = DATA_DIR / 'stems'
 MAX_TASK_LOGS = 50
 RESULTS_DIR = DATA_DIR / 'results'
+WORKER_HEARTBEAT_FILE = DATA_DIR / '.worker_heartbeat'
 
 
 def _ensure_dirs() -> None:
@@ -82,6 +83,15 @@ def _ensure_dirs() -> None:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     if MT3_ENABLED:
         MT3_OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _write_heartbeat() -> None:
+    """Write the current UTC timestamp to the worker heartbeat file."""
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        WORKER_HEARTBEAT_FILE.write_text(datetime.now(timezone.utc).isoformat())
+    except OSError as exc:
+        log.warning('Failed to write worker heartbeat: %s', exc)
 
 
 def _read_task(task_file: Path) -> dict | None:
@@ -738,7 +748,9 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
 
         stem_tracks: dict[str, str] | None = None
         effective_backend = STEM_BACKEND
-        _record_task_progress(task_file, 65, 'Separating stems')
+
+        if effective_backend != 'none':
+            _record_task_progress(task_file, 65, 'Separating stems')
 
         if effective_backend == 'acestep':
             # Strict Ace-Step mode: fail the task if Ace-Step is unavailable or fails.
@@ -886,7 +898,8 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
 
         # effective_backend == 'none' (or any unrecognized value): skip stem separation.
 
-        _record_task_progress(task_file, 78, 'Transcribing MIDI')
+        if MT3_ENABLED:
+            _record_task_progress(task_file, 78, 'Transcribing MIDI')
         mt3_result = run_mt3_transcription(task_id, normalized_path, stems=stem_tracks)
         _update_task(task_file, {
             'mt3': mt3_result,
@@ -971,6 +984,7 @@ def run_worker(
 
     cycles_run = 0
     while max_cycles is None or cycles_run < max_cycles:
+        _write_heartbeat()
         count = process_pending_tasks(tasks_dir)
         if count:
             log.info('Processed %d task(s) this cycle', count)

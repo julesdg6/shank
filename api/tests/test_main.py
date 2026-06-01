@@ -709,3 +709,43 @@ def test_get_task_chords_returns_empty_when_disabled_backend(client, tmp_path):
     response = client.get(f'/tasks/{task_id}/chords')
     assert response.status_code == 200
     assert response.json() == {'segments': [], 'progression': []}
+
+
+# ---------------------------------------------------------------------------
+# GET /worker/status
+# ---------------------------------------------------------------------------
+
+def test_worker_status_offline_when_no_heartbeat(client):
+    """Without a heartbeat file the worker must be reported as offline."""
+    response = client.get('/worker/status')
+    assert response.status_code == 200
+    data = response.json()
+    assert data['status'] == 'offline'
+    assert data['last_heartbeat'] is None
+
+
+def test_worker_status_online_with_fresh_heartbeat(client, tmp_path):
+    """A freshly written heartbeat must cause the worker to be reported online."""
+    from datetime import datetime, timezone
+    heartbeat_file = tmp_path / '.worker_heartbeat'
+    heartbeat_file.write_text(datetime.now(timezone.utc).isoformat())
+
+    response = client.get('/worker/status')
+    assert response.status_code == 200
+    data = response.json()
+    assert data['status'] == 'online'
+    assert data['last_heartbeat'] is not None
+    assert data['age_seconds'] is not None
+
+
+def test_worker_status_offline_with_stale_heartbeat(client, tmp_path, monkeypatch):
+    """A heartbeat older than the stale threshold must report worker as offline."""
+    from datetime import datetime, timezone, timedelta
+    heartbeat_file = tmp_path / '.worker_heartbeat'
+    old_time = datetime.now(timezone.utc) - timedelta(seconds=3600)
+    heartbeat_file.write_text(old_time.isoformat())
+
+    response = client.get('/worker/status')
+    assert response.status_code == 200
+    data = response.json()
+    assert data['status'] == 'offline'
