@@ -234,9 +234,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-01T01:17:13Z
-- Latest commit: `b9ad5f1`
-- Commit message: Merge pull request #103 from julesdg6/copilot/fix-worker-startup-pipeline  Fix worker startup, pipeline log truthfulness, and worker health visibility
+- Last automated update: 2026-06-01T09:16:40Z
+- Latest commit: `0ecbeab`
+- Commit message: Merge pull request #104 from julesdg6/copilot/full-refactor-and-update-docs  Refactor: extract stem separation into worker/stems.py and document missing API endpoints
 <!-- readme-update:end -->
 
 ## 🎸 Chord Detection
