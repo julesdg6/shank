@@ -88,9 +88,13 @@ docker build -t shank:local .
 | `POST` | `/tasks/url` | Submit a YouTube URL for download and analysis |
 | `GET` | `/tasks/{task_id}` | Retrieve the status and results of a task |
 | `GET` | `/tasks/{task_id}/chords` | Return chord detection results for a completed task |
+| `GET` | `/tasks/{task_id}/artifacts` | List downloadable output files for a completed task |
+| `GET` | `/tasks/{task_id}/artifacts/{artifact_name}` | Download a named artifact file (e.g. normalised WAV, stem) |
 | `GET` | `/tasks/completed` | List all completed (`done`) tasks |
 | `GET` | `/tasks/{task_id}/mt3/midi/{track_name}` | Download MT3 MIDI (`full_mix` or stem name) |
 | `GET` | `/tasks/{task_id}/mt3/notes/{track_name}` | Retrieve MT3 note metadata JSON |
+| `GET` | `/worker/status` | Return worker liveness and last-heartbeat timestamp |
+| `GET` | `/stem-backend/status` | Report which stem-separation backend is active |
 | `GET` | `/ui` | Web dashboard (static HTML/JS) |
 
 ### Example — submit a YouTube URL

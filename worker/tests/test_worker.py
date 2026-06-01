@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from mt3_config import DEFAULT_MT3_SERVICE_URL  # noqa: E402
 import worker_loop  # noqa: E402
+import stems  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +260,7 @@ def test_extract_track_files_supports_direct_stem_mappings(data_dir, monkeypatch
     monkeypatch.setenv('ACE_STEP_STEMS', 'vocals,drums,bass,other')
     importlib.reload(worker_loop)
 
-    tracks = worker_loop._extract_track_files({
+    tracks = stems._extract_track_files({
         'vocals': '/tmp/vocals.wav',
         'nested': {
             'drums': 'http://ace-step:8001/drums.wav',
@@ -282,7 +283,7 @@ def test_separate_stems_with_ace_step_accepts_dict_query_shape(data_dir, monkeyp
     monkeypatch.setenv('ACE_STEP_STEMS', 'vocals,drums')
     importlib.reload(worker_loop)
 
-    with patch('worker_loop._ace_step_post', side_effect=[
+    with patch('stems._ace_step_post', side_effect=[
         {'data': {'task_id': 'ace-task-1'}},
         {'data': {'tasks': [{'status': 'completed', 'result': {'vocals': '/tmp/vocals.wav'}}]}},
     ]) as mock_post:
@@ -525,7 +526,7 @@ def test_pending_upload_task_caches_ace_step_url_stems_for_mt3(data_dir, monkeyp
                  'bass': '/v1/audio?path=/tmp/bass.wav',
              },
          }), \
-         patch('worker_loop.urllib.request.urlopen', side_effect=[
+         patch('stems.urllib.request.urlopen', side_effect=[
              _FakeResponse(b'vocals-wav-bytes'),
              _FakeResponse(b'drums-wav-bytes'),
          ]) as mock_urlopen, \
@@ -764,8 +765,8 @@ def test_resolve_ace_step_stem_file_does_not_send_auth_to_third_party(tmp_path, 
         return _FakeResponse()
 
     task_id = str(uuid.uuid4())
-    with patch('worker_loop.urllib.request.urlopen', side_effect=_fake_urlopen):
-        worker_loop._resolve_ace_step_stem_file(task_id, 'vocals', 'http://example.com/vocals.wav')
+    with patch('stems.urllib.request.urlopen', side_effect=_fake_urlopen):
+        stems._resolve_ace_step_stem_file(task_id, 'vocals', 'http://example.com/vocals.wav')
 
     assert seen_auth_headers == [None]
 
@@ -796,9 +797,9 @@ def test_resolve_ace_step_stem_file_rejects_oversized_download(tmp_path, monkeyp
             return chunk
 
     task_id = str(uuid.uuid4())
-    with patch('worker_loop.urllib.request.urlopen', return_value=_FakeResponse()):
+    with patch('stems.urllib.request.urlopen', return_value=_FakeResponse()):
         with pytest.raises(RuntimeError, match='exceeded 4 bytes'):
-            worker_loop._resolve_ace_step_stem_file(task_id, 'vocals', 'http://ace-step:8001/vocals.wav')
+            stems._resolve_ace_step_stem_file(task_id, 'vocals', 'http://ace-step:8001/vocals.wav')
     assert not (tmp_path / 'stems' / task_id / 'vocals.wav').exists()
 
 
@@ -1089,18 +1090,18 @@ def test_transcribe_with_service_uses_notes_path_from_response(tmp_path):
 
 def test_parse_audio_separator_stem_name_extracts_label_in_parentheses():
     """_parse_audio_separator_stem_name should extract and lowercase the parenthesised label."""
-    assert worker_loop._parse_audio_separator_stem_name('song_(Vocals)_htdemucs_ft.wav') == 'vocals'
-    assert worker_loop._parse_audio_separator_stem_name('song_(Drums)_htdemucs_ft.wav') == 'drums'
-    assert worker_loop._parse_audio_separator_stem_name('song_(Bass)_htdemucs_ft.wav') == 'bass'
-    assert worker_loop._parse_audio_separator_stem_name('song_(Other)_htdemucs_ft.wav') == 'other'
-    assert worker_loop._parse_audio_separator_stem_name('song_(Guitar)_htdemucs_6s.wav') == 'guitar'
-    assert worker_loop._parse_audio_separator_stem_name('song_(Piano)_htdemucs_6s.wav') == 'piano'
+    assert stems._parse_audio_separator_stem_name('song_(Vocals)_htdemucs_ft.wav') == 'vocals'
+    assert stems._parse_audio_separator_stem_name('song_(Drums)_htdemucs_ft.wav') == 'drums'
+    assert stems._parse_audio_separator_stem_name('song_(Bass)_htdemucs_ft.wav') == 'bass'
+    assert stems._parse_audio_separator_stem_name('song_(Other)_htdemucs_ft.wav') == 'other'
+    assert stems._parse_audio_separator_stem_name('song_(Guitar)_htdemucs_6s.wav') == 'guitar'
+    assert stems._parse_audio_separator_stem_name('song_(Piano)_htdemucs_6s.wav') == 'piano'
 
 
 def test_parse_audio_separator_stem_name_falls_back_to_stem():
     """_parse_audio_separator_stem_name should fall back to the bare filename stem."""
-    assert worker_loop._parse_audio_separator_stem_name('vocals.wav') == 'vocals'
-    assert worker_loop._parse_audio_separator_stem_name('drums') == 'drums'
+    assert stems._parse_audio_separator_stem_name('vocals.wav') == 'vocals'
+    assert stems._parse_audio_separator_stem_name('drums') == 'drums'
 
 
 # ---------------------------------------------------------------------------
