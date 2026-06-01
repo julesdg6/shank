@@ -73,6 +73,7 @@ def _extract_track_files(data: Any) -> dict[str, str]:
     }
 
     def collect(node: Any) -> None:
+        """Recursively walk *node* (dict or list) and populate ``tracks``."""
         if isinstance(node, dict):
             track_name = (
                 node.get('track_name')
@@ -164,9 +165,9 @@ def _resolve_ace_step_stem_file(task_id: str, stem_name: str, stem_ref: str) -> 
         if parsed.scheme == ace_url.scheme and parsed.netloc == ace_url.netloc:
             request_headers['Authorization'] = f'Bearer {ace_step_api_key}'
     request_kwargs: dict[str, Any] = {'headers': request_headers} if request_headers else {}
-    req = urllib.request.Request(stem_ref, **request_kwargs)
+    request = urllib.request.Request(stem_ref, **request_kwargs)
     try:
-        with urllib.request.urlopen(req, timeout=60) as response, cache_path.open('wb') as output_file:
+        with urllib.request.urlopen(request, timeout=60) as response, cache_path.open('wb') as output_file:
             total_bytes = 0
             while True:
                 chunk = response.read(64 * 1024)
