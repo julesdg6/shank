@@ -411,6 +411,55 @@ def get_task_chords(task_id: str):
 
 
 # ---------------------------------------------------------------------------
+# Worker status
+# ---------------------------------------------------------------------------
+
+
+@app.get('/worker/status')
+def get_worker_status():
+    """Return the current health status of the background worker process.
+
+    The worker writes a heartbeat timestamp to *DATA_DIR/.worker_heartbeat*
+    at the start of every poll cycle.  This endpoint reads that file and
+    reports whether the heartbeat is recent enough to consider the worker
+    alive.
+    """
+    heartbeat_file = DATA_DIR / '.worker_heartbeat'
+    stale_threshold = int(os.getenv('POLL_INTERVAL', '10')) * 3 + 30
+
+    try:
+        raw = heartbeat_file.read_text().strip()
+        last_beat = datetime.fromisoformat(raw)
+        # Ensure timezone-aware for comparison: assume UTC if naive
+        if last_beat.tzinfo is None:
+            last_beat = last_beat.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        age_seconds = (now - last_beat).total_seconds()
+        online = age_seconds <= stale_threshold
+        return {
+            'status': 'online' if online else 'offline',
+            'last_heartbeat': raw,
+            'age_seconds': round(age_seconds, 1),
+            'stale_threshold_seconds': stale_threshold,
+        }
+    except FileNotFoundError:
+        return {
+            'status': 'offline',
+            'last_heartbeat': None,
+            'age_seconds': None,
+            'stale_threshold_seconds': stale_threshold,
+        }
+    except Exception as exc:
+        log.warning('Failed to read worker heartbeat: %s', exc)
+        return {
+            'status': 'unknown',
+            'last_heartbeat': None,
+            'age_seconds': None,
+            'stale_threshold_seconds': stale_threshold,
+        }
+
+
+# ---------------------------------------------------------------------------
 # Stem backend status
 # ---------------------------------------------------------------------------
 

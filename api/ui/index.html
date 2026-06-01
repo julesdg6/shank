@@ -413,6 +413,10 @@
     <span id="stem-backend-dot" class="status-dot offline" style="margin-left:0" title="Stem backend status"></span>
     <span id="stem-backend-label">Stems: —</span>
   </div>
+  <div id="worker-badge" title="Worker process status" style="display:flex;align-items:center;gap:0.4rem;margin-left:0.75rem;font-size:0.75rem;color:var(--text-muted)">
+    <span id="worker-dot" class="status-dot offline" style="margin-left:0" title="Worker status"></span>
+    <span id="worker-label">Worker: —</span>
+  </div>
   <div id="api-dot" class="status-dot" title="API status" style="margin-left:0.75rem"></div>
 </header>
 
@@ -1779,6 +1783,29 @@
   }
   checkStemBackendStatus();
   setInterval(checkStemBackendStatus, 60000);
+
+  // ── Worker Status ─────────────────────────────────────────────────────────
+  async function checkWorkerStatus() {
+    const dot = document.getElementById('worker-dot');
+    const label = document.getElementById('worker-label');
+    try {
+      const res = await fetch(`${API}/worker/status`, { cache: 'no-store' });
+      if (!res.ok) { dot.className = 'status-dot offline'; label.textContent = 'Worker: unavailable'; return; }
+      const data = await res.json();
+      if (data.status === 'online') {
+        dot.className = 'status-dot';
+        label.textContent = 'Worker: online';
+      } else {
+        dot.className = 'status-dot offline';
+        label.textContent = 'Worker: offline';
+      }
+    } catch (_) {
+      dot.className = 'status-dot offline';
+      label.textContent = 'Worker: —';
+    }
+  }
+  checkWorkerStatus();
+  setInterval(checkWorkerStatus, 30000);
 
   // ── Init ──────────────────────────────────────────────────────────────────
   const detailTaskId = new URLSearchParams(window.location.search).get('task_id');

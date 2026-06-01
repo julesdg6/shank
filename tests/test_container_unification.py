@@ -59,6 +59,22 @@ def test_dockerfile_installs_audio_processing_tools():
     assert 'HEALTHCHECK' in text
 
 
+def test_dockerfile_copies_mt3_config():
+    """Dockerfile must copy mt3_config.py so the worker can import it at runtime."""
+    dockerfile = Path(__file__).resolve().parents[1] / 'Dockerfile'
+    text = dockerfile.read_text()
+
+    assert 'COPY mt3_config.py' in text
+
+
+def test_dockerfile_healthcheck_includes_worker_status():
+    """Healthcheck must verify the worker heartbeat via /worker/status."""
+    dockerfile = Path(__file__).resolve().parents[1] / 'Dockerfile'
+    text = dockerfile.read_text()
+
+    assert '/worker/status' in text
+
+
 def test_worker_dockerfile_installs_audio_processing_tools():
     dockerfile = Path(__file__).resolve().parents[1] / 'worker' / 'Dockerfile'
     text = dockerfile.read_text()

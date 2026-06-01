@@ -297,3 +297,76 @@ def test_run_worker_polls_tasks_repeatedly(data_dir):
 
     assert observed_tasks_dirs == [tasks_dir, tasks_dir, tasks_dir]
     assert sleep_calls == [0.25, 0.25]
+
+
+# ---------------------------------------------------------------------------
+# Heartbeat
+# ---------------------------------------------------------------------------
+
+def test_write_heartbeat_creates_file(data_dir):
+    """_write_heartbeat must create DATA_DIR/.worker_heartbeat with a UTC timestamp."""
+    worker_loop._write_heartbeat()
+    heartbeat_file = data_dir / '.worker_heartbeat'
+    assert heartbeat_file.exists()
+    content = heartbeat_file.read_text().strip()
+    from datetime import datetime
+    # Must parse as ISO 8601
+    dt = datetime.fromisoformat(content)
+    assert dt is not None
+
+
+def test_run_worker_writes_heartbeat_each_cycle(data_dir):
+    """run_worker must call _write_heartbeat before processing each cycle."""
+    heartbeat_calls = []
+
+    def fake_write_heartbeat():
+        heartbeat_calls.append(True)
+
+    def fake_process(tasks_dir):
+        return 0
+
+    with patch('worker_loop._write_heartbeat', side_effect=fake_write_heartbeat), \
+         patch('worker_loop.process_pending_tasks', side_effect=fake_process):
+        worker_loop.run_worker(data_dir / 'tasks', sleep_fn=lambda _: None, max_cycles=3)
+
+    assert len(heartbeat_calls) == 3
+
+
+# ---------------------------------------------------------------------------
+# Pipeline log truthfulness
+# ---------------------------------------------------------------------------
+
+def test_stem_separation_log_skipped_when_backend_is_none(data_dir):
+    """'Separating stems' must NOT appear in logs when STEM_BACKEND=none."""
+    task_id, task_file = _make_task(data_dir, task_type='upload')
+    task = json.loads(task_file.read_text())
+    task['file_path'] = str(data_dir / f'{task_id}.mp3')
+    (data_dir / f'{task_id}.mp3').write_bytes(b'\x00' * 16)
+    task_file.write_text(json.dumps(task))
+
+    with patch.object(worker_loop, 'STEM_BACKEND', 'none'), \
+         patch('worker_loop.normalize_audio'), \
+         patch('worker_loop.analyze_audio', return_value={'bpm': 120.0, 'key': 'C major'}):
+        worker_loop.process_pending_tasks(data_dir / 'tasks')
+
+    final = json.loads(task_file.read_text())
+    log_messages = [e.get('message', '') for e in final.get('logs', [])]
+    assert 'Separating stems' not in log_messages
+
+
+def test_midi_transcription_log_skipped_when_mt3_disabled(data_dir):
+    """'Transcribing MIDI' must NOT appear in logs when MT3_ENABLED is false."""
+    task_id, task_file = _make_task(data_dir, task_type='upload')
+    task = json.loads(task_file.read_text())
+    task['file_path'] = str(data_dir / f'{task_id}.mp3')
+    (data_dir / f'{task_id}.mp3').write_bytes(b'\x00' * 16)
+    task_file.write_text(json.dumps(task))
+
+    with patch.object(worker_loop, 'MT3_ENABLED', False), \
+         patch('worker_loop.normalize_audio'), \
+         patch('worker_loop.analyze_audio', return_value={'bpm': 120.0, 'key': 'C major'}):
+        worker_loop.process_pending_tasks(data_dir / 'tasks')
+
+    final = json.loads(task_file.read_text())
+    log_messages = [e.get('message', '') for e in final.get('logs', [])]
+    assert 'Transcribing MIDI' not in log_messages
