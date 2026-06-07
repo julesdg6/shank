@@ -42,17 +42,36 @@ cd shank
 cp .env.example .env   # edit as needed
 ```
 
-### 2. Start the service
+### 2. (Optional) Pre-download stem separation models
+
+Model weights are fetched automatically on first use, but you can pre-download them to avoid the delay:
+
+```bash
+# 4-stem model (htdemucs_ft.yaml, ~400 MB) — default
+python3 scripts/download_stem_models.py
+
+# Also download the 6-stem model (htdemucs_6s.yaml, ~530 MB)
+python3 scripts/download_stem_models.py --6stems
+
+# Options:
+#   --help           Show help
+#   --6stems         Also download 6-stem model
+#   --model-dir DIR  Custom directory (default: /srv/shank/models/separator)
+```
+
+Requires `audio-separator` to be installed (`pip install audio-separator[cpu]`). See the [Stem Separation](#-stem-separation-python-audio-separator) section for full details.
+
+### 3. Start the service
 ```bash
 docker compose up --build -d
 ```
 
 The API and Web UI are available at **http://localhost:8088**.
 
-### 3. Open the dashboard
+### 4. Open the dashboard
 Navigate to **http://localhost:8088/** in your browser to upload audio files or submit YouTube URLs. The dashboard is also available at **http://localhost:8088/ui**.
 
-### 4. Stop the service
+### 5. Stop the service
 ```bash
 docker compose down
 ```
