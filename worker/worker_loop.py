@@ -609,7 +609,7 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
         # effective_backend == 'none' (or any unrecognized value): skip stem separation.
 
         task_mt3_override = task.get('enable_mt3')
-        mt3_enabled_for_task = bool(task_mt3_override) if isinstance(task_mt3_override, bool) else MT3_ENABLED
+        mt3_enabled_for_task = task_mt3_override if isinstance(task_mt3_override, bool) else MT3_ENABLED
         if mt3_enabled_for_task:
             _record_task_progress(task_file, 78, 'Transcribing MIDI')
         mt3_result = run_mt3_transcription(
