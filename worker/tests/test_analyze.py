@@ -104,6 +104,9 @@ def test_analyze_audio_returns_bpm_and_key(tmp_path):
     assert 'sections' in result
     assert 'cue_points' in result
     assert 'chords' in result
+    assert 'bpm_source' in result
+    assert 'beat_detection' in result
+    assert 'beatgrid' in result
     assert 'tempo_changes' in result
     assert 'waveform' in result
     assert 'frequency_histogram' in result
@@ -111,6 +114,8 @@ def test_analyze_audio_returns_bpm_and_key(tmp_path):
     assert 'loudness_curve' in result
     assert 'energy_over_time' in result
     assert isinstance(result['chords'], dict)
+    assert isinstance(result['beat_detection'], dict)
+    assert isinstance(result['beatgrid'], dict)
     assert isinstance(result['beats'], list)
     assert isinstance(result['downbeats'], list)
     assert isinstance(result['sections'], list)
@@ -118,6 +123,70 @@ def test_analyze_audio_returns_bpm_and_key(tmp_path):
     assert isinstance(result['tempo_changes'], list)
     assert 'segments' in result['chords']
     assert 'progression' in result['chords']
+    assert 'beats' in result['beatgrid']
+
+
+def test_analyze_audio_uses_mixxx_backend_when_available(tmp_path, monkeypatch):
+    monkeypatch.setenv('BEAT_DETECTION_ENGINE', 'mixxx')
+    wav = _write_rhythmic_wav(tmp_path / 'mixxx.wav', duration=4.0)
+
+    def fake_mixxx(_):
+        return {
+            'bpm': 128.02,
+            'mode': 'constant_tempo',
+            'first_beat_seconds': 0.423,
+            'confidence': None,
+            'beats': [
+                {'time': 0.423},
+                {'time': 0.892},
+                {'time': 1.361},
+            ],
+        }
+
+    monkeypatch.setattr('analyze._mixxx_beats', fake_mixxx)
+    result = analyze_audio(str(wav))
+    assert result['bpm_source'] == 'mixxx'
+    assert result['beat_detection']['engine'] == 'mixxx'
+    assert result['beat_detection']['mode'] == 'constant_tempo'
+    assert result['beat_detection']['first_beat_seconds'] == 0.423
+    assert result['beat_detection']['beat_count'] == 3
+    assert result['beat_detection']['confidence'] is None
+    assert result['beatgrid']['bpm'] == 128.02
+    assert result['beatgrid']['first_beat_seconds'] == 0.423
+    assert result['beatgrid']['beats'][0] == {'index': 1, 'time': 0.423}
+
+
+def test_analyze_audio_mixxx_failure_falls_back_to_default_detector(tmp_path, monkeypatch):
+    monkeypatch.setenv('BEAT_DETECTION_ENGINE', 'mixxx')
+    wav = _write_rhythmic_wav(tmp_path / 'fallback.wav', duration=4.0)
+    monkeypatch.setattr('analyze._mixxx_beats', lambda _: None)
+    result = analyze_audio(str(wav))
+    assert result['bpm_source'] in {'librosa', 'madmom'}
+    assert result['beat_detection']['engine'] in {'librosa', 'madmom'}
+    assert result['beat_detection']['beat_count'] == len(result['beats'])
+
+
+def test_analyze_audio_mixxx_variable_tempo_populates_local_bpm(tmp_path, monkeypatch):
+    monkeypatch.setenv('BEAT_DETECTION_ENGINE', 'mixxx')
+    wav = _write_rhythmic_wav(tmp_path / 'variable.wav', duration=4.0)
+
+    def fake_mixxx(_):
+        return {
+            'bpm': 128.0,
+            'mode': 'variable_tempo',
+            'first_beat_seconds': 0.42,
+            'confidence': None,
+            'beats': [
+                {'time': 0.42, 'local_bpm': 127.8},
+                {'time': 0.89, 'local_bpm': 128.1},
+            ],
+        }
+
+    monkeypatch.setattr('analyze._mixxx_beats', fake_mixxx)
+    result = analyze_audio(str(wav))
+    assert result['beat_detection']['mode'] == 'variable_tempo'
+    assert result['beatgrid']['mode'] == 'variable_tempo'
+    assert result['beatgrid']['beats'][0] == {'index': 1, 'time': 0.42, 'local_bpm': 127.8}
 
 
 def test_analyze_audio_bpm_is_positive(tmp_path):

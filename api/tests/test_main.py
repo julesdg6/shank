@@ -429,6 +429,10 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
     results_dir = tmp_path / 'results' / task_id
     results_task_json = results_dir / 'task.json'
     results_analysis_json = results_dir / 'analysis.json'
+    results_beatgrid_json = results_dir / 'beatgrid.json'
+    waveform_beats_png = results_dir / 'waveform_beats.png'
+    tempo_curve_png = results_dir / 'tempo_curve.png'
+    beatgraph_png = results_dir / 'beatgraph.png'
     results_mt3_json = results_dir / 'mt3.json'
     results_artifacts_json = results_dir / 'artifacts.json'
 
@@ -443,6 +447,10 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
     results_dir.mkdir(parents=True, exist_ok=True)
     results_task_json.write_text(json.dumps({'status': 'done'}))
     results_analysis_json.write_text(json.dumps({'full_mix': {'bpm': 120.0}}))
+    results_beatgrid_json.write_text(json.dumps({'bpm': 120.0, 'beats': []}))
+    waveform_beats_png.write_bytes(b'\x89PNG\r\n\x1a\n')
+    tempo_curve_png.write_bytes(b'\x89PNG\r\n\x1a\n')
+    beatgraph_png.write_bytes(b'\x89PNG\r\n\x1a\n')
     results_mt3_json.write_text(json.dumps({'status': 'completed'}))
     results_artifacts_json.write_text(json.dumps({'normalized_wav': str(normalized)}))
 
@@ -467,6 +475,10 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
             'dir': str(results_dir),
             'task_json': str(results_task_json),
             'analysis_json': str(results_analysis_json),
+            'beatgrid_json': str(results_beatgrid_json),
+            'waveform_beats_png': str(waveform_beats_png),
+            'tempo_curve_png': str(tempo_curve_png),
+            'beatgraph_png': str(beatgraph_png),
             'mt3_json': str(results_mt3_json),
             'artifacts_json': str(results_artifacts_json),
         },
@@ -476,6 +488,8 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
     assert response.status_code == 200
     assert response.json() == {
         'artifacts': [
+            'beatgraph_png',
+            'beatgrid_json',
             'midi',
             'normalized_wav',
             'notes_json',
@@ -485,8 +499,14 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
             'results_task_json',
             'stem_vocals_midi',
             'stem_vocals_wav',
+            'tempo_curve_png',
+            'waveform_beats_png',
         ],
     }
+
+    beatgrid_response = client.get(f'/tasks/{task_id}/artifacts/beatgrid_json')
+    assert beatgrid_response.status_code == 200
+    assert beatgrid_response.json() == {'bpm': 120.0, 'beats': []}
 
 
 def test_download_task_artifact_by_name(client, tmp_path):

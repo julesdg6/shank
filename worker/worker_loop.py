@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from analyze import analyze_audio
 from downloader import download_youtube
 from mt3_client import transcribe_with_service
@@ -62,6 +64,7 @@ WAV_CODEC = 'pcm_s16le'
 MT3_OUTPUTS_DIR = get_mt3_output_path(DATA_DIR)
 STEMS_CACHE_DIR = DATA_DIR / 'stems'
 MAX_TASK_LOGS = 50
+_MIN_BEAT_INTERVAL_SECONDS = 0.1
 RESULTS_DIR = DATA_DIR / 'results'
 WORKER_HEARTBEAT_FILE = DATA_DIR / '.worker_heartbeat'
 
@@ -125,6 +128,7 @@ def _task_artifact_paths(
     normalized_path: str,
     stem_tracks: dict[str, str] | None,
     mt3_result: dict[str, Any] | None,
+    result_artifacts: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     artifacts: dict[str, Any] = {'normalized_wav': normalized_path}
 
@@ -158,6 +162,17 @@ def _task_artifact_paths(
             if stem_artifacts:
                 artifacts['mt3_stems'] = stem_artifacts
 
+    if isinstance(result_artifacts, dict):
+        for artifact_name, key in (
+            ('beatgrid_json', 'beatgrid_json'),
+            ('waveform_beats_png', 'waveform_beats_png'),
+            ('tempo_curve_png', 'tempo_curve_png'),
+            ('beatgraph_png', 'beatgraph_png'),
+        ):
+            value = result_artifacts.get(key)
+            if isinstance(value, str) and value:
+                artifacts[artifact_name] = value
+
     return artifacts
 
 
@@ -167,9 +182,125 @@ def _structured_result_paths(task_id: str) -> dict[str, str]:
         'dir': str(result_dir),
         'task_json': str(result_dir / 'task.json'),
         'analysis_json': str(result_dir / 'analysis.json'),
+        'beatgrid_json': str(result_dir / 'beatgrid.json'),
+        'waveform_beats_png': str(result_dir / 'waveform_beats.png'),
+        'tempo_curve_png': str(result_dir / 'tempo_curve.png'),
+        'beatgraph_png': str(result_dir / 'beatgraph.png'),
         'mt3_json': str(result_dir / 'mt3.json'),
         'artifacts_json': str(result_dir / 'artifacts.json'),
     }
+
+
+def _write_beat_outputs(result_artifacts: dict[str, str], analysis_payload: dict[str, Any]) -> None:
+    full_mix = analysis_payload.get('full_mix')
+    if not isinstance(full_mix, dict):
+        return
+
+    beatgrid = full_mix.get('beatgrid')
+    if not isinstance(beatgrid, dict):
+        beats = full_mix.get('beats')
+        bpm = full_mix.get('bpm')
+        if isinstance(beats, list) and isinstance(bpm, (int, float)):
+            first_beat = beats[0] if beats and isinstance(beats[0], (int, float)) else 0.0
+            beatgrid = {
+                'bpm': float(bpm),
+                'first_beat_seconds': float(first_beat),
+                'beats': [
+                    {'index': idx + 1, 'time': float(ts)}
+                    for idx, ts in enumerate(beats)
+                    if isinstance(ts, (int, float))
+                ],
+            }
+        else:
+            beatgrid = {'bpm': 0.0, 'first_beat_seconds': 0.0, 'beats': []}
+
+    Path(result_artifacts['beatgrid_json']).write_text(json.dumps(beatgrid, indent=2))
+
+    beat_rows = beatgrid.get('beats')
+    waveform = full_mix.get('waveform')
+    duration = full_mix.get('duration_seconds')
+    if not isinstance(beat_rows, list) or not beat_rows:
+        return
+    if not isinstance(waveform, list) or not waveform:
+        return
+    if not isinstance(duration, (int, float)) or duration <= 0:
+        return
+
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+    except Exception as exc:  # pragma: no cover - optional dependency
+        log.warning('Could not generate beat graphs; matplotlib unavailable: %s', exc)
+        return
+
+    beat_times: list[float] = []
+    for entry in beat_rows:
+        if not isinstance(entry, dict):
+            continue
+        time_raw = entry.get('time')
+        if isinstance(time_raw, (int, float)):
+            beat_times.append(float(time_raw))
+    if not beat_times:
+        return
+
+    wave_values = [float(value) for value in waveform if isinstance(value, (int, float))]
+    if not wave_values:
+        return
+    waveform_times = np.linspace(0.0, float(duration), len(wave_values))
+    plt.figure(figsize=(12, 3))
+    plt.plot(waveform_times, wave_values, color='#4ea1ff', linewidth=1)
+    for beat_time in beat_times:
+        plt.axvline(beat_time, color='#ff4d4f', linewidth=0.7, alpha=0.4)
+    plt.title('Waveform with Beat Markers')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Amplitude')
+    plt.tight_layout()
+    plt.savefig(result_artifacts['waveform_beats_png'], dpi=120)
+    plt.close()
+
+    local_bpms: list[float] = []
+    for entry in beat_rows:
+        if not isinstance(entry, dict):
+            continue
+        local_bpm_raw = entry.get('local_bpm')
+        if isinstance(local_bpm_raw, (int, float)):
+            local_bpms.append(float(local_bpm_raw))
+    tempo_times: list[float] = []
+    tempo_values: list[float] = []
+    if local_bpms and len(local_bpms) == len(beat_times):
+        tempo_times = beat_times
+        tempo_values = local_bpms
+    elif len(beat_times) > 1:
+        intervals = np.diff(np.array(beat_times))
+        tempo_values = []
+        for interval in intervals:
+            interval_value = float(interval)
+            if interval_value > _MIN_BEAT_INTERVAL_SECONDS and interval_value > 0:
+                tempo_values.append(round(float(60.0 / interval_value), 2))
+        tempo_times = beat_times[1:1 + len(tempo_values)]
+    if tempo_values and tempo_times:
+        plt.figure(figsize=(12, 3))
+        plt.plot(tempo_times, tempo_values, color='#22c55e', linewidth=1.2)
+        plt.title('Tempo Curve')
+        plt.xlabel('Time (s)')
+        plt.ylabel('BPM')
+        plt.tight_layout()
+        plt.savefig(result_artifacts['tempo_curve_png'], dpi=120)
+        plt.close()
+
+    if len(beat_times) > 1:
+        intervals = np.diff(np.array(beat_times))
+        interval_values = [float(interval) for interval in intervals if interval > _MIN_BEAT_INTERVAL_SECONDS]
+        if interval_values:
+            plt.figure(figsize=(12, 3))
+            plt.plot(range(1, 1 + len(interval_values)), interval_values, color='#f97316', linewidth=1.2)
+            plt.title('Beat Interval Graph')
+            plt.xlabel('Beat Index')
+            plt.ylabel('Interval (s)')
+            plt.tight_layout()
+            plt.savefig(result_artifacts['beatgraph_png'], dpi=120)
+            plt.close()
 
 
 def _write_structured_results(
@@ -190,9 +321,12 @@ def _write_structured_results(
 
     task_path.write_text(json.dumps(task_payload, indent=2))
     analysis_path.write_text(json.dumps(analysis_payload, indent=2))
+    _write_beat_outputs(result_artifacts, analysis_payload)
     mt3_payload = mt3_result if isinstance(mt3_result, dict) else {}
     mt3_path.write_text(json.dumps(mt3_payload, indent=2))
-    artifacts_path.write_text(json.dumps(_task_artifact_paths(normalized_path, stem_tracks, mt3_payload), indent=2))
+    artifacts_path.write_text(
+        json.dumps(_task_artifact_paths(normalized_path, stem_tracks, mt3_payload, result_artifacts), indent=2),
+    )
 
 
 def normalize_audio(input_path: str, output_path: str) -> None:
