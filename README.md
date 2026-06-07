@@ -336,9 +336,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-07T20:09:21Z
-- Latest commit: `4167832`
-- Commit message: Merge pull request #117 from julesdg6/copilot/add-mt3-switch-ui-component  [WIP] Add MT3 switch to web interface
+- Last automated update: 2026-06-07T20:39:51Z
+- Latest commit: `5690b47`
+- Commit message: Merge pull request #118 from julesdg6/copilot/add-model-download-button-again  [WIP] Add model download button to web interface
 <!-- readme-update:end -->
 
 ## 🎸 Chord Detection
