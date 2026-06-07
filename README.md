@@ -313,9 +313,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-07T16:30:27Z
-- Latest commit: `222752b`
-- Commit message: Merge pull request #106 from julesdg6/copilot/download-stem-separation-models  Add scripts/download_stem_models.py for pre-downloading Htdemucs separation models
+- Last automated update: 2026-06-07T17:13:27Z
+- Latest commit: `69fee9f`
+- Commit message: Merge pull request #110 from julesdg6/copilot/v2-x-update-readme  Update v2.x stem-separation release docs and env guidance
 <!-- readme-update:end -->
 
 ## 🎸 Chord Detection
