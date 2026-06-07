@@ -67,6 +67,14 @@ def test_dockerfile_copies_mt3_config():
     assert 'COPY mt3_config.py' in text
 
 
+def test_dockerfile_copies_stem_download_script():
+    """Dockerfile must copy the scripts directory for in-container model downloads."""
+    dockerfile = Path(__file__).resolve().parents[1] / 'Dockerfile'
+    text = dockerfile.read_text()
+
+    assert 'COPY scripts /app/scripts' in text
+
+
 def test_dockerfile_healthcheck_includes_worker_status():
     """Healthcheck must verify the worker heartbeat via /worker/status."""
     dockerfile = Path(__file__).resolve().parents[1] / 'Dockerfile'
