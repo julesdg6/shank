@@ -336,9 +336,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-07T20:39:51Z
-- Latest commit: `5690b47`
-- Commit message: Merge pull request #118 from julesdg6/copilot/add-model-download-button-again  [WIP] Add model download button to web interface
+- Last automated update: 2026-06-07T20:54:11Z
+- Latest commit: `f6da43d`
+- Commit message: Merge pull request #121 from julesdg6/copilot/ensure-prs-are-complete  Propagate MT3 override to URL task submissions
 <!-- readme-update:end -->
 
 ## 🎸 Chord Detection
