@@ -247,6 +247,18 @@ def test_submit_url_creates_task_file(client, tmp_path):
     assert task['status'] == 'pending'
 
 
+def test_submit_url_persists_mt3_override(client, tmp_path):
+    response = client.post(
+        '/tasks/url',
+        json={'url': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'enable_mt3': False},
+    )
+    assert response.status_code == 202
+    task_id = response.json()['task_id']
+    task_file = tmp_path / 'tasks' / f'{task_id}.json'
+    task = json.loads(task_file.read_text())
+    assert task['enable_mt3'] is False
+
+
 # ---------------------------------------------------------------------------
 # GET /tasks/{task_id}
 # ---------------------------------------------------------------------------

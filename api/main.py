@@ -424,6 +424,7 @@ async def submit_melody(
 
 class URLRequest(BaseModel):
     url: str
+    enable_mt3: bool | None = None
 
     @field_validator('url')
     @classmethod
@@ -441,13 +442,15 @@ def submit_url(body: URLRequest):
     """Accept a YouTube URL and queue it for analysis."""
     task_id = str(uuid.uuid4())
 
-    task = {
+    task: dict[str, Any] = {
         'task_id': task_id,
         'type': 'url',
         'source': body.url,
         'status': 'pending',
         'created_at': datetime.now(timezone.utc).isoformat(),
     }
+    if body.enable_mt3 is not None:
+        task['enable_mt3'] = body.enable_mt3
     _write_task(task)
 
     return JSONResponse(status_code=202, content={'task_id': task_id, 'status': 'pending'})
