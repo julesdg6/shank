@@ -687,6 +687,10 @@ python3 scripts/download_stem_models.py</code>
       <div id="download-buttons" style="display:flex;flex-wrap:wrap;gap:0.5rem"></div>
     </div>
     <div class="panel" style="margin-top:1rem">
+      <h4 style="margin-bottom:0.5rem">Beat Graphs</h4>
+      <div id="beat-graph-previews" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:0.75rem"></div>
+    </div>
+    <div class="panel" style="margin-top:1rem">
       <h4 style="margin-bottom:0.5rem">MIDI Piano Roll</h4>
       <canvas class="timeline-canvas" id="midi-piano-roll"></canvas>
     </div>
@@ -1028,11 +1032,37 @@ python3 scripts/download_stem_models.py</code>
         href: `/tasks/${encodeURIComponent(taskData.task_id)}/artifacts/${encodeURIComponent(`stem_${name}_wav`)}`,
         label: `${name} stem`,
       })),
+      { href: `/tasks/${encodeURIComponent(taskData.task_id)}/artifacts/beatgrid_json`, label: 'Beat Grid JSON' },
+      { href: `/tasks/${encodeURIComponent(taskData.task_id)}/artifacts/waveform_beats_png`, label: 'Waveform Beats PNG' },
+      { href: `/tasks/${encodeURIComponent(taskData.task_id)}/artifacts/tempo_curve_png`, label: 'Tempo Curve PNG' },
+      { href: `/tasks/${encodeURIComponent(taskData.task_id)}/artifacts/beatgraph_png`, label: 'Beat Interval PNG' },
       { href: `/tasks/${encodeURIComponent(taskData.task_id)}/mt3/midi/full_mix`, label: 'Full Mix MIDI' },
     ];
     container.innerHTML = links
       .map((link) => `<a class="btn btn-ghost btn-sm" href="${link.href}" target="_blank" rel="noopener noreferrer">${escapeHtml(link.label)}</a>`)
       .join('');
+  }
+
+  function renderBeatGraphPreviews(taskData) {
+    const container = document.getElementById('beat-graph-previews');
+    if (!container) return;
+    const items = [
+      { artifact: 'waveform_beats_png', label: 'Waveform + Beats' },
+      { artifact: 'tempo_curve_png', label: 'Tempo Curve' },
+      { artifact: 'beatgraph_png', label: 'Beat Intervals' },
+    ];
+    const taskId = encodeURIComponent(taskData.task_id);
+    container.innerHTML = items.map(({ artifact, label }) => {
+      const src = `/tasks/${taskId}/artifacts/${encodeURIComponent(artifact)}?t=${Date.now()}`;
+      return `
+        <figure style="margin:0;border:1px solid var(--border);border-radius:10px;padding:0.6rem;background:#11161f">
+          <figcaption style="font-size:0.78rem;color:var(--text-muted);margin-bottom:0.35rem">${escapeHtml(label)}</figcaption>
+          <a href="${src}" target="_blank" rel="noopener noreferrer">
+            <img src="${src}" alt="${escapeHtml(label)}" style="width:100%;height:auto;border-radius:8px;display:block" loading="lazy" />
+          </a>
+        </figure>
+      `;
+    }).join('');
   }
 
   async function drawMidiPianoRoll(taskData) {
@@ -1139,6 +1169,13 @@ python3 scripts/download_stem_models.py</code>
     const chords = Array.isArray(analysis && analysis.chords ? analysis.chords.segments : null)
       ? analysis.chords.segments
       : [];
+    const beatRows = Array.isArray(analysis && analysis.beatgrid ? analysis.beatgrid.beats : null)
+      ? analysis.beatgrid.beats
+      : [];
+    const beatTimes = beatRows
+      .map((entry) => toFiniteNumber(entry?.time, NaN))
+      .filter((value) => Number.isFinite(value) && value >= 0)
+      .sort((a, b) => a - b);
 
     const pps = stemPlayer.timelinePixelsPerSecond;
     const currentTime = getTransportTime();
@@ -1160,7 +1197,46 @@ python3 scripts/download_stem_models.py</code>
     ctx.stroke();
 
     // ── Beat and bar markers ─────────────────────────────────────────────────
-    if (bpm > 0 && duration > 0) {
+    if (beatTimes.length > 0 && duration > 0) {
+      const beatsPerBar = 4;
+      beatTimes.forEach((beatTime, idx) => {
+        const x = cx + (beatTime - currentTime) * pps;
+        if (x < -5 || x > W + 5) return;
+        const isBar = idx % beatsPerBar === 0;
+        if (isBar) {
+          const barNum = Math.floor(idx / beatsPerBar) + 1;
+          ctx.strokeStyle = 'rgba(108,99,255,0.45)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, RULER_H + WAVE_H);
+          ctx.stroke();
+          ctx.strokeStyle = 'rgba(108,99,255,0.8)';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(x, RULER_H - 8);
+          ctx.lineTo(x, RULER_H);
+          ctx.stroke();
+          ctx.fillStyle = 'rgba(180,170,255,0.85)';
+          ctx.font = 'bold 10px monospace';
+          ctx.textBaseline = 'top';
+          ctx.fillText(String(barNum), x + 3, 4);
+        } else {
+          ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+          ctx.lineWidth = 0.7;
+          ctx.beginPath();
+          ctx.moveTo(x, RULER_H + 4);
+          ctx.lineTo(x, RULER_H + WAVE_H);
+          ctx.stroke();
+          ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+          ctx.lineWidth = 0.7;
+          ctx.beginPath();
+          ctx.moveTo(x, RULER_H - 5);
+          ctx.lineTo(x, RULER_H);
+          ctx.stroke();
+        }
+      });
+    } else if (bpm > 0 && duration > 0) {
       const beatInterval = 60 / bpm;
       const beatsPerBar = 4;
       // Extra ±1 beat buffer ensures markers at the very edge of the viewport
@@ -1733,6 +1809,7 @@ python3 scripts/download_stem_models.py</code>
       pre.textContent = JSON.stringify(data, null, 2);
       await initStemWorkbench(data);
       renderArtifactDownloads(data);
+      renderBeatGraphPreviews(data);
       await drawMidiPianoRoll(data);
     } catch (_) {
       showAlert(alert, '❌ Failed to load task details.', 'error');

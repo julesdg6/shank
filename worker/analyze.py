@@ -1,8 +1,10 @@
 """Audio analysis helpers with optional advanced beat/downbeat/loudness detectors."""
 
 from functools import lru_cache
+import json
 import logging
 import os
+import subprocess
 
 import librosa
 import numpy as np
@@ -35,10 +37,18 @@ _TEMPO_CHANGE_MIN_GAP_SECONDS = 1.0
 _BARS_PER_SECTION = 8
 _OUTRO_OFFSET_SECONDS = 8.0
 _SILENT_LUFS = -70.0
+_BEAT_MODES = {'constant_tempo', 'variable_tempo'}
 
 
 def _clamp(value: float, minimum: float, maximum: float) -> float:
     return max(minimum, min(maximum, value))
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {'1', 'true', 'yes', 'on'}
 
 
 @lru_cache(maxsize=12)
@@ -291,6 +301,129 @@ def _madmom_beats(file_path: str) -> tuple[float | None, list[float], float] | N
         return None
 
 
+def _normalize_mixxx_beats(payload: dict) -> dict | None:
+    beats_raw = payload.get('beats')
+    if not isinstance(beats_raw, list):
+        return None
+
+    beat_entries: list[dict] = []
+    for item in beats_raw:
+        local_bpm: float | None = None
+        if isinstance(item, (int, float)):
+            time_value = float(item)
+        elif isinstance(item, dict):
+            time_raw = item.get('time', item.get('seconds'))
+            if not isinstance(time_raw, (int, float)):
+                continue
+            time_value = float(time_raw)
+            local_bpm_raw = item.get('local_bpm')
+            if isinstance(local_bpm_raw, (int, float)):
+                local_bpm = round(float(local_bpm_raw), 2)
+        else:
+            continue
+        if time_value < 0:
+            continue
+        entry = {'time': round(time_value, 3)}
+        if local_bpm is not None:
+            entry['local_bpm'] = local_bpm
+        beat_entries.append(entry)
+
+    if not beat_entries:
+        return None
+
+    bpm_raw = payload.get('bpm')
+    bpm = round(float(bpm_raw), 2) if isinstance(bpm_raw, (int, float)) else None
+    if bpm is None and len(beat_entries) > 1:
+        intervals = np.diff(np.array([entry['time'] for entry in beat_entries]))
+        if intervals.size and float(np.mean(intervals)) > 0:
+            bpm = round(float(60.0 / np.mean(intervals)), 2)
+
+    mode_raw = payload.get('mode')
+    if isinstance(mode_raw, str) and mode_raw in _BEAT_MODES:
+        mode = mode_raw
+    elif any(entry.get('local_bpm') is not None for entry in beat_entries):
+        mode = 'variable_tempo'
+    else:
+        mode = 'constant_tempo'
+
+    first_beat_raw = payload.get('first_beat_seconds')
+    first_beat_seconds = (
+        round(float(first_beat_raw), 3)
+        if isinstance(first_beat_raw, (int, float))
+        else beat_entries[0]['time']
+    )
+
+    confidence_raw = payload.get('confidence')
+    confidence = round(float(confidence_raw), 3) if isinstance(confidence_raw, (int, float)) else None
+
+    return {
+        'bpm': bpm,
+        'mode': mode,
+        'first_beat_seconds': first_beat_seconds,
+        'confidence': confidence,
+        'beats': beat_entries,
+    }
+
+
+def _mixxx_beats(file_path: str) -> dict | None:
+    beat_cli = os.getenv('MIXXX_BEAT_CLI', '').strip()
+    if not beat_cli:
+        return None
+
+    cmd = [beat_cli, '--input', file_path, '--output-format', 'json']
+    if _env_bool('MIXXX_FAST_ANALYSIS', False):
+        cmd.append('--fast-analysis')
+    if _env_bool('MIXXX_ASSUME_CONSTANT_TEMPO', True):
+        cmd.append('--assume-constant-tempo')
+    if _env_bool('MIXXX_OFFSET_CORRECTION', True):
+        cmd.append('--offset-correction')
+    if _env_bool('MIXXX_REANALYSE_IF_OUTDATED', True):
+        cmd.append('--reanalyse-if-outdated')
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    except OSError as exc:
+        log.debug('Mixxx beat analysis command unavailable: %s', exc)
+        return None
+
+    if result.returncode != 0:
+        log.debug('Mixxx beat analysis failed (exit=%s): %s', result.returncode, result.stderr.strip())
+        return None
+
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        log.debug('Mixxx beat analysis returned invalid JSON: %s', exc)
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+    return _normalize_mixxx_beats(payload)
+
+
+def _build_beatgrid(beats: list[float], bpm: float, mode: str, local_bpms: list[float | None] | None = None) -> dict:
+    beat_rows: list[dict] = []
+    for index, time_value in enumerate(beats, start=1):
+        row = {
+            'index': index,
+            'time': round(float(time_value), 3),
+        }
+        if mode == 'variable_tempo' and local_bpms is not None and index - 1 < len(local_bpms):
+            local_bpm = local_bpms[index - 1]
+            if local_bpm is not None:
+                row['local_bpm'] = round(float(local_bpm), 2)
+        beat_rows.append(row)
+
+    beatgrid = {
+        'bpm': round(float(bpm), 2),
+        'first_beat_seconds': beat_rows[0]['time'] if beat_rows else 0.0,
+        'beats': beat_rows,
+    }
+    if mode == 'variable_tempo':
+        beatgrid['mode'] = mode
+    return beatgrid
+
+
 def _beatnet_downbeats(file_path: str) -> list[float] | None:
     try:
         from BeatNet.BeatNet import BeatNet
@@ -414,13 +547,31 @@ def analyze_audio(file_path: str) -> dict:
     y, sr = librosa.load(file_path, mono=True)
 
     bpm, beats, bpm_confidence = _librosa_beats(y, sr)
-    madmom_result = _madmom_beats(file_path)
-    if madmom_result is not None:
-        madmom_bpm, madmom_beats, madmom_confidence = madmom_result
-        beats = madmom_beats or beats
-        bpm_confidence = madmom_confidence
-        if madmom_bpm is not None:
-            bpm = madmom_bpm
+    bpm_source = 'librosa'
+    beat_mode = 'constant_tempo'
+    local_bpms: list[float | None] | None = None
+
+    beat_detection_engine = os.getenv('BEAT_DETECTION_ENGINE', 'librosa').strip().lower()
+    mixxx_result = _mixxx_beats(file_path) if beat_detection_engine in {'mixxx', 'auto'} else None
+    if mixxx_result is not None:
+        mixxx_bpm = mixxx_result.get('bpm')
+        if isinstance(mixxx_bpm, (int, float)):
+            bpm = round(float(mixxx_bpm), 2)
+        beats = [entry['time'] for entry in mixxx_result['beats']]
+        local_bpms = [entry.get('local_bpm') for entry in mixxx_result['beats']]
+        beat_mode = str(mixxx_result.get('mode', 'constant_tempo'))
+        mixxx_confidence = mixxx_result.get('confidence')
+        bpm_confidence = round(float(mixxx_confidence), 3) if isinstance(mixxx_confidence, (int, float)) else bpm_confidence
+        bpm_source = 'mixxx'
+    else:
+        madmom_result = _madmom_beats(file_path)
+        if madmom_result is not None:
+            madmom_bpm, madmom_beats, madmom_confidence = madmom_result
+            beats = madmom_beats or beats
+            bpm_confidence = madmom_confidence
+            if madmom_bpm is not None:
+                bpm = madmom_bpm
+                bpm_source = 'madmom'
 
     duration_seconds = round(float(librosa.get_duration(y=y, sr=sr)), 2)
 
@@ -436,9 +587,19 @@ def analyze_audio(file_path: str) -> dict:
 
     downbeats = _beatnet_downbeats(file_path) or _fallback_downbeats(beats)
     tempo_changes = _detect_tempo_changes(beats)
+    if beat_mode != 'variable_tempo' and tempo_changes:
+        beat_mode = 'variable_tempo'
     lufs = _measure_lufs(y, sr)
     sections = _derive_sections(downbeats, duration_seconds)
     cue_points = _derive_cue_points(downbeats, beats, duration_seconds)
+    beatgrid = _build_beatgrid(beats, bpm, beat_mode, local_bpms=local_bpms)
+    beat_detection = {
+        'engine': 'mixxx' if bpm_source == 'mixxx' else bpm_source,
+        'mode': beat_mode,
+        'first_beat_seconds': beatgrid['first_beat_seconds'],
+        'beat_count': len(beats),
+        'confidence': None if bpm_source == 'mixxx' else round(float(bpm_confidence), 3),
+    }
 
     # Lightweight summary artifacts for UI visualizations.
     waveform_bins = 128
@@ -496,6 +657,7 @@ def analyze_audio(file_path: str) -> dict:
 
     return {
         'bpm': bpm,
+        'bpm_source': bpm_source,
         'bpm_confidence': round(float(bpm_confidence), 3),
         'key': key,
         'key_confidence': key_confidence,
@@ -506,6 +668,8 @@ def analyze_audio(file_path: str) -> dict:
         'sections': sections,
         'cue_points': cue_points,
         'chords': chords,
+        'beat_detection': beat_detection,
+        'beatgrid': beatgrid,
         'tempo_changes': tempo_changes,
         'waveform': waveform,
         'frequency_histogram': frequency_histogram,

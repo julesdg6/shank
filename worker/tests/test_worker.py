@@ -113,6 +113,17 @@ def test_pending_upload_task_is_normalized(data_dir):
         'bpm': 128.0,
         'key': 'A minor',
         'duration_seconds': 95.75,
+        'beats': [0.5, 1.0, 1.5, 2.0],
+        'beatgrid': {
+            'bpm': 128.0,
+            'first_beat_seconds': 0.5,
+            'beats': [
+                {'index': 1, 'time': 0.5},
+                {'index': 2, 'time': 1.0},
+                {'index': 3, 'time': 1.5},
+                {'index': 4, 'time': 2.0},
+            ],
+        },
         'waveform': [0.1, -0.1],
         'frequency_histogram': [0.2, 0.8],
         'spectrogram_summary': [-12.0, -8.0],
@@ -137,6 +148,10 @@ def test_pending_upload_task_is_normalized(data_dir):
     assert 'results' in updated
     assert Path(updated['results']['dir']).name == task['task_id']
     assert Path(updated['results']['analysis_json']).is_file()
+    assert Path(updated['results']['beatgrid_json']).is_file()
+    assert Path(updated['results']['waveform_beats_png']).is_file()
+    assert Path(updated['results']['tempo_curve_png']).is_file()
+    assert Path(updated['results']['beatgraph_png']).is_file()
     assert Path(updated['results']['task_json']).is_file()
     assert Path(updated['results']['mt3_json']).is_file()
     assert Path(updated['results']['artifacts_json']).is_file()

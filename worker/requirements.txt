@@ -4,3 +4,4 @@ soundfile==0.13.1
 yt-dlp==2026.3.17
 music21==10.3.0
 audio-separator[cpu]==0.44.2
+matplotlib==3.10.7
