@@ -259,6 +259,27 @@ def test_submit_url_persists_mt3_override(client, tmp_path):
     assert task['enable_mt3'] is False
 
 
+def test_submit_url_persists_mt3_enabled_override(client, tmp_path):
+    response = client.post(
+        '/tasks/url',
+        json={'url': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'enable_mt3': True},
+    )
+    assert response.status_code == 202
+    task_id = response.json()['task_id']
+    task_file = tmp_path / 'tasks' / f'{task_id}.json'
+    task = json.loads(task_file.read_text())
+    assert task['enable_mt3'] is True
+
+
+def test_submit_url_omits_mt3_override_when_not_provided(client, tmp_path):
+    response = client.post('/tasks/url', json={'url': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'})
+    assert response.status_code == 202
+    task_id = response.json()['task_id']
+    task_file = tmp_path / 'tasks' / f'{task_id}.json'
+    task = json.loads(task_file.read_text())
+    assert 'enable_mt3' not in task
+
+
 # ---------------------------------------------------------------------------
 # GET /tasks/{task_id}
 # ---------------------------------------------------------------------------
