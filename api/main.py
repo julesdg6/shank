@@ -398,13 +398,19 @@ def read_root(request: Request):
 # ---------------------------------------------------------------------------
 
 @app.post('/tasks/upload', status_code=202)
-async def upload_audio(file: UploadFile = File(...), enable_mt3: bool | None = Form(None)):
+async def upload_audio(
+    file: UploadFile = File(...),
+    enable_mt3: bool | None = Form(default=None),
+):
     """Accept an audio file (MP3, WAV, FLAC) and queue it for analysis."""
     return JSONResponse(status_code=202, content=await _queue_audio_task(file, enable_mt3=enable_mt3))
 
 
 @app.post('/tasks/melody', status_code=202)
-async def submit_melody(file: UploadFile = File(...), enable_mt3: bool = Form(True)):
+async def submit_melody(
+    file: UploadFile = File(...),
+    enable_mt3: bool = Form(True),
+):
     """Accept an audio file and queue a melody-focused analysis task."""
     return JSONResponse(
         status_code=202,
@@ -736,6 +742,29 @@ def get_stem_backend_status():
             'model': demucs_model,
             'device': demucs_device,
         },
+    }
+
+
+@app.get('/mt3/status')
+def get_mt3_status():
+    enabled = os.getenv('MT3_ENABLED', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
+    backend = os.getenv('TRANSCRIPTION_BACKEND', 'basic_pitch').strip().lower() or 'basic_pitch'
+    service_url = os.getenv('MT3_SERVICE_URL', '').strip()
+    available = enabled and backend != 'disabled' and bool(service_url)
+    message = 'MT3 is available.'
+    if not enabled:
+        message = 'MT3 is disabled by configuration (MT3_ENABLED=false).'
+    elif backend == 'disabled':
+        message = 'Transcription backend is disabled.'
+    elif not service_url:
+        message = 'MT3 service URL is not configured.'
+
+    return {
+        'available': available,
+        'enabled': enabled,
+        'backend': backend,
+        'service_url': service_url or None,
+        'message': message,
     }
 
 

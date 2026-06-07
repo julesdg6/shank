@@ -231,10 +231,17 @@ def transcribe_with_mt3(normalized_path: str, task_id: str, source_name: str = '
     )
 
 
-def run_mt3_transcription(task_id: str, normalized_path: str, stems: dict[str, str] | None = None) -> dict:
+def run_mt3_transcription(
+    task_id: str,
+    normalized_path: str,
+    stems: dict[str, str] | None = None,
+    *,
+    enabled: bool | None = None,
+) -> dict:
     """Run MT3 transcription (full mix first, then optional stems)."""
+    mt3_enabled = MT3_ENABLED if enabled is None else bool(enabled)
     result: dict[str, Any] = {
-        'enabled': MT3_ENABLED,
+        'enabled': mt3_enabled,
         'backend': TRANSCRIPTION_BACKEND,
         'status': 'disabled',
         'model': MT3_MODEL,
@@ -245,7 +252,7 @@ def run_mt3_transcription(task_id: str, normalized_path: str, stems: dict[str, s
         'stems': {},
     }
 
-    if not MT3_ENABLED:
+    if not mt3_enabled:
         return result
     if not MT3_SERVICE_URL:
         result['status'] = 'failed'
@@ -601,13 +608,16 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
 
         # effective_backend == 'none' (or any unrecognized value): skip stem separation.
 
-        should_run_mt3 = _task_requests_mt3(task)
-        if should_run_mt3 and MT3_ENABLED:
+        task_mt3_override = task.get('enable_mt3')
+        mt3_enabled_for_task = bool(task_mt3_override) if isinstance(task_mt3_override, bool) else MT3_ENABLED
+        if mt3_enabled_for_task:
             _record_task_progress(task_file, 78, 'Transcribing MIDI')
-        if should_run_mt3:
-            mt3_result = run_mt3_transcription(task_id, normalized_path, stems=stem_tracks)
-        else:
-            mt3_result = _mt3_disabled_result('MT3 skipped because it was disabled for this task.')
+        mt3_result = run_mt3_transcription(
+            task_id,
+            normalized_path,
+            stems=stem_tracks,
+            enabled=mt3_enabled_for_task,
+        )
         _update_task(task_file, {
             'mt3': mt3_result,
             'transcription': _transcription_payload_from_mt3(mt3_result),

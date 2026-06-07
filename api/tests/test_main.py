@@ -144,6 +144,32 @@ def test_upload_persists_enable_mt3_flag(client, tmp_path):
     assert task['enable_mt3'] is False
 
 
+def test_submit_melody_upload_persists_mt3_override(client, tmp_path):
+    response = client.post(
+        '/tasks/melody',
+        files={'file': ('melody.wav', io.BytesIO(b'RIFF' + b'\x00' * 36), 'audio/wav')},
+        data={'enable_mt3': 'true'},
+    )
+    assert response.status_code == 202
+    task_id = response.json()['task_id']
+    task_file = tmp_path / 'tasks' / f'{task_id}.json'
+    task = json.loads(task_file.read_text())
+    assert task['enable_mt3'] is True
+
+
+def test_upload_persists_mt3_disable_override(client, tmp_path):
+    response = client.post(
+        '/tasks/upload',
+        files={'file': ('song.mp3', io.BytesIO(b'\xff\xfb\x90\x00' + b'\x00' * 100), 'audio/mpeg')},
+        data={'enable_mt3': 'false'},
+    )
+    assert response.status_code == 202
+    task_id = response.json()['task_id']
+    task_file = tmp_path / 'tasks' / f'{task_id}.json'
+    task = json.loads(task_file.read_text())
+    assert task['enable_mt3'] is False
+
+
 def test_upload_invalid_extension(client):
     response = client.post(
         '/tasks/upload',
@@ -646,6 +672,41 @@ def test_stem_backend_status_prefers_healthy_ace_step(client, monkeypatch):
     request = mock_urlopen.call_args.args[0]
     assert request.full_url == 'http://ace-step:8001'
     assert request.get_header('Authorization') == 'Bearer secret-token'
+
+
+# ---------------------------------------------------------------------------
+# GET /mt3/status
+# ---------------------------------------------------------------------------
+
+def test_mt3_status_reports_available(client, monkeypatch):
+    monkeypatch.setenv('MT3_ENABLED', 'true')
+    monkeypatch.setenv('MT3_SERVICE_URL', 'http://127.0.0.1:8090')
+    monkeypatch.setenv('TRANSCRIPTION_BACKEND', 'mt3')
+    import api.main as main_module  # noqa: PLC0415
+    importlib.reload(main_module)
+    c = TestClient(main_module.app)
+
+    response = c.get('/mt3/status')
+    assert response.status_code == 200
+    data = response.json()
+    assert data['available'] is True
+    assert data['enabled'] is True
+    assert data['backend'] == 'mt3'
+
+
+def test_mt3_status_reports_disabled_when_mt3_off(client, monkeypatch):
+    monkeypatch.setenv('MT3_ENABLED', 'false')
+    monkeypatch.setenv('MT3_SERVICE_URL', 'http://127.0.0.1:8090')
+    monkeypatch.setenv('TRANSCRIPTION_BACKEND', 'mt3')
+    import api.main as main_module  # noqa: PLC0415
+    importlib.reload(main_module)
+    c = TestClient(main_module.app)
+
+    response = c.get('/mt3/status')
+    assert response.status_code == 200
+    data = response.json()
+    assert data['available'] is False
+    assert 'disabled' in data['message']
 
 
 # ---------------------------------------------------------------------------

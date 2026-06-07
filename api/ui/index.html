@@ -134,6 +134,25 @@
     }
     input[type="url"]:focus, input[type="text"]:focus { border-color: var(--accent); }
     input::placeholder { color: var(--text-muted); }
+    .select-control {
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-size: 0.9rem;
+      padding: 0.65rem 0.9rem;
+      outline: none;
+    }
+    .select-control:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .settings-note {
+      margin-top: 0.6rem;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+    }
 
     /* ── Buttons ── */
     .btn {
@@ -493,6 +512,20 @@
           <button class="btn btn-primary" id="url-btn">
             Submit &amp; Analyze
           </button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2><span class="icon">🎵</span> Transcription Settings</h2>
+        <div class="input-group">
+          <label for="mt3-toggle" style="font-size:0.84rem;color:var(--text-muted)">MT3 Transcription</label>
+          <select id="mt3-toggle" class="select-control">
+            <option value="auto">🎚️ Auto (default)</option>
+            <option value="true">🎤 Enable MT3</option>
+            <option value="false">🚫 Disable MT3</option>
+          </select>
+          <div class="settings-note" id="mt3-status-note">Checking MT3 availability…</div>
+          <div class="alert" id="mt3-alert"></div>
         </div>
       </div>
 
@@ -1714,8 +1747,45 @@ python3 scripts/download_stem_models.py</code>
   const uploadAlert = document.getElementById('upload-alert');
   const uploadMt3Toggle = document.getElementById('upload-mt3-toggle');
   const uploadMt3Help = document.getElementById('upload-mt3-help');
+  const mt3Toggle = document.getElementById('mt3-toggle');
+  const mt3StatusNote = document.getElementById('mt3-status-note');
+  const mt3Alert = document.getElementById('mt3-alert');
 
   let selectedFile = null;
+  let mt3Available = false;
+
+  function selectedMt3Override() {
+    if (!mt3Toggle) return null;
+    if (mt3Toggle.value === 'true') return true;
+    if (mt3Toggle.value === 'false') return false;
+    return null;
+  }
+
+  async function refreshMt3Status() {
+    if (!mt3Toggle || !mt3StatusNote) return;
+    try {
+      const res = await fetch(`${API}/mt3/status`, { cache: 'no-store' });
+      if (!res.ok) throw new Error('Unable to fetch MT3 status');
+      const data = await res.json();
+      mt3Available = Boolean(data?.available);
+      mt3Toggle.disabled = !mt3Available;
+      if (!mt3Available) mt3Toggle.value = 'auto';
+      mt3StatusNote.textContent = mt3Available
+        ? `Available (${data?.backend || 'mt3'})`
+        : (data?.message || 'MT3 is unavailable.');
+      if (!mt3Available) {
+        showAlert(mt3Alert, '🚫 MT3 is not currently available.', 'error');
+      } else {
+        clearAlert(mt3Alert);
+      }
+    } catch (_) {
+      mt3Available = false;
+      mt3Toggle.disabled = true;
+      mt3Toggle.value = 'auto';
+      mt3StatusNote.textContent = 'MT3 status unavailable.';
+      showAlert(mt3Alert, '🚫 Could not verify MT3 availability.', 'error');
+    }
+  }
 
   function setFile(f) {
     if (!f) return;
@@ -1748,7 +1818,12 @@ python3 scripts/download_stem_models.py</code>
     try {
       const formData = new FormData();
       formData.append('file', selectedFile);
-      formData.append('enable_mt3', uploadMt3Toggle.checked ? 'true' : 'false');
+      const mt3Override = selectedMt3Override();
+      if (mt3Override !== null) {
+        formData.append('enable_mt3', String(mt3Override));
+      } else if (uploadMt3Toggle) {
+        formData.append('enable_mt3', uploadMt3Toggle.checked ? 'true' : 'false');
+      }
 
       // Use XMLHttpRequest for upload progress
       const result = await new Promise((resolve, reject) => {
@@ -1821,6 +1896,8 @@ python3 scripts/download_stem_models.py</code>
 
   urlBtn.addEventListener('click', submitUrl);
   urlInput.addEventListener('keydown', e => { if (e.key === 'Enter') submitUrl(); });
+  refreshMt3Status();
+  setInterval(refreshMt3Status, 60000);
 
   // ── Model Download ────────────────────────────────────────────────────────
   const modelsReadyChip = document.getElementById('models-ready-chip');
