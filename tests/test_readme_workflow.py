@@ -23,3 +23,4 @@ def test_readme_contains_workflow_update_markers():
 
     assert '<!-- readme-update:start -->' in text
     assert '<!-- readme-update:end -->' in text
+    assert '### Setup\n\n```bash\npython3 scripts/download_stem_models.py\n```' in text
