@@ -1827,6 +1827,8 @@ python3 scripts/download_stem_models.py</code>
   const modelsRetryBtn = document.getElementById('models-retry-btn');
   const modelsCheckBtn = document.getElementById('models-check-btn');
   const modelsDownloadAgainBtn = document.getElementById('models-download-again-btn');
+  let modelsStatusFastPoll = false;
+  let modelsStatusPollTimer = null;
 
   async function startModelDownload(sixStems) {
     try {
@@ -1867,6 +1869,7 @@ python3 scripts/download_stem_models.py</code>
       const data = await res.json();
       const progress = Math.max(0, Math.min(100, Math.round(Number(data?.progress_percent || 0))));
       const downloading = Boolean(data?.is_downloading);
+      modelsStatusFastPoll = downloading;
       const modelsReady = Boolean(data?.models_ready);
       if (modelsReady) {
         modelsReadyChip.className = 'model-status-chip ready';
@@ -1904,10 +1907,17 @@ python3 scripts/download_stem_models.py</code>
       const disk = Number.isFinite(Number(data?.available_disk_gb)) ? ` | Free disk: ${data.available_disk_gb} GB` : '';
       modelsProgressText.textContent = `Progress: ${progress}% (${downloadedMb}/${totalMb} MB) · Status: ${baseStatus}${eta}${disk}${warning}`;
     } catch (_) {
+      modelsStatusFastPoll = false;
       modelsReadyChip.className = 'model-status-chip missing';
       modelsReadyChip.textContent = '⚠ Models Unknown';
       modelsProgressText.textContent = 'Unable to fetch model status. Use Retry Status.';
     }
+  }
+
+  async function pollModelStatus() {
+    await refreshModelStatus();
+    clearTimeout(modelsStatusPollTimer);
+    modelsStatusPollTimer = setTimeout(pollModelStatus, modelsStatusFastPoll ? 500 : 5000);
   }
 
   modelsDownloadBtn.addEventListener('click', () => startModelDownload(false));
@@ -1916,8 +1926,7 @@ python3 scripts/download_stem_models.py</code>
   modelsRetryBtn.addEventListener('click', refreshModelStatus);
   modelsCheckBtn.addEventListener('click', refreshModelStatus);
   modelsDownloadAgainBtn.addEventListener('click', () => startModelDownload(false));
-  refreshModelStatus();
-  setInterval(refreshModelStatus, 500);
+  pollModelStatus();
 
   // ── API Health ────────────────────────────────────────────────────────────
   async function checkApiHealth() {

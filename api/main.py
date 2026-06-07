@@ -230,7 +230,7 @@ def _run_model_download(cmd: list[str], cwd: Path, total_steps: int) -> None:
             else:
                 _MODEL_DOWNLOAD_STATE['status'] = 'failed'
                 _MODEL_DOWNLOAD_STATE['error'] = f'Model download failed with exit code {return_code}.'
-    except Exception as exc:  # pragma: no cover - defensive fallback
+    except (OSError, subprocess.SubprocessError) as exc:  # pragma: no cover - defensive fallback
         with _MODEL_DOWNLOAD_LOCK:
             _MODEL_DOWNLOAD_STATE['is_downloading'] = False
             _MODEL_DOWNLOAD_STATE['process'] = None
@@ -247,15 +247,9 @@ def _start_model_download(six_stems: bool, model_dir: str | None) -> dict[str, A
     if not runtime_dir.is_dir():
         runtime_dir = Path(__file__).resolve().parents[1]
 
-    resolved_model_dir = Path(model_dir).expanduser() if model_dir else DEFAULT_SEPARATOR_MODEL_DIR
-    if not resolved_model_dir.is_absolute():
-        resolved_model_dir = (runtime_dir / resolved_model_dir).resolve()
-    else:
-        resolved_model_dir = resolved_model_dir.resolve()
-    try:
-        resolved_model_dir.relative_to(runtime_dir.resolve())
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail='model_dir must stay within /srv/shank') from exc
+    if model_dir:
+        raise HTTPException(status_code=400, detail='Custom model_dir is not supported by this endpoint')
+    resolved_model_dir = DEFAULT_SEPARATOR_MODEL_DIR.resolve()
 
     with _MODEL_DOWNLOAD_LOCK:
         already_downloading = bool(_MODEL_DOWNLOAD_STATE.get('is_downloading'))

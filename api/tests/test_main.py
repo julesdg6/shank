@@ -669,7 +669,7 @@ def test_models_status_reports_ready_when_model_exists(client, monkeypatch, tmp_
     assert data['models']['htdemucs_ft.yaml']['exists'] is True
 
 
-def test_models_download_endpoint_forwards_parameters(client, monkeypatch):
+def test_models_download_endpoint_forwards_six_stems(client, monkeypatch):
     captured = {}
 
     def fake_start(*, six_stems: bool, model_dir: str | None):
@@ -679,10 +679,15 @@ def test_models_download_endpoint_forwards_parameters(client, monkeypatch):
 
     monkeypatch.setattr(main_module, '_start_model_download', fake_start)
 
-    response = client.post('/api/models/download?six_stems=true&model_dir=models/separator')
+    response = client.post('/api/models/download?six_stems=true')
     assert response.status_code == 200
     assert response.json()['started'] is True
-    assert captured == {'six_stems': True, 'model_dir': 'models/separator'}
+    assert captured == {'six_stems': True, 'model_dir': None}
+
+
+def test_models_download_endpoint_rejects_custom_model_dir(client):
+    response = client.post('/api/models/download?model_dir=models/separator')
+    assert response.status_code == 400
 
 
 def test_models_cancel_returns_no_active_download(client):
