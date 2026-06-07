@@ -32,3 +32,16 @@ def test_readme_documents_stem_model_setup():
     assert '### Setup' in text
     assert 'python3 scripts/download_stem_models.py --6stems' in text
     assert '### Troubleshooting' in text
+
+
+def test_readme_documents_unraid_setup_and_assets():
+    repo_root = Path(__file__).resolve().parents[1]
+    readme = repo_root / 'README.md'
+    text = readme.read_text()
+
+    assert '## 🖥️ Unraid 7+ setup' in text
+    assert '/boot/config/plugins/dockerMan/templates-user/shank.xml' in text
+    assert '--gpus all' in text
+
+    assert (repo_root / 'unraid' / 'shank.xml').exists()
+    assert (repo_root / 'unraid' / 'shank-icon.png').exists()

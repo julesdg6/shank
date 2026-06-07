@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>shank</Name>
+  <Repository>ghcr.io/julesdg6/shank:latest</Repository>
+  <Registry>https://ghcr.io</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/julesdg6/shank</Support>
+  <Project>https://github.com/julesdg6/shank</Project>
+  <Overview>SHANK is a self-hosted audio analysis toolkit for BPM, key, chord progression, stem separation, and optional MIDI transcription.</Overview>
+  <Category>Music: Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8088]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/julesdg6/shank/master/unraid/shank.xml</TemplateURL>
+  <Icon>/boot/config/plugins/dockerMan/images/shank-icon.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled>1749326400</DateInstalled>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config Name="Web UI Port" Target="8088" Default="8088" Mode="tcp" Description="Container port for SHANK API and dashboard." Type="Port" Display="always" Required="true" Mask="false">8088</Config>
+  <Config Name="App Data" Target="/srv/shank/data" Default="/mnt/user/appdata/shank/data" Mode="rw" Description="Task data and outputs." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/shank/data</Config>
+  <Config Name="Model Cache" Target="/srv/shank/models/separator" Default="/mnt/user/appdata/shank/models/separator" Mode="rw" Description="Persistent stem-separation model cache." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/shank/models/separator</Config>
+  <Config Name="AUDIO_SEPARATOR_DEVICE" Target="AUDIO_SEPARATOR_DEVICE" Default="cpu" Mode="" Description="Set to cuda when using NVIDIA GPU with --gpus all." Type="Variable" Display="advanced" Required="false" Mask="false">cpu</Config>
+  <Config Name="MT3_DEVICE" Target="MT3_DEVICE" Default="cpu" Mode="" Description="Set to gpu when using NVIDIA GPU with --gpus all." Type="Variable" Display="advanced" Required="false" Mask="false">cpu</Config>
+</Container>

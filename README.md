@@ -1,6 +1,6 @@
-# 🎵 SHANK: AI Song Analyzer
+# 🎵 SHANK: Self-Hosted Song Analysis Toolkit
 
-SHANK is a powerful, Dockerized, self-hosted tool designed to perform deep musical analysis on audio files and YouTube videos. It extracts technical and creative metadata from music, including BPM, musical key, and optionally separated stems.
+SHANK is a Dockerized, self-hosted toolkit for deep music analysis across uploaded audio files and YouTube videos. It produces practical outputs for creators and DJs, including BPM, key, chord progression data, separated stems, and optional MIDI transcription.
 
 ## 🎯 Project Aim
 To provide users with an automated pipeline that transforms raw audio/URLs into structured musical intelligence, including tempo, key, chord progressions, and MIDI melodies.
@@ -154,6 +154,39 @@ Navigate to **http://localhost:8088/** in your browser to upload audio files or 
 ```bash
 docker compose down
 ```
+
+## 🖥️ Unraid 7+ setup
+
+An Unraid template has been added at `/unraid/shank.xml` with icon `/unraid/shank-icon.png`.
+
+### 1. Install template + icon to the Unraid boot drive
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/julesdg6/shank/master/unraid/shank.xml \
+  -o /boot/config/plugins/dockerMan/templates-user/shank.xml
+
+curl -fsSL https://raw.githubusercontent.com/julesdg6/shank/master/unraid/shank-icon.png \
+  -o /boot/config/plugins/dockerMan/images/shank-icon.png
+```
+
+Then open **Docker > Add Container** and select the `shank` template.
+
+### 2. Configure paths and launch
+
+- Set your data path (template default): `/mnt/user/appdata/shank`
+- Expose port `8088`
+- Save and start the container
+
+### 3. GPU flags (optional)
+
+In Unraid's Docker template advanced view, set:
+
+- **Extra Parameters**: `--gpus all`
+- **Environment Variables**:
+  - `AUDIO_SEPARATOR_DEVICE=cuda`
+  - `MT3_DEVICE=gpu`
+
+If you are not using an NVIDIA GPU, leave these unset and keep CPU defaults.
 
 ## 👩‍💻 Local Development Workflow
 
