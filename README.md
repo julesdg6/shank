@@ -430,6 +430,12 @@ docker build --build-arg INSTALL_BASIC_PITCH=true -t shank .
 
 SHANK bundles [python-audio-separator](https://github.com/nomadkaraoke/python-audio-separator) as the default stem separation backend. No external service is required — it runs entirely inside the container.
 
+### Setup
+
+```bash
+python3 scripts/download_stem_models.py
+```
+
 ### Supported stem counts
 
 | Model | Stems produced |
