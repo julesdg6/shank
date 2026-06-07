@@ -1873,10 +1873,15 @@ python3 scripts/download_stem_models.py</code>
     urlBtn.disabled = true;
 
     try {
+      const payload = { url };
+      const mt3Override = selectedMt3Override();
+      if (mt3Override !== null) {
+        payload.enable_mt3 = mt3Override;
+      }
       const res = await fetch(`${API}/tasks/url`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok) {
