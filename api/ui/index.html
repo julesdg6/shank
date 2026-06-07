@@ -466,6 +466,13 @@
           <div class="progress-bar" id="upload-progress-bar" style="width:0%"></div>
         </div>
         <div class="alert" id="upload-alert"></div>
+        <div style="margin-top:0.75rem">
+          <label style="display:flex;align-items:center;gap:0.45rem;font-size:0.9rem;color:var(--text)">
+            <input type="checkbox" id="upload-mt3-toggle" checked />
+            <span>🎵 Generate MIDI (MT3)</span>
+          </label>
+          <p id="upload-mt3-help" class="muted" style="font-size:0.75rem;margin-top:0.25rem">Checking MT3 availability…</p>
+        </div>
         <button class="btn btn-primary" id="upload-btn" style="margin-top:1rem;width:100%" disabled>
           Upload &amp; Analyze
         </button>
@@ -1705,6 +1712,8 @@ python3 scripts/download_stem_models.py</code>
   const dzSelected = document.getElementById('dz-selected');
   const uploadBtn = document.getElementById('upload-btn');
   const uploadAlert = document.getElementById('upload-alert');
+  const uploadMt3Toggle = document.getElementById('upload-mt3-toggle');
+  const uploadMt3Help = document.getElementById('upload-mt3-help');
 
   let selectedFile = null;
 
@@ -1739,6 +1748,7 @@ python3 scripts/download_stem_models.py</code>
     try {
       const formData = new FormData();
       formData.append('file', selectedFile);
+      formData.append('enable_mt3', uploadMt3Toggle.checked ? 'true' : 'false');
 
       // Use XMLHttpRequest for upload progress
       const result = await new Promise((resolve, reject) => {
@@ -1965,6 +1975,30 @@ python3 scripts/download_stem_models.py</code>
   }
   checkStemBackendStatus();
   setInterval(checkStemBackendStatus, 60000);
+
+  // ── MT3 Availability ───────────────────────────────────────────────────────
+  async function checkTranscriptionStatus() {
+    if (!uploadMt3Toggle || !uploadMt3Help) return;
+    try {
+      const res = await fetch(`${API}/transcription/status`, { cache: 'no-store' });
+      if (!res.ok) throw new Error('status unavailable');
+      const data = await res.json();
+      if (data.available) {
+        uploadMt3Toggle.disabled = false;
+        uploadMt3Help.textContent = `MT3 ready (${data.backend || 'unknown'} backend)`;
+      } else {
+        uploadMt3Toggle.checked = false;
+        uploadMt3Toggle.disabled = true;
+        uploadMt3Help.textContent = 'MT3 unavailable: enable MT3 service/configuration to use transcription.';
+      }
+    } catch (_) {
+      uploadMt3Toggle.checked = false;
+      uploadMt3Toggle.disabled = true;
+      uploadMt3Help.textContent = 'MT3 status unavailable.';
+    }
+  }
+  checkTranscriptionStatus();
+  setInterval(checkTranscriptionStatus, 60000);
 
   // ── Worker Status ─────────────────────────────────────────────────────────
   async function checkWorkerStatus() {

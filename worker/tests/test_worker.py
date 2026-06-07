@@ -494,6 +494,29 @@ def test_pending_upload_task_records_mt3_results_when_enabled(data_dir, monkeypa
     assert len(updated['transcription']['notes']) == 1
 
 
+def test_pending_upload_task_skips_mt3_when_disabled_per_task(data_dir, monkeypatch):
+    monkeypatch.setenv('MT3_ENABLED', 'true')
+    monkeypatch.setenv('MT3_SERVICE_URL', DEFAULT_MT3_SERVICE_URL)
+    importlib.reload(worker_loop)
+    task, task_file = _make_upload_task(data_dir)
+    task['enable_mt3'] = False
+    task_file.write_text(json.dumps(task))
+
+    with patch('worker_loop.normalize_audio'), \
+         patch('worker_loop.run_mt3_transcription') as mock_run_mt3, \
+         patch('worker_loop.analyze_audio', return_value={'bpm': 128.0, 'key': 'A minor'}):
+        count = worker_loop.process_pending_tasks()
+
+    assert count == 1
+    mock_run_mt3.assert_not_called()
+    updated = json.loads(task_file.read_text())
+    assert updated['status'] == 'done'
+    assert updated['mt3']['enabled'] is False
+    assert updated['mt3']['status'] == 'disabled'
+    assert updated['transcription']['enabled'] is False
+    assert updated['transcription']['status'] == 'disabled'
+
+
 def test_pending_upload_task_caches_ace_step_url_stems_for_mt3(data_dir, monkeypatch):
     """Ace-step URL stems should be downloaded to local cache paths before MT3."""
     monkeypatch.setenv('ACE_STEP_API_URL', 'http://ace-step:8001')

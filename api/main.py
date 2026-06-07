@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Request
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
@@ -305,7 +305,12 @@ def _resolve_data_path(path_value: str) -> Path | None:
     return resolved
 
 
-async def _queue_audio_task(file: UploadFile, *, requested_type: str | None = None) -> dict:
+async def _queue_audio_task(
+    file: UploadFile,
+    *,
+    requested_type: str | None = None,
+    enable_mt3: bool | None = None,
+) -> dict:
     if requested_type is not None and requested_type not in ALLOWED_REQUESTED_TYPES:
         raise HTTPException(status_code=400, detail='Unsupported requested_type')
 
@@ -347,6 +352,8 @@ async def _queue_audio_task(file: UploadFile, *, requested_type: str | None = No
     }
     if requested_type is not None:
         task['requested_type'] = requested_type
+    if enable_mt3 is not None:
+        task['enable_mt3'] = enable_mt3
     _write_task(task)
 
     return {'task_id': task_id, 'status': 'pending'}
@@ -391,15 +398,18 @@ def read_root(request: Request):
 # ---------------------------------------------------------------------------
 
 @app.post('/tasks/upload', status_code=202)
-async def upload_audio(file: UploadFile = File(...)):
+async def upload_audio(file: UploadFile = File(...), enable_mt3: bool | None = Form(None)):
     """Accept an audio file (MP3, WAV, FLAC) and queue it for analysis."""
-    return JSONResponse(status_code=202, content=await _queue_audio_task(file))
+    return JSONResponse(status_code=202, content=await _queue_audio_task(file, enable_mt3=enable_mt3))
 
 
 @app.post('/tasks/melody', status_code=202)
-async def submit_melody(file: UploadFile = File(...)):
+async def submit_melody(file: UploadFile = File(...), enable_mt3: bool = Form(True)):
     """Accept an audio file and queue a melody-focused analysis task."""
-    return JSONResponse(status_code=202, content=await _queue_audio_task(file, requested_type='melody'))
+    return JSONResponse(
+        status_code=202,
+        content=await _queue_audio_task(file, requested_type='melody', enable_mt3=enable_mt3),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -653,6 +663,21 @@ def get_worker_status():
             'age_seconds': None,
             'stale_threshold_seconds': stale_threshold,
         }
+
+
+@app.get('/transcription/status')
+def get_transcription_status():
+    """Return MT3 transcription availability and current backend configuration."""
+    backend = os.getenv('TRANSCRIPTION_BACKEND', 'basic_pitch').strip() or 'basic_pitch'
+    mt3_enabled = os.getenv('MT3_ENABLED', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
+    service_url = os.getenv('MT3_SERVICE_URL', '').strip().rstrip('/')
+    return {
+        'backend': backend,
+        'mt3_enabled': mt3_enabled,
+        'service_configured': bool(service_url),
+        'service_url': service_url or None,
+        'available': mt3_enabled and bool(service_url),
+    }
 
 
 # ---------------------------------------------------------------------------

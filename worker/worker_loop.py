@@ -297,6 +297,30 @@ def run_mt3_transcription(task_id: str, normalized_path: str, stems: dict[str, s
     return result
 
 
+def _mt3_disabled_result(reason: str | None = None) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        'enabled': False,
+        'backend': TRANSCRIPTION_BACKEND,
+        'status': 'disabled',
+        'model': MT3_MODEL,
+        'output_paths': [],
+        'warnings': [],
+        'errors': [],
+        'full_mix': None,
+        'stems': {},
+    }
+    if reason:
+        result['warnings'].append(reason)
+    return result
+
+
+def _task_requests_mt3(task: dict[str, Any]) -> bool:
+    explicit_toggle = task.get('enable_mt3')
+    if isinstance(explicit_toggle, bool):
+        return explicit_toggle
+    return True
+
+
 def _transcription_payload_from_mt3(mt3_result: dict[str, Any]) -> dict[str, Any]:
     full_mix = mt3_result.get('full_mix')
     notes: list[Any] = []
@@ -577,9 +601,13 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
 
         # effective_backend == 'none' (or any unrecognized value): skip stem separation.
 
-        if MT3_ENABLED:
+        should_run_mt3 = _task_requests_mt3(task)
+        if should_run_mt3 and MT3_ENABLED:
             _record_task_progress(task_file, 78, 'Transcribing MIDI')
-        mt3_result = run_mt3_transcription(task_id, normalized_path, stems=stem_tracks)
+        if should_run_mt3:
+            mt3_result = run_mt3_transcription(task_id, normalized_path, stems=stem_tracks)
+        else:
+            mt3_result = _mt3_disabled_result('MT3 skipped because it was disabled for this task.')
         _update_task(task_file, {
             'mt3': mt3_result,
             'transcription': _transcription_payload_from_mt3(mt3_result),
