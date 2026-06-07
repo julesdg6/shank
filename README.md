@@ -356,6 +356,21 @@ volumes:
   - ./models/separator:/srv/shank/models/separator
 ```
 
+To pre-download models before starting the container, run:
+
+```bash
+# Download the default 4-stem model (htdemucs_ft.yaml, ~400 MB)
+python3 scripts/download_stem_models.py
+
+# Also download the optional 6-stem model (htdemucs_6s.yaml, ~530 MB)
+python3 scripts/download_stem_models.py --6stems
+
+# Use a custom directory
+python3 scripts/download_stem_models.py --model-dir /path/to/models
+```
+
+Requires `audio-separator` to be installed (`pip install audio-separator[cpu]`).
+
 ### GPU acceleration (CUDA)
 
 To use a CUDA GPU for faster separation, install the GPU variant of audio-separator and set `AUDIO_SEPARATOR_DEVICE=cuda`. Update your `Dockerfile` to replace the CPU extra:
