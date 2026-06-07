@@ -369,9 +369,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-07T20:54:30Z
-- Latest commit: `934b87f`
-- Commit message: Merge pull request #122 from julesdg6/copilot/update-project-description  Update README project positioning and add Unraid 7+ deployment template/assets
+- Last automated update: 2026-06-07T21:07:13Z
+- Latest commit: `75aaba0`
+- Commit message: Update README.md
 <!-- readme-update:end -->
 
 ## 🎸 Chord Detection
