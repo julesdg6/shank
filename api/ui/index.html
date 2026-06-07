@@ -175,6 +175,34 @@
     .alert.show { display: block; }
     .alert-success { background: rgba(34,197,94,0.1); color: var(--success); border: 1px solid rgba(34,197,94,0.3); }
     .alert-error   { background: rgba(239,68,68,0.1);  color: var(--error);   border: 1px solid rgba(239,68,68,0.3); }
+    .model-download-panel { display: grid; gap: 0.65rem; }
+    .model-status-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.76rem;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 0.2rem 0.6rem;
+      color: var(--text-muted);
+      background: var(--surface2);
+    }
+    .model-status-chip.ready { color: var(--success); border-color: rgba(34,197,94,0.45); }
+    .model-status-chip.missing { color: var(--warning); border-color: rgba(245,158,11,0.45); }
+    .model-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .model-meta { font-size: 0.8rem; color: var(--text-muted); }
+    .model-progress-text { font-size: 0.8rem; color: var(--text-muted); }
+    .manual-instructions code {
+      display: block;
+      margin-top: 0.25rem;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      background: #121827;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 0.45rem 0.6rem;
+      white-space: pre-wrap;
+    }
 
     /* ── Tasks Table ── */
     .tasks-header {
@@ -515,6 +543,44 @@
           </thead>
           <tbody id="completed-body"></tbody>
         </table>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:1.5rem">
+      <div class="tasks-header">
+        <h2><span class="icon">📥</span> Audio Separator Models</h2>
+        <span id="models-ready-chip" class="model-status-chip missing">⚠ Models Not Found</span>
+      </div>
+      <div class="model-download-panel">
+        <div id="models-missing-state">
+          <p class="model-meta">Estimated size: 400-530 MB</p>
+          <div class="model-actions" style="margin-top:0.5rem">
+            <button class="btn btn-primary btn-sm" id="models-download-btn">⬇️ Download</button>
+            <button class="btn btn-ghost btn-sm" id="models-download-6stems-btn">6-Stem Option</button>
+            <button class="btn btn-ghost btn-sm" id="models-cancel-btn" disabled>Cancel</button>
+          </div>
+          <div class="progress-wrap" id="models-progress-wrap" style="display:none">
+            <div class="progress-bar" id="models-progress-bar" style="width:0%"></div>
+          </div>
+          <div class="model-progress-text" id="models-progress-text"></div>
+          <div class="model-actions">
+            <button class="btn btn-ghost btn-sm" id="models-retry-btn">Retry Status</button>
+          </div>
+          <div class="manual-instructions" style="margin-top:0.35rem">
+            <small>Or use external terminal:</small>
+            <code>docker logs &lt;CONTAINER_ID&gt;
+python3 scripts/download_stem_models.py</code>
+          </div>
+        </div>
+        <div id="models-ready-state" style="display:none">
+          <div class="alert show alert-success" style="margin-top:0">✓ Models downloaded successfully!</div>
+          <div class="model-meta" id="models-location-text" style="margin-top:0.35rem"></div>
+          <ul id="models-files-list" style="font-size:0.82rem;color:var(--text-muted);padding-left:1rem;margin-top:0.25rem"></ul>
+          <div class="model-actions">
+            <button class="btn btn-ghost btn-sm" id="models-check-btn">✓ Check Models</button>
+            <button class="btn btn-primary btn-sm" id="models-download-again-btn">Download Again</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -1745,6 +1811,122 @@
 
   urlBtn.addEventListener('click', submitUrl);
   urlInput.addEventListener('keydown', e => { if (e.key === 'Enter') submitUrl(); });
+
+  // ── Model Download ────────────────────────────────────────────────────────
+  const modelsReadyChip = document.getElementById('models-ready-chip');
+  const modelsMissingState = document.getElementById('models-missing-state');
+  const modelsReadyState = document.getElementById('models-ready-state');
+  const modelsDownloadBtn = document.getElementById('models-download-btn');
+  const modelsDownload6Btn = document.getElementById('models-download-6stems-btn');
+  const modelsCancelBtn = document.getElementById('models-cancel-btn');
+  const modelsProgressWrap = document.getElementById('models-progress-wrap');
+  const modelsProgressBar = document.getElementById('models-progress-bar');
+  const modelsProgressText = document.getElementById('models-progress-text');
+  const modelsLocationText = document.getElementById('models-location-text');
+  const modelsFilesList = document.getElementById('models-files-list');
+  const modelsRetryBtn = document.getElementById('models-retry-btn');
+  const modelsCheckBtn = document.getElementById('models-check-btn');
+  const modelsDownloadAgainBtn = document.getElementById('models-download-again-btn');
+  let modelsStatusFastPoll = false;
+  let modelsStatusPollTimer = null;
+
+  async function startModelDownload(sixStems) {
+    try {
+      const res = await fetch(`${API}/api/models/download?six_stems=${sixStems ? 'true' : 'false'}`, {
+        method: 'POST',
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.detail || 'Unable to start model download');
+      await refreshModelStatus();
+    } catch (err) {
+      modelsProgressText.textContent = `⚠ ${err.message || 'Network error while starting download.'}`;
+    }
+  }
+
+  async function cancelModelDownload() {
+    try {
+      await fetch(`${API}/api/models/cancel`, { method: 'POST' });
+      await refreshModelStatus();
+    } catch (_) {
+      modelsProgressText.textContent = '⚠ Unable to cancel download.';
+    }
+  }
+
+  function renderModelFiles(data) {
+    if (!modelsFilesList) return;
+    const entries = Object.entries(data?.models || {});
+    const visibleEntries = entries.filter(([, details]) => details?.exists);
+    modelsFilesList.innerHTML = visibleEntries.map(([name, details]) => {
+      const mb = Number(details?.size_bytes || 0) / (1024 * 1024);
+      return `<li>${escapeHtml(name)} (${mb > 0 ? `${mb.toFixed(1)} MB` : 'size unknown'})</li>`;
+    }).join('');
+  }
+
+  async function refreshModelStatus() {
+    try {
+      const res = await fetch(`${API}/api/models/status`, { cache: 'no-store' });
+      if (!res.ok) throw new Error('Model status unavailable');
+      const data = await res.json();
+      const progress = Math.max(0, Math.min(100, Math.round(Number(data?.progress_percent || 0))));
+      const downloading = Boolean(data?.is_downloading);
+      modelsStatusFastPoll = downloading;
+      const modelsReady = Boolean(data?.models_ready);
+      if (modelsReady) {
+        modelsReadyChip.className = 'model-status-chip ready';
+        modelsReadyChip.textContent = '✓ Models Ready';
+      } else {
+        modelsReadyChip.className = 'model-status-chip missing';
+        modelsReadyChip.textContent = '⚠ Models Not Found';
+      }
+
+      modelsMissingState.style.display = modelsReady && !downloading ? 'none' : '';
+      modelsReadyState.style.display = modelsReady && !downloading ? '' : 'none';
+      modelsProgressWrap.style.display = progress > 0 || downloading ? '' : 'none';
+      modelsProgressBar.style.width = `${progress}%`;
+      modelsCancelBtn.disabled = !downloading;
+      modelsDownloadBtn.disabled = downloading;
+      modelsDownload6Btn.disabled = downloading;
+      modelsDownloadAgainBtn.disabled = downloading;
+      modelsLocationText.textContent = `Located at: ${data?.model_dir || '/srv/shank/models/separator'}`;
+      renderModelFiles(data);
+
+      const totalMb = Number(data?.estimated_total_mb || 0);
+      const downloadedMb = Number(data?.downloaded_mb || 0);
+      const baseStatus = data?.status_message || (downloading ? 'Downloading...' : (modelsReady ? 'Ready.' : 'Models are missing.'));
+      let eta = '';
+      if (downloading && progress > 0 && typeof data?.started_at === 'string') {
+        const startedAt = Date.parse(data.started_at);
+        if (!Number.isNaN(startedAt)) {
+          const elapsedSec = Math.max(1, (Date.now() - startedAt) / 1000);
+          const remainingSec = ((100 - progress) / progress) * elapsedSec;
+          const etaMinutes = Math.max(1, Math.round(remainingSec / 60));
+          eta = ` | Estimated time remaining: ~${etaMinutes} minute${etaMinutes === 1 ? '' : 's'}`;
+        }
+      }
+      const warning = data?.warning ? ` ${data.warning}` : '';
+      const disk = Number.isFinite(Number(data?.available_disk_gb)) ? ` | Free disk: ${data.available_disk_gb} GB` : '';
+      modelsProgressText.textContent = `Progress: ${progress}% (${downloadedMb}/${totalMb} MB) · Status: ${baseStatus}${eta}${disk}${warning}`;
+    } catch (_) {
+      modelsStatusFastPoll = false;
+      modelsReadyChip.className = 'model-status-chip missing';
+      modelsReadyChip.textContent = '⚠ Models Unknown';
+      modelsProgressText.textContent = 'Unable to fetch model status. Use Retry Status.';
+    }
+  }
+
+  async function pollModelStatus() {
+    await refreshModelStatus();
+    clearTimeout(modelsStatusPollTimer);
+    modelsStatusPollTimer = setTimeout(pollModelStatus, modelsStatusFastPoll ? 500 : 5000);
+  }
+
+  modelsDownloadBtn.addEventListener('click', () => startModelDownload(false));
+  modelsDownload6Btn.addEventListener('click', () => startModelDownload(true));
+  modelsCancelBtn.addEventListener('click', cancelModelDownload);
+  modelsRetryBtn.addEventListener('click', refreshModelStatus);
+  modelsCheckBtn.addEventListener('click', refreshModelStatus);
+  modelsDownloadAgainBtn.addEventListener('click', () => startModelDownload(false));
+  pollModelStatus();
 
   // ── API Health ────────────────────────────────────────────────────────────
   async function checkApiHealth() {

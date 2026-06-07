@@ -634,6 +634,69 @@ def test_stem_backend_status_prefers_healthy_ace_step(client, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# /api/models/*
+# ---------------------------------------------------------------------------
+
+def test_models_status_reports_missing_by_default(client, monkeypatch, tmp_path):
+    model_dir = tmp_path / 'models' / 'separator'
+    monkeypatch.setenv('AUDIO_SEPARATOR_MODEL_DIR', str(model_dir))
+    import api.main as main_module  # noqa: PLC0415
+    importlib.reload(main_module)
+    c = TestClient(main_module.app)
+
+    response = c.get('/api/models/status')
+    assert response.status_code == 200
+    data = response.json()
+    assert data['models_ready'] is False
+    assert data['status'] in {'not_found', 'idle'}
+    assert data['models']['htdemucs_ft.yaml']['exists'] is False
+
+
+def test_models_status_reports_ready_when_model_exists(client, monkeypatch, tmp_path):
+    model_dir = tmp_path / 'models' / 'separator'
+    model_dir.mkdir(parents=True, exist_ok=True)
+    (model_dir / 'htdemucs_ft.yaml').write_text('stub-model')
+    monkeypatch.setenv('AUDIO_SEPARATOR_MODEL_DIR', str(model_dir))
+    import api.main as main_module  # noqa: PLC0415
+    importlib.reload(main_module)
+    c = TestClient(main_module.app)
+
+    response = c.get('/api/models/status')
+    assert response.status_code == 200
+    data = response.json()
+    assert data['models_ready'] is True
+    assert data['progress_percent'] == 100
+    assert data['models']['htdemucs_ft.yaml']['exists'] is True
+
+
+def test_models_download_endpoint_forwards_six_stems(client, monkeypatch):
+    captured = {}
+
+    def fake_start(*, six_stems: bool, model_dir: str | None):
+        captured['six_stems'] = six_stems
+        captured['model_dir'] = model_dir
+        return {'started': True, 'status': 'downloading', 'models_ready': False}
+
+    monkeypatch.setattr(main_module, '_start_model_download', fake_start)
+
+    response = client.post('/api/models/download?six_stems=true')
+    assert response.status_code == 200
+    assert response.json()['started'] is True
+    assert captured == {'six_stems': True, 'model_dir': None}
+
+
+def test_models_download_endpoint_rejects_custom_model_dir(client):
+    response = client.post('/api/models/download?model_dir=models/separator')
+    assert response.status_code == 400
+
+
+def test_models_cancel_returns_no_active_download(client):
+    response = client.post('/api/models/cancel')
+    assert response.status_code == 200
+    assert response.json()['cancelled'] is False
+
+
+# ---------------------------------------------------------------------------
 # GET /tasks/{task_id}/chords
 # ---------------------------------------------------------------------------
 

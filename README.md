@@ -193,6 +193,9 @@ docker build -t shank:local .
 | `GET` | `/tasks/{task_id}/mt3/notes/{track_name}` | Retrieve MT3 note metadata JSON |
 | `GET` | `/worker/status` | Return worker liveness and last-heartbeat timestamp |
 | `GET` | `/stem-backend/status` | Report which stem-separation backend is active |
+| `GET` | `/api/models/status` | Report separator model availability and download progress |
+| `POST` | `/api/models/download` | Start downloading separator models (`six_stems` optional) |
+| `POST` | `/api/models/cancel` | Cancel an in-progress separator model download |
 | `GET` | `/ui` | Web dashboard (static HTML/JS) |
 
 ### Example — submit a YouTube URL
