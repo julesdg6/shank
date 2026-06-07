@@ -342,7 +342,7 @@ async def _queue_audio_task(
     upload_path = UPLOADS_DIR / f"{task_id}{suffix}"
     upload_path.write_bytes(content)
 
-    task = {
+    task: dict[str, Any] = {
         'task_id': task_id,
         'type': 'upload',
         'source': file.filename,
