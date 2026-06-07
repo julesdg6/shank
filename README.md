@@ -369,9 +369,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-07T20:54:11Z
-- Latest commit: `f6da43d`
-- Commit message: Merge pull request #121 from julesdg6/copilot/ensure-prs-are-complete  Propagate MT3 override to URL task submissions
+- Last automated update: 2026-06-07T20:54:30Z
+- Latest commit: `934b87f`
+- Commit message: Merge pull request #122 from julesdg6/copilot/update-project-description  Update README project positioning and add Unraid 7+ deployment template/assets
 <!-- readme-update:end -->
 
 ## 🎸 Chord Detection
