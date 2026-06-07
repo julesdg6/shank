@@ -1,11 +1,14 @@
 import json
 import logging
 import os
+import subprocess
 import shutil
+import threading
 import urllib.request
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -19,10 +22,33 @@ log = logging.getLogger(__name__)
 DATA_DIR = Path(os.getenv('DATA_DIR', '/srv/shank/data'))
 UPLOADS_DIR = DATA_DIR / 'uploads'
 TASKS_DIR = DATA_DIR / 'tasks'
+DEFAULT_SEPARATOR_MODEL_DIR = Path(os.getenv('AUDIO_SEPARATOR_MODEL_DIR', '/srv/shank/models/separator'))
 
 ALLOWED_AUDIO_EXTENSIONS = {'.mp3', '.wav', '.flac'}
 ALLOWED_REQUESTED_TYPES = {'melody'}
 MAX_UPLOAD_SIZE = 200 * 1024 * 1024  # 200 MB
+
+_MODEL_DOWNLOAD_LOCK = threading.Lock()
+_MODEL_DOWNLOAD_STATE: dict[str, Any] = {
+    'is_downloading': False,
+    'status': 'idle',
+    'status_message': '',
+    'progress_percent': 0,
+    'six_stems': False,
+    'model_dir': str(DEFAULT_SEPARATOR_MODEL_DIR),
+    'started_at': None,
+    'completed_at': None,
+    'return_code': None,
+    'error': None,
+    'output_tail': [],
+    'pid': None,
+    'process': None,
+}
+
+_MODEL_SPECS = {
+    'htdemucs_ft.yaml': 400,
+    'htdemucs_6s.yaml': 530,
+}
 
 
 def _get_media_type_quality(accept_header: str, media_type: str) -> float:
@@ -92,6 +118,182 @@ def _load_task(task_id: str) -> dict:
         return json.loads(task_file.read_text())
     except (OSError, json.JSONDecodeError):
         raise HTTPException(status_code=500, detail='Task file is unreadable')
+
+
+def _models_payload(model_dir: Path) -> dict[str, dict[str, Any]]:
+    payload: dict[str, dict[str, Any]] = {}
+    for model_name in _MODEL_SPECS:
+        path = model_dir / model_name
+        exists = path.is_file()
+        payload[model_name] = {
+            'exists': exists,
+            'size_bytes': path.stat().st_size if exists else 0,
+        }
+    return payload
+
+
+def _disk_free_gb(path: Path) -> float | None:
+    candidate = path if path.exists() else path.parent
+    try:
+        usage = shutil.disk_usage(candidate)
+    except FileNotFoundError:
+        return None
+    return round(usage.free / (1024 ** 3), 2)
+
+
+def _snapshot_model_download_status() -> dict[str, Any]:
+    with _MODEL_DOWNLOAD_LOCK:
+        state = dict(_MODEL_DOWNLOAD_STATE)
+    model_dir = Path(state.get('model_dir') or DEFAULT_SEPARATOR_MODEL_DIR)
+    models = _models_payload(model_dir)
+    four_stem_ready = bool(models['htdemucs_ft.yaml']['exists'])
+    six_stem_ready = bool(models['htdemucs_6s.yaml']['exists'])
+    wants_six_stems = bool(state.get('six_stems')) or six_stem_ready
+    estimated_total_mb = 530 if wants_six_stems else 400
+    progress = int(state.get('progress_percent') or 0)
+    if four_stem_ready and not state.get('is_downloading') and state.get('status') != 'failed':
+        progress = 100
+    downloaded_mb = int(round((progress / 100) * estimated_total_mb))
+    status = state.get('status') or 'idle'
+    if status == 'idle':
+        status = 'ready' if four_stem_ready else 'not_found'
+    warning = None
+    free_gb = _disk_free_gb(model_dir)
+    if free_gb is not None and free_gb < 1.0:
+        warning = f'Low disk space: only {free_gb} GB available.'
+
+    return {
+        'status': status,
+        'models_ready': four_stem_ready,
+        'six_stem_ready': six_stem_ready,
+        'is_downloading': bool(state.get('is_downloading')),
+        'progress_percent': max(0, min(100, progress)),
+        'downloaded_mb': downloaded_mb,
+        'estimated_total_mb': estimated_total_mb,
+        'status_message': state.get('status_message') or '',
+        'error': state.get('error'),
+        'model_dir': str(model_dir),
+        'models': models,
+        'available_disk_gb': free_gb,
+        'warning': warning,
+        'output_tail': list(state.get('output_tail') or []),
+        'started_at': state.get('started_at'),
+        'completed_at': state.get('completed_at'),
+        'return_code': state.get('return_code'),
+        'pid': state.get('pid'),
+    }
+
+
+def _run_model_download(cmd: list[str], cwd: Path, total_steps: int) -> None:
+    process: subprocess.Popen[str] | None = None
+    completed_steps = 0
+    try:
+        process = subprocess.Popen(
+            cmd,
+            cwd=str(cwd),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        with _MODEL_DOWNLOAD_LOCK:
+            _MODEL_DOWNLOAD_STATE['process'] = process
+            _MODEL_DOWNLOAD_STATE['pid'] = process.pid
+        if process.stdout is not None:
+            for raw_line in process.stdout:
+                line = raw_line.strip()
+                if line:
+                    with _MODEL_DOWNLOAD_LOCK:
+                        tail = list(_MODEL_DOWNLOAD_STATE.get('output_tail') or [])
+                        tail.append(line)
+                        _MODEL_DOWNLOAD_STATE['output_tail'] = tail[-30:]
+                        _MODEL_DOWNLOAD_STATE['status_message'] = line
+                if 'ready.' in line:
+                    completed_steps += 1
+                    progress = int((completed_steps / max(total_steps, 1)) * 100)
+                    with _MODEL_DOWNLOAD_LOCK:
+                        _MODEL_DOWNLOAD_STATE['progress_percent'] = min(99, progress)
+        return_code = process.wait()
+        with _MODEL_DOWNLOAD_LOCK:
+            _MODEL_DOWNLOAD_STATE['return_code'] = return_code
+            _MODEL_DOWNLOAD_STATE['is_downloading'] = False
+            _MODEL_DOWNLOAD_STATE['process'] = None
+            _MODEL_DOWNLOAD_STATE['pid'] = None
+            _MODEL_DOWNLOAD_STATE['completed_at'] = datetime.now(timezone.utc).isoformat()
+            if return_code == 0:
+                _MODEL_DOWNLOAD_STATE['status'] = 'completed'
+                _MODEL_DOWNLOAD_STATE['status_message'] = 'Models downloaded successfully.'
+                _MODEL_DOWNLOAD_STATE['progress_percent'] = 100
+                _MODEL_DOWNLOAD_STATE['error'] = None
+            elif _MODEL_DOWNLOAD_STATE.get('status') == 'cancelling':
+                _MODEL_DOWNLOAD_STATE['status'] = 'cancelled'
+                _MODEL_DOWNLOAD_STATE['status_message'] = 'Download cancelled.'
+            else:
+                _MODEL_DOWNLOAD_STATE['status'] = 'failed'
+                _MODEL_DOWNLOAD_STATE['error'] = f'Model download failed with exit code {return_code}.'
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        with _MODEL_DOWNLOAD_LOCK:
+            _MODEL_DOWNLOAD_STATE['is_downloading'] = False
+            _MODEL_DOWNLOAD_STATE['process'] = None
+            _MODEL_DOWNLOAD_STATE['pid'] = None
+            _MODEL_DOWNLOAD_STATE['status'] = 'failed'
+            _MODEL_DOWNLOAD_STATE['status_message'] = 'Model download failed.'
+            _MODEL_DOWNLOAD_STATE['error'] = str(exc)
+            _MODEL_DOWNLOAD_STATE['completed_at'] = datetime.now(timezone.utc).isoformat()
+        log.exception('Model download failed: %s', exc)
+
+
+def _start_model_download(six_stems: bool, model_dir: str | None) -> dict[str, Any]:
+    runtime_dir = Path('/srv/shank')
+    if not runtime_dir.is_dir():
+        runtime_dir = Path(__file__).resolve().parents[1]
+
+    resolved_model_dir = Path(model_dir).expanduser() if model_dir else DEFAULT_SEPARATOR_MODEL_DIR
+    if not resolved_model_dir.is_absolute():
+        resolved_model_dir = (runtime_dir / resolved_model_dir).resolve()
+    else:
+        resolved_model_dir = resolved_model_dir.resolve()
+    try:
+        resolved_model_dir.relative_to(runtime_dir.resolve())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail='model_dir must stay within /srv/shank') from exc
+
+    with _MODEL_DOWNLOAD_LOCK:
+        already_downloading = bool(_MODEL_DOWNLOAD_STATE.get('is_downloading'))
+    if already_downloading:
+        return {
+            'started': False,
+            'message': 'A model download is already in progress.',
+            **_snapshot_model_download_status(),
+        }
+    with _MODEL_DOWNLOAD_LOCK:
+        _MODEL_DOWNLOAD_STATE.update({
+            'is_downloading': True,
+            'status': 'downloading',
+            'status_message': 'Starting model download...',
+            'progress_percent': 0,
+            'six_stems': bool(six_stems),
+            'model_dir': str(resolved_model_dir),
+            'started_at': datetime.now(timezone.utc).isoformat(),
+            'completed_at': None,
+            'return_code': None,
+            'error': None,
+            'output_tail': [],
+            'pid': None,
+            'process': None,
+        })
+
+    script_path = Path(__file__).resolve().parents[1] / 'scripts' / 'download_stem_models.py'
+    cmd = ['python3', str(script_path), '--model-dir', str(resolved_model_dir)]
+    if six_stems:
+        cmd.append('--6stems')
+    total_steps = 2 if six_stems else 1
+    threading.Thread(
+        target=_run_model_download,
+        args=(cmd, runtime_dir, total_steps),
+        daemon=True,
+    ).start()
+
+    return {'started': True, **_snapshot_model_download_status()}
 
 
 def _resolve_data_path(path_value: str) -> Path | None:
@@ -516,6 +718,37 @@ def get_stem_backend_status():
             'device': demucs_device,
         },
     }
+
+
+@app.get('/api/models/status')
+def get_models_status():
+    """Return separator model availability and download status."""
+    return _snapshot_model_download_status()
+
+
+@app.post('/api/models/download')
+def download_models_endpoint(six_stems: bool = False, model_dir: str | None = None):
+    """Start downloading audio-separator models in the background."""
+    return _start_model_download(six_stems=six_stems, model_dir=model_dir)
+
+
+@app.post('/api/models/cancel')
+def cancel_models_download_endpoint():
+    """Cancel a currently running model download process."""
+    process_to_cancel: subprocess.Popen[str] | None = None
+    no_active_download = False
+    with _MODEL_DOWNLOAD_LOCK:
+        if not _MODEL_DOWNLOAD_STATE.get('is_downloading'):
+            no_active_download = True
+        else:
+            process_to_cancel = _MODEL_DOWNLOAD_STATE.get('process')
+            _MODEL_DOWNLOAD_STATE['status'] = 'cancelling'
+            _MODEL_DOWNLOAD_STATE['status_message'] = 'Cancelling download...'
+    if no_active_download:
+        return {'cancelled': False, 'message': 'No active download.', **_snapshot_model_download_status()}
+    if process_to_cancel is not None:
+        process_to_cancel.terminate()
+    return {'cancelled': True, **_snapshot_model_download_status()}
 
 
 # ---------------------------------------------------------------------------
