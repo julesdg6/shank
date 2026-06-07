@@ -23,6 +23,85 @@ To provide users with an automated pipeline that transforms raw audio/URLs into 
 - **Web Dashboard**: A built-in UI at `/ui` to submit tasks, monitor progress, and inspect results.
 - **MCP Automation Server**: Optional MCP server exposing SHANK task operations for automation clients.
 
+### Setup
+
+To enable stem separation, download the models:
+
+```bash
+# Download Htdemucs models
+python3 scripts/download_stem_models.py
+
+# For 6 stems (guitar, piano included):
+python3 scripts/download_stem_models.py --6stems
+```
+
+Options:
+- `-h` or `--help` → Show all options
+- `--6stems` → Also download the 6-stem model
+- `--model-dir DIR` → Custom directory for models
+
+### Verify installation
+
+```bash
+ls /srv/shank/models/separator/
+# Should show:
+#   htdemucs_ft.yaml
+#   (and related model files)
+```
+
+### 6-stem model (optional)
+
+To also get guitar and piano stems:
+
+```bash
+python3 scripts/download_stem_models.py --6stems
+# Downloads ~530 MB
+```
+
+The 6-stem model includes:
+- Vocals
+- Drums
+- Bass
+- Guitar
+- Piano
+- Other
+
+### Troubleshooting
+
+#### Models download fails
+
+```bash
+# Ensure audio-separator is installed
+docker compose exec shank pip list | grep -i audio
+
+# If missing:
+docker compose exec shank pip install audio-separator[cpu]
+
+# Retry
+docker compose exec shank python3 scripts/download_stem_models.py
+```
+
+#### Check model files
+
+```bash
+docker compose exec shank ls -lh /srv/shank/models/separator/
+```
+
+#### GPU acceleration (optional)
+
+If you have an NVIDIA GPU, you can accelerate model inference:
+
+```bash
+export CUDA_VISIBLE_DEVICES=0
+python3 scripts/download_stem_models.py
+```
+
+Set in `.env`:
+
+```dotenv
+AUDIO_SEPARATOR_DEVICE=cuda
+```
+
 ## 🛠 Technical Stack
 - **Backend**: FastAPI (Python) served by Uvicorn
 - **Worker**: Python — `librosa`, `numpy`, `scipy`, `yt-dlp`, `ffmpeg`
@@ -42,17 +121,36 @@ cd shank
 cp .env.example .env   # edit as needed
 ```
 
-### 2. Start the service
+### 2. (Optional) Pre-download stem separation models
+
+Model weights are fetched automatically on first use, but you can pre-download them to avoid the delay:
+
+```bash
+# 4-stem model (htdemucs_ft.yaml, ~400 MB) — default
+python3 scripts/download_stem_models.py
+
+# Also download the 6-stem model (htdemucs_6s.yaml, ~530 MB)
+python3 scripts/download_stem_models.py --6stems
+
+# Options:
+#   --help           Show help
+#   --6stems         Also download 6-stem model
+#   --model-dir DIR  Custom directory (default: /srv/shank/models/separator)
+```
+
+Requires `audio-separator` to be installed (`pip install audio-separator[cpu]`). See the [Stem Separation](#-stem-separation-python-audio-separator) section for full details.
+
+### 3. Start the service
 ```bash
 docker compose up --build -d
 ```
 
 The API and Web UI are available at **http://localhost:8088**.
 
-### 3. Open the dashboard
+### 4. Open the dashboard
 Navigate to **http://localhost:8088/** in your browser to upload audio files or submit YouTube URLs. The dashboard is also available at **http://localhost:8088/ui**.
 
-### 4. Stop the service
+### 5. Stop the service
 ```bash
 docker compose down
 ```
@@ -234,9 +332,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-07T16:30:27Z
-- Latest commit: `222752b`
-- Commit message: Merge pull request #106 from julesdg6/copilot/download-stem-separation-models  Add scripts/download_stem_models.py for pre-downloading Htdemucs separation models
+- Last automated update: 2026-06-07T17:17:35Z
+- Latest commit: `5776d34`
+- Commit message: Merge pull request #111 from julesdg6/copilot/julesdg6-shank-update-readme  docs: add stem separation model pre-download instructions to README and .env.example
 <!-- readme-update:end -->
 
 ## 🎸 Chord Detection
