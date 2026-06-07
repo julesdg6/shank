@@ -335,9 +335,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-07T18:06:39Z
-- Latest commit: `0925125`
-- Commit message: Merge pull request #112 from julesdg6/copilot/julesdg6-shank105-stem-separation-release  Document stem model pre-download setup
+- Last automated update: 2026-06-07T18:07:40Z
+- Latest commit: `c0533aa`
+- Commit message: Merge pull request #114 from julesdg6/copilot/add-model-download-button  Add dashboard model download workflow with backend status/download/cancel APIs
 <!-- readme-update:end -->
 
 ## 🎸 Chord Detection
