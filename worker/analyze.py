@@ -38,6 +38,7 @@ _BARS_PER_SECTION = 8
 _OUTRO_OFFSET_SECONDS = 8.0
 _SILENT_LUFS = -70.0
 _BEAT_MODES = {'constant_tempo', 'variable_tempo'}
+_VALID_BEAT_ENGINES = {'librosa', 'mixxx', 'auto'}
 
 
 def _clamp(value: float, minimum: float, maximum: float) -> float:
@@ -335,8 +336,10 @@ def _normalize_mixxx_beats(payload: dict) -> dict | None:
     bpm = round(float(bpm_raw), 2) if isinstance(bpm_raw, (int, float)) else None
     if bpm is None and len(beat_entries) > 1:
         intervals = np.diff(np.array([entry['time'] for entry in beat_entries]))
-        if intervals.size and float(np.mean(intervals)) > 0:
-            bpm = round(float(60.0 / np.mean(intervals)), 2)
+        if intervals.size:
+            mean_interval = float(np.mean(intervals))
+            if mean_interval > 0:
+                bpm = round(float(60.0 / mean_interval), 2)
 
     mode_raw = payload.get('mode')
     if isinstance(mode_raw, str) and mode_raw in _BEAT_MODES:
@@ -549,9 +552,12 @@ def analyze_audio(file_path: str) -> dict:
     bpm, beats, bpm_confidence = _librosa_beats(y, sr)
     bpm_source = 'librosa'
     beat_mode = 'constant_tempo'
+    detection_confidence: float | None = round(float(bpm_confidence), 3)
     local_bpms: list[float | None] | None = None
 
     beat_detection_engine = os.getenv('BEAT_DETECTION_ENGINE', 'librosa').strip().lower()
+    if beat_detection_engine not in _VALID_BEAT_ENGINES:
+        beat_detection_engine = 'librosa'
     mixxx_result = _mixxx_beats(file_path) if beat_detection_engine in {'mixxx', 'auto'} else None
     if mixxx_result is not None:
         mixxx_bpm = mixxx_result.get('bpm')
@@ -561,7 +567,7 @@ def analyze_audio(file_path: str) -> dict:
         local_bpms = [entry.get('local_bpm') for entry in mixxx_result['beats']]
         beat_mode = str(mixxx_result.get('mode', 'constant_tempo'))
         mixxx_confidence = mixxx_result.get('confidence')
-        bpm_confidence = round(float(mixxx_confidence), 3) if isinstance(mixxx_confidence, (int, float)) else bpm_confidence
+        detection_confidence = round(float(mixxx_confidence), 3) if isinstance(mixxx_confidence, (int, float)) else None
         bpm_source = 'mixxx'
     else:
         madmom_result = _madmom_beats(file_path)
@@ -569,6 +575,7 @@ def analyze_audio(file_path: str) -> dict:
             madmom_bpm, madmom_beats, madmom_confidence = madmom_result
             beats = madmom_beats or beats
             bpm_confidence = madmom_confidence
+            detection_confidence = round(float(madmom_confidence), 3)
             if madmom_bpm is not None:
                 bpm = madmom_bpm
                 bpm_source = 'madmom'
@@ -587,7 +594,7 @@ def analyze_audio(file_path: str) -> dict:
 
     downbeats = _beatnet_downbeats(file_path) or _fallback_downbeats(beats)
     tempo_changes = _detect_tempo_changes(beats)
-    if beat_mode != 'variable_tempo' and tempo_changes:
+    if bpm_source != 'mixxx' and beat_mode != 'variable_tempo' and tempo_changes:
         beat_mode = 'variable_tempo'
     lufs = _measure_lufs(y, sr)
     sections = _derive_sections(downbeats, duration_seconds)
@@ -598,7 +605,7 @@ def analyze_audio(file_path: str) -> dict:
         'mode': beat_mode,
         'first_beat_seconds': beatgrid['first_beat_seconds'],
         'beat_count': len(beats),
-        'confidence': None if bpm_source == 'mixxx' else round(float(bpm_confidence), 3),
+        'confidence': detection_confidence,
     }
 
     # Lightweight summary artifacts for UI visualizations.

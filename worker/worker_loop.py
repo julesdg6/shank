@@ -64,6 +64,7 @@ WAV_CODEC = 'pcm_s16le'
 MT3_OUTPUTS_DIR = get_mt3_output_path(DATA_DIR)
 STEMS_CACHE_DIR = DATA_DIR / 'stems'
 MAX_TASK_LOGS = 50
+_MIN_BEAT_INTERVAL_SECONDS = 0.1
 RESULTS_DIR = DATA_DIR / 'results'
 WORKER_HEARTBEAT_FILE = DATA_DIR / '.worker_heartbeat'
 
@@ -200,9 +201,10 @@ def _write_beat_outputs(result_artifacts: dict[str, str], analysis_payload: dict
         beats = full_mix.get('beats')
         bpm = full_mix.get('bpm')
         if isinstance(beats, list) and isinstance(bpm, (int, float)):
+            first_beat = beats[0] if beats and isinstance(beats[0], (int, float)) else 0.0
             beatgrid = {
                 'bpm': float(bpm),
-                'first_beat_seconds': float(beats[0]) if beats else 0.0,
+                'first_beat_seconds': float(first_beat),
                 'beats': [
                     {'index': idx + 1, 'time': float(ts)}
                     for idx, ts in enumerate(beats)
@@ -271,7 +273,11 @@ def _write_beat_outputs(result_artifacts: dict[str, str], analysis_payload: dict
         tempo_values = local_bpms
     elif len(beat_times) > 1:
         intervals = np.diff(np.array(beat_times))
-        tempo_values = [round(float(60.0 / interval), 2) for interval in intervals if interval > 0]
+        tempo_values = []
+        for interval in intervals:
+            interval_value = float(interval)
+            if interval_value > _MIN_BEAT_INTERVAL_SECONDS and interval_value > 0:
+                tempo_values.append(round(float(60.0 / interval_value), 2))
         tempo_times = beat_times[1:1 + len(tempo_values)]
     if tempo_values and tempo_times:
         plt.figure(figsize=(12, 3))
@@ -285,10 +291,10 @@ def _write_beat_outputs(result_artifacts: dict[str, str], analysis_payload: dict
 
     if len(beat_times) > 1:
         intervals = np.diff(np.array(beat_times))
-        interval_values = [float(interval) for interval in intervals if interval > 0]
+        interval_values = [float(interval) for interval in intervals if interval > _MIN_BEAT_INTERVAL_SECONDS]
         if interval_values:
             plt.figure(figsize=(12, 3))
-            plt.plot(range(2, 2 + len(interval_values)), interval_values, color='#f97316', linewidth=1.2)
+            plt.plot(range(1, 1 + len(interval_values)), interval_values, color='#f97316', linewidth=1.2)
             plt.title('Beat Interval Graph')
             plt.xlabel('Beat Index')
             plt.ylabel('Interval (s)')

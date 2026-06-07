@@ -1052,8 +1052,9 @@ python3 scripts/download_stem_models.py</code>
       { artifact: 'beatgraph_png', label: 'Beat Intervals' },
     ];
     const taskId = encodeURIComponent(taskData.task_id);
+    const cacheTag = encodeURIComponent(taskData.completed_at || taskData.updated_at || taskData.task_id);
     container.innerHTML = items.map(({ artifact, label }) => {
-      const src = `/tasks/${taskId}/artifacts/${encodeURIComponent(artifact)}?t=${Date.now()}`;
+      const src = `/tasks/${taskId}/artifacts/${encodeURIComponent(artifact)}?v=${cacheTag}`;
       return `
         <figure style="margin:0;border:1px solid var(--border);border-radius:10px;padding:0.6rem;background:#11161f">
           <figcaption style="font-size:0.78rem;color:var(--text-muted);margin-bottom:0.35rem">${escapeHtml(label)}</figcaption>
@@ -1180,6 +1181,7 @@ python3 scripts/download_stem_models.py</code>
     const pps = stemPlayer.timelinePixelsPerSecond;
     const currentTime = getTransportTime();
     const cx = W / 2;
+    const MARKER_VIEW_PADDING = 5;
 
     // ── Layout bands ────────────────────────────────────────────────────────
     const RULER_H = 38;
@@ -1201,7 +1203,7 @@ python3 scripts/download_stem_models.py</code>
       const beatsPerBar = 4;
       beatTimes.forEach((beatTime, idx) => {
         const x = cx + (beatTime - currentTime) * pps;
-        if (x < -5 || x > W + 5) return;
+        if (x < -MARKER_VIEW_PADDING || x > W + MARKER_VIEW_PADDING) return;
         const isBar = idx % beatsPerBar === 0;
         if (isBar) {
           const barNum = Math.floor(idx / beatsPerBar) + 1;
@@ -1248,7 +1250,7 @@ python3 scripts/download_stem_models.py</code>
         const beatTime = beat * beatInterval;
         if (beatTime < 0 || beatTime > duration + beatInterval) continue;
         const x = cx + (beatTime - currentTime) * pps;
-        if (x < -5 || x > W + 5) continue;
+        if (x < -MARKER_VIEW_PADDING || x > W + MARKER_VIEW_PADDING) continue;
 
         const isBar = beat % beatsPerBar === 0;
         if (isBar) {
