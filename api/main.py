@@ -342,7 +342,7 @@ async def _queue_audio_task(
     upload_path = UPLOADS_DIR / f"{task_id}{suffix}"
     upload_path.write_bytes(content)
 
-    task = {
+    task: dict[str, Any] = {
         'task_id': task_id,
         'type': 'upload',
         'source': file.filename,
@@ -409,7 +409,7 @@ async def upload_audio(
 @app.post('/tasks/melody', status_code=202)
 async def submit_melody(
     file: UploadFile = File(...),
-    enable_mt3: bool | None = Form(default=None),
+    enable_mt3: bool = Form(True),
 ):
     """Accept an audio file and queue a melody-focused analysis task."""
     return JSONResponse(
@@ -669,6 +669,21 @@ def get_worker_status():
             'age_seconds': None,
             'stale_threshold_seconds': stale_threshold,
         }
+
+
+@app.get('/transcription/status')
+def get_transcription_status():
+    """Return MT3 transcription availability and current backend configuration."""
+    backend = os.getenv('TRANSCRIPTION_BACKEND', 'basic_pitch').strip() or 'basic_pitch'
+    mt3_enabled = os.getenv('MT3_ENABLED', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
+    service_url = os.getenv('MT3_SERVICE_URL', '').strip().rstrip('/')
+    return {
+        'backend': backend,
+        'mt3_enabled': mt3_enabled,
+        'service_configured': bool(service_url),
+        'service_url': service_url or None,
+        'available': mt3_enabled and bool(service_url),
+    }
 
 
 # ---------------------------------------------------------------------------

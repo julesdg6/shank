@@ -127,6 +127,21 @@ def test_submit_melody_upload(client, tmp_path):
     task = json.loads(task_file.read_text())
     assert task['type'] == 'upload'
     assert task['requested_type'] == 'melody'
+    assert task['enable_mt3'] is True
+
+
+def test_upload_persists_enable_mt3_flag(client, tmp_path):
+    response = client.post(
+        '/tasks/upload',
+        files={'file': ('song.wav', io.BytesIO(b'RIFF' + b'\x00' * 36), 'audio/wav')},
+        data={'enable_mt3': 'false'},
+    )
+    assert response.status_code == 202
+    task_id = response.json()['task_id']
+
+    task_file = tmp_path / 'tasks' / f'{task_id}.json'
+    task = json.loads(task_file.read_text())
+    assert task['enable_mt3'] is False
 
 
 def test_submit_melody_upload_persists_mt3_override(client, tmp_path):
@@ -833,6 +848,25 @@ def test_get_task_chords_returns_empty_when_disabled_backend(client, tmp_path):
     response = client.get(f'/tasks/{task_id}/chords')
     assert response.status_code == 200
     assert response.json() == {'segments': [], 'progression': []}
+
+
+# ---------------------------------------------------------------------------
+# GET /transcription/status
+# ---------------------------------------------------------------------------
+
+def test_transcription_status_reports_mt3_availability(client, monkeypatch):
+    monkeypatch.setenv('MT3_ENABLED', 'true')
+    monkeypatch.setenv('TRANSCRIPTION_BACKEND', 'mt3')
+    monkeypatch.setenv('MT3_SERVICE_URL', 'http://mt3:8090')
+    importlib.reload(main_module)
+
+    response = client.get('/transcription/status')
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['backend'] == 'mt3'
+    assert payload['mt3_enabled'] is True
+    assert payload['service_configured'] is True
+    assert payload['available'] is True
 
 
 # ---------------------------------------------------------------------------
