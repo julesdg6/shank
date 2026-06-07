@@ -23,3 +23,12 @@ def test_readme_contains_workflow_update_markers():
 
     assert '<!-- readme-update:start -->' in text
     assert '<!-- readme-update:end -->' in text
+
+
+def test_readme_documents_stem_model_setup():
+    readme = Path(__file__).resolve().parents[1] / 'README.md'
+    text = readme.read_text()
+
+    assert '### Setup' in text
+    assert 'python3 scripts/download_stem_models.py --6stems' in text
+    assert '### Troubleshooting' in text

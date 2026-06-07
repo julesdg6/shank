@@ -91,3 +91,5 @@ def test_env_example_documents_mt3_paths():
     assert f'MT3_CHECKPOINT_ROOT={mt3_config.DEFAULT_MT3_CHECKPOINT_ROOT}' in text
     assert f'MT3_CACHE_DIR={mt3_config.DEFAULT_MT3_CACHE_DIR}' in text
     assert f'MT3_OUTPUT_PATH={mt3_config.DEFAULT_MT3_OUTPUT_PATH}' in text
+    assert '# Optional: Download stem separation models after container starts' in text
+    assert '# python3 scripts/download_stem_models.py' in text
