@@ -1,4 +1,4 @@
-# 🎵 SHANK: Self-Hosted Song Analysis Toolkit
+# 🎵 SHANK: Self-Hosted Audio Notes Kit
 
 SHANK is a Dockerized, self-hosted toolkit for deep music analysis across uploaded audio files and YouTube videos. It produces practical outputs for creators and DJs, including BPM, key, chord progression data, separated stems, and optional MIDI transcription.
 
