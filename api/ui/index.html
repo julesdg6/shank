@@ -608,8 +608,10 @@
           </div>
           <div class="manual-instructions" style="margin-top:0.35rem">
             <small>Or use external terminal:</small>
-            <code>docker logs &lt;CONTAINER_ID&gt;
-python3 scripts/download_stem_models.py</code>
+            <div style="display:flex;flex-direction:column;gap:0.2rem">
+              <code>docker compose exec shank python3 scripts/download_stem_models.py</code>
+              <code>docker logs &lt;CONTAINER_ID&gt;</code>
+            </div>
           </div>
         </div>
         <div id="models-ready-state" style="display:none">

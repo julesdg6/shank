@@ -13,6 +13,7 @@ RUN if [ "$INSTALL_BASIC_PITCH" = "true" ]; then pip install --no-cache-dir basi
 COPY api /app/api
 COPY mt3 /app/mt3
 COPY mt3_config.py /app/mt3_config.py
+COPY scripts /app/scripts
 COPY transcription /app/transcription
 COPY worker /app/worker
 COPY services /app/services
