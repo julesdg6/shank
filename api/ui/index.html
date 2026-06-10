@@ -487,7 +487,7 @@
         <div class="alert" id="upload-alert"></div>
         <div style="margin-top:0.75rem">
           <label style="display:flex;align-items:center;gap:0.45rem;font-size:0.9rem;color:var(--text)">
-            <span>🎵 Use Analysis Options below to configure MT3</span>
+            <span>🎵 Use Analysis Options below to configure MT3.</span>
           </label>
         </div>
         <button class="btn btn-primary" id="upload-btn" style="margin-top:1rem;width:100%" disabled>
@@ -1843,9 +1843,9 @@ python3 scripts/download_stem_models.py</code>
       mt3Available = Boolean(data?.available);
       mt3Toggle.disabled = !mt3Available;
       if (!mt3Available) mt3Toggle.value = 'auto';
-      mt3StatusNote.textContent = data?.reason_detail || (mt3Available
-        ? `MT3 is available (${data?.backend || 'mt3'}).`
-        : 'MT3 is unavailable.');
+      const isAvailableState = data?.state === 'available';
+      mt3StatusNote.textContent = data?.reason_detail
+        || `MT3 is ${isAvailableState ? 'available' : 'unavailable'} (${data?.backend || 'mt3'}).`;
     } catch (_) {
       mt3Available = false;
       mt3Toggle.disabled = true;
