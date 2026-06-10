@@ -376,9 +376,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-10T23:10:21Z
-- Latest commit: `38816fd`
-- Commit message: Merge pull request #128 from julesdg6/copilot/fix-mt3-controls-status-messaging  Fix MT3 controls and status messaging placement
+- Last automated update: 2026-06-10T23:22:35Z
+- Latest commit: `b4bdfda`
+- Commit message: Merge pull request #148 from julesdg6/copilot/feature-mixxx-grade-bpm-detection  feat: add /tasks/{task_id}/beatgrid endpoint and Mixxx BPM detection docs
 <!-- readme-update:end -->
 
 ## 🥁 Beat Detection & Beat Grid
