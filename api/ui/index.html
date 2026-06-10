@@ -1843,9 +1843,8 @@ python3 scripts/download_stem_models.py</code>
       mt3Available = Boolean(data?.available);
       mt3Toggle.disabled = !mt3Available;
       if (!mt3Available) mt3Toggle.value = 'auto';
-      const isAvailableState = data?.state ? data.state === 'available' : mt3Available;
       mt3StatusNote.textContent = data?.reason_detail
-        || `MT3 is ${isAvailableState ? 'available' : 'unavailable'} (${data?.backend || 'mt3'}).`;
+        || `MT3 is ${mt3Available ? 'available' : 'unavailable'} (${data?.backend || 'mt3'}).`;
     } catch (_) {
       mt3Available = false;
       mt3Toggle.disabled = true;
