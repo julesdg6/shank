@@ -47,6 +47,13 @@ def test_root_serves_dashboard_html_for_browser_requests(client):
     assert 'MIDI Piano Roll' in response.text
 
 
+def test_root_dashboard_shows_container_stem_download_command(client):
+    response = client.get('/', headers={'accept': 'text/html,application/xhtml+xml'})
+
+    assert response.status_code == 200
+    assert 'docker compose exec shank python3 scripts/download_stem_models.py' in response.text
+
+
 def test_root_keeps_json_for_non_html_accept_headers(client):
     response = client.get('/', headers={'accept': 'application/xhtml+xml,application/json'})
     assert response.status_code == 200
