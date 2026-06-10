@@ -1060,25 +1060,6 @@ def test_get_task_beatgrid_returns_404_for_unknown_task(client):
 
 
 # ---------------------------------------------------------------------------
-# GET /transcription/status
-# ---------------------------------------------------------------------------
-
-def test_transcription_status_reports_mt3_availability(client, monkeypatch):
-    monkeypatch.setenv('MT3_ENABLED', 'true')
-    monkeypatch.setenv('TRANSCRIPTION_BACKEND', 'mt3')
-    monkeypatch.setenv('MT3_SERVICE_URL', 'http://mt3:8090')
-    importlib.reload(main_module)
-
-    response = client.get('/transcription/status')
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload['backend'] == 'mt3'
-    assert payload['mt3_enabled'] is True
-    assert payload['service_configured'] is True
-    assert payload['available'] is True
-
-
-# ---------------------------------------------------------------------------
 # GET /worker/status
 # ---------------------------------------------------------------------------
 

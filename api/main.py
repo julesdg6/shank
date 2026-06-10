@@ -704,21 +704,6 @@ def get_worker_status():
         }
 
 
-@app.get('/transcription/status')
-def get_transcription_status():
-    """Return MT3 transcription availability and current backend configuration."""
-    backend = os.getenv('TRANSCRIPTION_BACKEND', 'basic_pitch').strip() or 'basic_pitch'
-    mt3_enabled = os.getenv('MT3_ENABLED', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
-    service_url = os.getenv('MT3_SERVICE_URL', '').strip().rstrip('/')
-    return {
-        'backend': backend,
-        'mt3_enabled': mt3_enabled,
-        'service_configured': bool(service_url),
-        'service_url': service_url or None,
-        'available': mt3_enabled and bool(service_url),
-    }
-
-
 # ---------------------------------------------------------------------------
 # Stem backend status
 # ---------------------------------------------------------------------------

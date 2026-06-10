@@ -2124,30 +2124,6 @@
   checkStemBackendStatus();
   setInterval(checkStemBackendStatus, 60000);
 
-  // ── MT3 Availability ───────────────────────────────────────────────────────
-  async function checkTranscriptionStatus() {
-    if (!uploadMt3Toggle || !uploadMt3Help) return;
-    try {
-      const res = await fetch(`${API}/transcription/status`, { cache: 'no-store' });
-      if (!res.ok) throw new Error('status unavailable');
-      const data = await res.json();
-      if (data.available) {
-        uploadMt3Toggle.disabled = false;
-        uploadMt3Help.textContent = `MT3 ready (${data.backend || 'unknown'} backend)`;
-      } else {
-        uploadMt3Toggle.checked = false;
-        uploadMt3Toggle.disabled = true;
-        uploadMt3Help.textContent = 'MT3 unavailable: enable MT3 service/configuration to use transcription.';
-      }
-    } catch (_) {
-      uploadMt3Toggle.checked = false;
-      uploadMt3Toggle.disabled = true;
-      uploadMt3Help.textContent = 'MT3 status unavailable.';
-    }
-  }
-  checkTranscriptionStatus();
-  setInterval(checkTranscriptionStatus, 60000);
-
   // ── Worker Status ─────────────────────────────────────────────────────────
   async function checkWorkerStatus() {
     const dot = document.getElementById('worker-dot');
