@@ -376,9 +376,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-10T23:22:35Z
-- Latest commit: `b4bdfda`
-- Commit message: Merge pull request #148 from julesdg6/copilot/feature-mixxx-grade-bpm-detection  feat: add /tasks/{task_id}/beatgrid endpoint and Mixxx BPM detection docs
+- Last automated update: 2026-06-10T23:28:28Z
+- Latest commit: `9028e8f`
+- Commit message: Merge pull request #155 from julesdg6/copilot/issue-fix-ambiguous-container-instructions  Fix ambiguous container reference in model download terminal instructions
 <!-- readme-update:end -->
 
 ## 🥁 Beat Detection & Beat Grid
