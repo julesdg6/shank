@@ -52,6 +52,7 @@ def test_root_dashboard_shows_container_stem_download_command(client):
 
     assert response.status_code == 200
     assert 'docker compose exec shank python3 scripts/download_stem_models.py' in response.text
+    assert 'docker logs shank' in response.text
 
 
 def test_root_keeps_json_for_non_html_accept_headers(client):
