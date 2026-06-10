@@ -147,6 +147,8 @@ docker compose up --build -d
 
 The API and Web UI are available at **http://localhost:8088**.
 
+> **Port note:** The container's internal API port is **8080**. Docker Compose maps it to host port **8088** (`"8088:8080"`). The Dockerfile and `docker-compose.yml` healthchecks both probe `http://127.0.0.1:8080` (the internal port). Always use port **8088** when accessing SHANK from your browser or host tools.
+
 ### 4. Open the dashboard
 Navigate to **http://localhost:8088/** in your browser to upload audio files or submit YouTube URLs. The dashboard is also available at **http://localhost:8088/ui**.
 
@@ -174,7 +176,7 @@ Then open **Docker > Add Container** and select the `shank` template.
 ### 2. Configure paths and launch
 
 - Set your data path (template default): `/mnt/user/appdata/shank`
-- Expose port `8088`
+- The template maps container-internal port **8080** to host port **8088** by default. Change the host port value if 8088 is already in use.
 - Save and start the container
 
 ### 3. GPU flags (optional)

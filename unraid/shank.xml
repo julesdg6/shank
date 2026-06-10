@@ -21,7 +21,7 @@
   <DonateText/>
   <DonateLink/>
   <Requires/>
-  <Config Name="Web UI Port" Target="8088" Default="8088" Mode="tcp" Description="Container port for SHANK API and dashboard." Type="Port" Display="always" Required="true" Mask="false">8088</Config>
+  <Config Name="Web UI Port" Target="8080" Default="8088" Mode="tcp" Description="Host port mapped to the internal SHANK API port (8080). Access the dashboard at http://[IP]:[PORT]." Type="Port" Display="always" Required="true" Mask="false">8088</Config>
   <Config Name="App Data" Target="/srv/shank/data" Default="/mnt/user/appdata/shank/data" Mode="rw" Description="Task data and outputs." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/shank/data</Config>
   <Config Name="Model Cache" Target="/srv/shank/models/separator" Default="/mnt/user/appdata/shank/models/separator" Mode="rw" Description="Persistent stem-separation model cache." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/shank/models/separator</Config>
   <Config Name="AUDIO_SEPARATOR_DEVICE" Target="AUDIO_SEPARATOR_DEVICE" Default="cpu" Mode="" Description="Set to cuda when using NVIDIA GPU with --gpus all." Type="Variable" Display="advanced" Required="false" Mask="false">cpu</Config>
