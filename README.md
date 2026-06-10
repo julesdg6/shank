@@ -375,9 +375,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-10T23:05:59Z
-- Latest commit: `3b29a5c`
-- Commit message: Merge pull request #126 from julesdg6/copilot/fix-missing-script-path  [WIP] Fix missing script path in stem model download feature
+- Last automated update: 2026-06-10T23:10:21Z
+- Latest commit: `38816fd`
+- Commit message: Merge pull request #128 from julesdg6/copilot/fix-mt3-controls-status-messaging  Fix MT3 controls and status messaging placement
 <!-- readme-update:end -->
 
 ## 🎸 Chord Detection
