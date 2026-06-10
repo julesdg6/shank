@@ -487,10 +487,8 @@
         <div class="alert" id="upload-alert"></div>
         <div style="margin-top:0.75rem">
           <label style="display:flex;align-items:center;gap:0.45rem;font-size:0.9rem;color:var(--text)">
-            <input type="checkbox" id="upload-mt3-toggle" checked />
-            <span>🎵 Generate MIDI (MT3)</span>
+            <span>🎵 Use Analysis Options below to configure MT3</span>
           </label>
-          <p id="upload-mt3-help" class="muted" style="font-size:0.75rem;margin-top:0.25rem">Checking MT3 availability…</p>
         </div>
         <button class="btn btn-primary" id="upload-btn" style="margin-top:1rem;width:100%" disabled>
           Upload &amp; Analyze
@@ -516,7 +514,7 @@
       </div>
 
       <div class="card">
-        <h2><span class="icon">🎵</span> Transcription Settings</h2>
+        <h2><span class="icon">🎛️</span> Analysis Options</h2>
         <div class="input-group">
           <label for="mt3-toggle" style="font-size:0.84rem;color:var(--text-muted)">MT3 Transcription</label>
           <select id="mt3-toggle" class="select-control">
@@ -525,7 +523,6 @@
             <option value="false">🚫 Disable MT3</option>
           </select>
           <div class="settings-note" id="mt3-status-note">Checking MT3 availability…</div>
-          <div class="alert" id="mt3-alert"></div>
         </div>
       </div>
 
@@ -1824,11 +1821,8 @@ python3 scripts/download_stem_models.py</code>
   const dzSelected = document.getElementById('dz-selected');
   const uploadBtn = document.getElementById('upload-btn');
   const uploadAlert = document.getElementById('upload-alert');
-  const uploadMt3Toggle = document.getElementById('upload-mt3-toggle');
-  const uploadMt3Help = document.getElementById('upload-mt3-help');
   const mt3Toggle = document.getElementById('mt3-toggle');
   const mt3StatusNote = document.getElementById('mt3-status-note');
-  const mt3Alert = document.getElementById('mt3-alert');
 
   let selectedFile = null;
   let mt3Available = false;
@@ -1849,20 +1843,14 @@ python3 scripts/download_stem_models.py</code>
       mt3Available = Boolean(data?.available);
       mt3Toggle.disabled = !mt3Available;
       if (!mt3Available) mt3Toggle.value = 'auto';
-      mt3StatusNote.textContent = mt3Available
-        ? `Available (${data?.backend || 'mt3'})`
-        : (data?.message || 'MT3 is unavailable.');
-      if (!mt3Available) {
-        showAlert(mt3Alert, '🚫 MT3 is not currently available.', 'error');
-      } else {
-        clearAlert(mt3Alert);
-      }
+      mt3StatusNote.textContent = data?.reason_detail || (mt3Available
+        ? `MT3 is available (${data?.backend || 'mt3'}).`
+        : 'MT3 is unavailable.');
     } catch (_) {
       mt3Available = false;
       mt3Toggle.disabled = true;
       mt3Toggle.value = 'auto';
-      mt3StatusNote.textContent = 'MT3 status unavailable.';
-      showAlert(mt3Alert, '🚫 Could not verify MT3 availability.', 'error');
+      mt3StatusNote.textContent = 'Could not verify MT3 status.';
     }
   }
 
@@ -1900,8 +1888,6 @@ python3 scripts/download_stem_models.py</code>
       const mt3Override = selectedMt3Override();
       if (mt3Override !== null) {
         formData.append('enable_mt3', String(mt3Override));
-      } else if (uploadMt3Toggle) {
-        formData.append('enable_mt3', uploadMt3Toggle.checked ? 'true' : 'false');
       }
 
       // Use XMLHttpRequest for upload progress

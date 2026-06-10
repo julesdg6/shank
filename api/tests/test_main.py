@@ -743,8 +743,11 @@ def test_mt3_status_reports_available(client, monkeypatch):
     assert response.status_code == 200
     data = response.json()
     assert data['available'] is True
+    assert data['state'] == 'available'
+    assert data['reason'] == 'ok'
     assert data['enabled'] is True
     assert data['backend'] == 'mt3'
+    assert 'available' in data['reason_detail'].lower()
 
 
 def test_mt3_status_reports_disabled_when_mt3_off(client, monkeypatch):
@@ -759,7 +762,43 @@ def test_mt3_status_reports_disabled_when_mt3_off(client, monkeypatch):
     assert response.status_code == 200
     data = response.json()
     assert data['available'] is False
-    assert 'disabled' in data['message']
+    assert data['state'] == 'unavailable'
+    assert data['reason'] == 'mt3_disabled'
+    assert 'disabled' in data['reason_detail']
+
+
+def test_mt3_status_reports_backend_disabled_reason(client, monkeypatch):
+    monkeypatch.setenv('MT3_ENABLED', 'true')
+    monkeypatch.setenv('MT3_SERVICE_URL', 'http://127.0.0.1:8090')
+    monkeypatch.setenv('TRANSCRIPTION_BACKEND', 'disabled')
+    import api.main as main_module  # noqa: PLC0415
+    importlib.reload(main_module)
+    c = TestClient(main_module.app)
+
+    response = c.get('/mt3/status')
+    assert response.status_code == 200
+    data = response.json()
+    assert data['available'] is False
+    assert data['state'] == 'unavailable'
+    assert data['reason'] == 'backend_disabled'
+    assert 'disabled' in data['reason_detail']
+
+
+def test_mt3_status_reports_service_unconfigured_reason(client, monkeypatch):
+    monkeypatch.setenv('MT3_ENABLED', 'true')
+    monkeypatch.delenv('MT3_SERVICE_URL', raising=False)
+    monkeypatch.setenv('TRANSCRIPTION_BACKEND', 'mt3')
+    import api.main as main_module  # noqa: PLC0415
+    importlib.reload(main_module)
+    c = TestClient(main_module.app)
+
+    response = c.get('/mt3/status')
+    assert response.status_code == 200
+    data = response.json()
+    assert data['available'] is False
+    assert data['state'] == 'unavailable'
+    assert data['reason'] == 'service_unconfigured'
+    assert 'not configured' in data['reason_detail']
 
 
 # ---------------------------------------------------------------------------

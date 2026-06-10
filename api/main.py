@@ -757,21 +757,32 @@ def get_mt3_status():
     enabled = os.getenv('MT3_ENABLED', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
     backend = os.getenv('TRANSCRIPTION_BACKEND', 'basic_pitch').strip().lower() or 'basic_pitch'
     service_url = os.getenv('MT3_SERVICE_URL', '').strip()
-    available = enabled and backend != 'disabled' and bool(service_url)
-    message = 'MT3 is available.'
+    state = 'available'
+    reason = 'ok'
+    reason_detail = 'MT3 is available.'
     if not enabled:
-        message = 'MT3 is disabled by configuration (MT3_ENABLED=false).'
+        state = 'unavailable'
+        reason = 'mt3_disabled'
+        reason_detail = 'MT3 is disabled by configuration (MT3_ENABLED=false).'
     elif backend == 'disabled':
-        message = 'Transcription backend is disabled.'
+        state = 'unavailable'
+        reason = 'backend_disabled'
+        reason_detail = 'Transcription backend is disabled.'
     elif not service_url:
-        message = 'MT3 service URL is not configured.'
+        state = 'unavailable'
+        reason = 'service_unconfigured'
+        reason_detail = 'MT3 service URL is not configured.'
+    available = state == 'available'
 
     return {
         'available': available,
+        'state': state,
+        'reason': reason,
+        'reason_detail': reason_detail,
         'enabled': enabled,
         'backend': backend,
         'service_url': service_url or None,
-        'message': message,
+        'message': reason_detail,
     }
 
 
