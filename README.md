@@ -375,9 +375,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-07T22:09:45Z
-- Latest commit: `5c0ba44`
-- Commit message: Merge pull request #124 from julesdg6/copilot/add-mixxx-beat-detection  Add optional Mixxx beat backend with beatgrid artifacts and UI beat graph previews
+- Last automated update: 2026-06-10T23:05:59Z
+- Latest commit: `3b29a5c`
+- Commit message: Merge pull request #126 from julesdg6/copilot/fix-missing-script-path  [WIP] Fix missing script path in stem model download feature
 <!-- readme-update:end -->
 
 ## 🎸 Chord Detection
