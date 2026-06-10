@@ -865,6 +865,22 @@ def test_models_download_endpoint_rejects_custom_model_dir(client):
     assert response.status_code == 400
 
 
+def test_models_download_returns_500_when_script_missing(client, monkeypatch):
+    original_is_file = main_module.Path.is_file
+
+    def _missing_script(self: main_module.Path) -> bool:
+        if 'download_stem_models' in str(self):
+            return False
+        return original_is_file(self)
+
+    monkeypatch.setattr(main_module.Path, 'is_file', _missing_script)
+    response = client.post('/api/models/download')
+    assert response.status_code == 500
+    assert 'missing' in response.json()['detail'].lower()
+    # State must not have been mutated — no download was started.
+    assert not main_module._MODEL_DOWNLOAD_STATE.get('is_downloading')
+
+
 def test_models_cancel_returns_no_active_download(client):
     response = client.post('/api/models/cancel')
     assert response.status_code == 200

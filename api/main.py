@@ -259,6 +259,13 @@ def _start_model_download(six_stems: bool, model_dir: str | None) -> dict[str, A
             'message': 'A model download is already in progress.',
             **_snapshot_model_download_status(),
         }
+    script_path = Path(__file__).resolve().parents[1] / 'scripts' / 'download_stem_models.py'
+    if not script_path.is_file():
+        raise HTTPException(
+            status_code=500,
+            detail='Stem model download script is missing from the Docker image.',
+        )
+
     with _MODEL_DOWNLOAD_LOCK:
         _MODEL_DOWNLOAD_STATE.update({
             'is_downloading': True,
@@ -276,7 +283,6 @@ def _start_model_download(six_stems: bool, model_dir: str | None) -> dict[str, A
             'process': None,
         })
 
-    script_path = Path(__file__).resolve().parents[1] / 'scripts' / 'download_stem_models.py'
     cmd = ['python3', str(script_path), '--model-dir', str(resolved_model_dir)]
     if six_stems:
         cmd.append('--6stems')
