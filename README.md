@@ -219,6 +219,7 @@ docker build -t shank:local .
 | `POST` | `/tasks/url` | Submit a YouTube URL for download and analysis |
 | `GET` | `/tasks/{task_id}` | Retrieve the status and results of a task |
 | `GET` | `/tasks/{task_id}/chords` | Return chord detection results for a completed task |
+| `GET` | `/tasks/{task_id}/beatgrid` | Return beat grid and beat detection metadata for a completed task |
 | `GET` | `/tasks/{task_id}/artifacts` | List downloadable output files for a completed task |
 | `GET` | `/tasks/{task_id}/artifacts/{artifact_name}` | Download a named artifact file (e.g. normalised WAV, stem) |
 | `GET` | `/tasks/completed` | List all completed (`done`) tasks |
@@ -379,6 +380,93 @@ This project is for research and personal use. Ensure you have the rights to any
 - Latest commit: `38816fd`
 - Commit message: Merge pull request #128 from julesdg6/copilot/fix-mt3-controls-status-messaging  Fix MT3 controls and status messaging placement
 <!-- readme-update:end -->
+
+## 🥁 Beat Detection & Beat Grid
+
+SHANK extracts BPM, beat timestamps, downbeats, and a structured beat grid from every analysed track.  The beat grid is stored in the task JSON and is also available through a dedicated API endpoint:
+
+```bash
+curl http://localhost:8088/tasks/<task_id>/beatgrid
+```
+
+Example response:
+```json
+{
+  "beatgrid": {
+    "bpm": 128.02,
+    "first_beat_seconds": 0.423,
+    "beats": [
+      {"index": 1, "time": 0.423},
+      {"index": 2, "time": 0.892},
+      {"index": 3, "time": 1.361}
+    ]
+  },
+  "beat_detection": {
+    "engine": "mixxx",
+    "mode": "constant_tempo",
+    "first_beat_seconds": 0.423,
+    "beat_count": 3,
+    "confidence": 0.95
+  }
+}
+```
+
+Variable-tempo tracks include a `mode: "variable_tempo"` key and per-beat `local_bpm` values in the beat list.
+
+The beat grid is also saved as a standalone `beatgrid.json` artifact under `DATA_DIR/results/<task_id>/`.
+
+### Backends
+
+| `BEAT_DETECTION_ENGINE` | Description |
+|-------------------------|-------------|
+| `librosa` *(default)* | librosa beat tracker — always available, no extra dependencies |
+| `auto` | Try Mixxx CLI first (if `MIXXX_BEAT_CLI` is set), then fall back to librosa/madmom |
+| `mixxx` | Use Mixxx CLI exclusively; fall back to librosa/madmom if the command fails |
+
+### Mixxx-grade BPM detection
+
+SHANK integrates with a Mixxx beat-analysis CLI wrapper for DJ-grade accuracy.  Mixxx uses production algorithms designed for accurate beat tracking and beat grids compatible with DJ software.
+
+To enable it, point `MIXXX_BEAT_CLI` at a CLI wrapper that accepts the flags below and emits JSON on stdout:
+
+```dotenv
+BEAT_DETECTION_ENGINE=auto
+MIXXX_BEAT_CLI=/usr/local/bin/mixxx-beat-analyzer
+```
+
+The wrapper is invoked with:
+
+```
+<MIXXX_BEAT_CLI> --input <file> --output-format json [flags…]
+```
+
+Optional flags (controlled by env vars):
+
+| Env var | Default | Flag added when `true` |
+|---------|---------|------------------------|
+| `MIXXX_FAST_ANALYSIS` | `false` | `--fast-analysis` |
+| `MIXXX_ASSUME_CONSTANT_TEMPO` | `true` | `--assume-constant-tempo` |
+| `MIXXX_OFFSET_CORRECTION` | `true` | `--offset-correction` |
+| `MIXXX_REANALYSE_IF_OUTDATED` | `true` | `--reanalyse-if-outdated` |
+
+Expected JSON output shape:
+
+```json
+{
+  "bpm": 128.02,
+  "confidence": 0.95,
+  "mode": "constant_tempo",
+  "first_beat_seconds": 0.423,
+  "beats": [
+    {"time": 0.423},
+    {"time": 0.892}
+  ]
+}
+```
+
+`beats` items may be plain numbers (seconds) or objects with `time` and an optional `local_bpm` for variable-tempo tracks.  `confidence`, `mode`, and `first_beat_seconds` are optional.
+
+If the CLI is unavailable or exits with an error, SHANK falls back to madmom (if installed) and then to librosa so analysis always completes.
 
 ## 🎸 Chord Detection
 

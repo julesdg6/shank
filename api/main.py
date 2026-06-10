@@ -629,6 +629,32 @@ def get_task_chords(task_id: str):
     return chords
 
 
+@app.get('/tasks/{task_id}/beatgrid')
+def get_task_beatgrid(task_id: str):
+    """Return the beat grid and beat detection metadata for a completed task.
+
+    The response contains:
+
+    * ``beatgrid`` – beat grid with ``bpm``, ``first_beat_seconds``, and a
+      ``beats`` list.  Each beat entry has an ``index`` and ``time``
+      (seconds).  Variable-tempo grids additionally carry a ``local_bpm``
+      per beat and a top-level ``mode`` of ``'variable_tempo'``.
+    * ``beat_detection`` – detection metadata including the ``engine`` used
+      (``'librosa'``, ``'madmom'``, or ``'mixxx'``), ``mode``,
+      ``first_beat_seconds``, ``beat_count``, and ``confidence`` (0–1 or
+      ``null`` when unavailable).
+    """
+    task = _load_task(task_id)
+    beatgrid = task.get('beatgrid')
+    if not isinstance(beatgrid, dict):
+        raise HTTPException(status_code=404, detail='Beatgrid data not available for this task')
+    result: dict[str, Any] = {'beatgrid': beatgrid}
+    beat_detection = task.get('beat_detection')
+    if isinstance(beat_detection, dict):
+        result['beat_detection'] = beat_detection
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Worker status
 # ---------------------------------------------------------------------------

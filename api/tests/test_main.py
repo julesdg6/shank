@@ -950,6 +950,116 @@ def test_get_task_chords_returns_empty_when_disabled_backend(client, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# GET /tasks/{task_id}/beatgrid
+# ---------------------------------------------------------------------------
+
+def test_get_task_beatgrid_returns_beatgrid_and_detection_data(client, tmp_path):
+    """GET /tasks/{task_id}/beatgrid must return beatgrid and beat_detection dicts."""
+    task_id = str(uuid.uuid4())
+    beatgrid_data = {
+        'bpm': 128.02,
+        'first_beat_seconds': 0.423,
+        'beats': [
+            {'index': 1, 'time': 0.423},
+            {'index': 2, 'time': 0.892},
+            {'index': 3, 'time': 1.361},
+        ],
+    }
+    beat_detection_data = {
+        'engine': 'mixxx',
+        'mode': 'constant_tempo',
+        'first_beat_seconds': 0.423,
+        'beat_count': 3,
+        'confidence': 0.95,
+    }
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'beatgrid': beatgrid_data,
+        'beat_detection': beat_detection_data,
+    }))
+
+    response = client.get(f'/tasks/{task_id}/beatgrid')
+    assert response.status_code == 200
+    body = response.json()
+    assert body['beatgrid'] == beatgrid_data
+    assert body['beat_detection'] == beat_detection_data
+
+
+def test_get_task_beatgrid_returns_beatgrid_without_detection_when_absent(client, tmp_path):
+    """GET /tasks/{task_id}/beatgrid returns only beatgrid when beat_detection is missing."""
+    task_id = str(uuid.uuid4())
+    beatgrid_data = {
+        'bpm': 120.0,
+        'first_beat_seconds': 0.5,
+        'beats': [{'index': 1, 'time': 0.5}],
+    }
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'beatgrid': beatgrid_data,
+    }))
+
+    response = client.get(f'/tasks/{task_id}/beatgrid')
+    assert response.status_code == 200
+    body = response.json()
+    assert body['beatgrid'] == beatgrid_data
+    assert 'beat_detection' not in body
+
+
+def test_get_task_beatgrid_returns_variable_tempo_grid(client, tmp_path):
+    """GET /tasks/{task_id}/beatgrid must surface variable-tempo beat grids correctly."""
+    task_id = str(uuid.uuid4())
+    beatgrid_data = {
+        'bpm': 128.0,
+        'first_beat_seconds': 0.42,
+        'mode': 'variable_tempo',
+        'beats': [
+            {'index': 1, 'time': 0.42, 'local_bpm': 127.8},
+            {'index': 2, 'time': 0.89, 'local_bpm': 128.1},
+        ],
+    }
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'beatgrid': beatgrid_data,
+    }))
+
+    response = client.get(f'/tasks/{task_id}/beatgrid')
+    assert response.status_code == 200
+    body = response.json()
+    assert body['beatgrid']['mode'] == 'variable_tempo'
+    assert body['beatgrid']['beats'][0]['local_bpm'] == 127.8
+
+
+def test_get_task_beatgrid_returns_404_when_no_beatgrid(client, tmp_path):
+    """GET /tasks/{task_id}/beatgrid must return 404 when the task has no beatgrid data."""
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'bpm': 120.0,
+    }))
+
+    response = client.get(f'/tasks/{task_id}/beatgrid')
+    assert response.status_code == 404
+
+
+def test_get_task_beatgrid_returns_404_for_unknown_task(client):
+    """GET /tasks/{task_id}/beatgrid must return 404 for a nonexistent task."""
+    response = client.get(f'/tasks/{uuid.uuid4()}/beatgrid')
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # GET /transcription/status
 # ---------------------------------------------------------------------------
 
