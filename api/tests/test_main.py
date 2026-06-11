@@ -1117,6 +1117,66 @@ def test_worker_status_offline_with_stale_heartbeat(client, tmp_path, monkeypatc
 
 
 # ---------------------------------------------------------------------------
+# GET /doctor
+# ---------------------------------------------------------------------------
+
+def test_doctor_status_aggregates_deployment_checks(monkeypatch):
+    importlib.reload(main_module)
+    c = TestClient(main_module.app)
+
+    monkeypatch.setattr(main_module, 'get_worker_status', lambda: {'status': 'online'})
+    monkeypatch.setattr(main_module, 'get_stem_backend_status', lambda: {'configured_backend': 'auto', 'active_backend': 'demucs'})
+    monkeypatch.setattr(
+        main_module,
+        'get_transcription_status',
+        lambda: {'backend': 'mt3', 'available': True},
+    )
+    monkeypatch.setattr(
+        main_module,
+        '_snapshot_model_download_status',
+        lambda: {
+            'model_dir': '/models',
+            'models_ready': False,
+            'models': {
+                'htdemucs_ft.yaml': {'exists': True},
+                'htdemucs_6s.yaml': {'exists': False},
+            },
+        },
+    )
+    monkeypatch.setattr(main_module, '_is_dir_writable', lambda _path: True)
+    monkeypatch.setattr(main_module, '_disk_free_gb', lambda _path: 12.34)
+    monkeypatch.setattr(shutil, 'which', lambda binary: f'/usr/bin/{binary}')
+
+    response = c.get('/doctor')
+    assert response.status_code == 200
+    data = response.json()
+    assert data['api'] == {'ok': True, 'service': 'SHANK API'}
+    assert data['worker']['status'] == 'online'
+    assert data['ffmpeg'] == {'available': True, 'path': '/usr/bin/ffmpeg'}
+    assert data['yt_dlp'] == {'available': True, 'path': '/usr/bin/yt-dlp'}
+    assert data['stem_backend']['active_backend'] == 'demucs'
+    assert data['models']['models_ready'] is False
+    assert data['models']['found'] == ['htdemucs_ft.yaml']
+    assert data['models']['missing'] == ['htdemucs_6s.yaml']
+    assert data['transcription'] == {'backend': 'mt3', 'available': True}
+    assert data['data_dir']['writable'] is True
+    assert data['disk']['free_gb'] == 12.34
+
+
+def test_doctor_status_reports_missing_binaries(monkeypatch):
+    importlib.reload(main_module)
+    c = TestClient(main_module.app)
+
+    monkeypatch.setattr(shutil, 'which', lambda _binary: None)
+
+    response = c.get('/doctor')
+    assert response.status_code == 200
+    data = response.json()
+    assert data['ffmpeg']['available'] is False
+    assert data['ffmpeg']['path'] is None
+    assert data['yt_dlp']['available'] is False
+    assert data['yt_dlp']['path'] is None
+
 # POST /tasks/{task_id}/reprocess
 # ---------------------------------------------------------------------------
 
