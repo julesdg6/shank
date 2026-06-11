@@ -420,9 +420,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-11T13:29:06Z
-- Latest commit: `2aa1f6c`
-- Commit message: Merge pull request #166 from julesdg6/copilot/feature-song-structure-detection  Add deterministic song-structure labeling and publish `structure.json` artifacts
+- Last automated update: 2026-06-11T13:45:53Z
+- Latest commit: `b3a44ec`
+- Commit message: Merge pull request #167 from julesdg6/copilot/feature-lyrics-and-song-credits  Add optional lyrics + song credits enrichment and structured metadata artifacts
 <!-- readme-update:end -->
 
 ## 🥁 Beat Detection & Beat Grid
