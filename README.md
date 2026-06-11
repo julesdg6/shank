@@ -419,9 +419,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-11T13:08:27Z
-- Latest commit: `a8e3598`
-- Commit message: Merge pull request #165 from julesdg6/copilot/add-page-level-analysis-settings  [WIP] Add page-level analysis settings for stems, MIDI, and reprocess behaviour
+- Last automated update: 2026-06-11T13:29:06Z
+- Latest commit: `2aa1f6c`
+- Commit message: Merge pull request #166 from julesdg6/copilot/feature-song-structure-detection  Add deterministic song-structure labeling and publish `structure.json` artifacts
 <!-- readme-update:end -->
 
 ## 🥁 Beat Detection & Beat Grid
