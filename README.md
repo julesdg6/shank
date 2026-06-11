@@ -226,6 +226,7 @@ docker build -t shank:local .
 | `GET` | `/tasks/{task_id}/mt3/midi/{track_name}` | Download MT3 MIDI (`full_mix` or stem name) |
 | `GET` | `/tasks/{task_id}/mt3/notes/{track_name}` | Retrieve MT3 note metadata JSON |
 | `GET` | `/worker/status` | Return worker liveness and last-heartbeat timestamp |
+| `GET` | `/doctor` | Return consolidated deployment health checks (worker, tooling, models, transcription, disk) |
 | `GET` | `/stem-backend/status` | Report which stem-separation backend is active |
 | `GET` | `/transcription/status` | Report MT3 transcription availability and backend configuration |
 | `GET` | `/api/models/status` | Report separator model availability and download progress |

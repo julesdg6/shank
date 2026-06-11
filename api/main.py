@@ -141,6 +141,17 @@ def _disk_free_gb(path: Path) -> float | None:
     return round(usage.free / (1024 ** 3), 2)
 
 
+def _is_dir_writable(path: Path) -> bool:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / f'.write-test-{uuid.uuid4().hex}'
+        probe.write_text('ok')
+        probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
 def _snapshot_model_download_status() -> dict[str, Any]:
     with _MODEL_DOWNLOAD_LOCK:
         state = dict(_MODEL_DOWNLOAD_STATE)
@@ -702,6 +713,42 @@ def get_worker_status():
             'age_seconds': None,
             'stale_threshold_seconds': stale_threshold,
         }
+
+
+@app.get('/doctor')
+def get_doctor_status():
+    """Return a consolidated deployment health snapshot."""
+    worker_status = get_worker_status()
+    stem_backend_status = get_stem_backend_status()
+    transcription_status = get_transcription_status()
+    models_status = _snapshot_model_download_status()
+
+    ffmpeg_path = shutil.which('ffmpeg')
+    yt_dlp_path = shutil.which('yt-dlp')
+    model_entries = models_status.get('models', {})
+    found_models = [name for name, details in model_entries.items() if details.get('exists')]
+    missing_models = [name for name, details in model_entries.items() if not details.get('exists')]
+    free_disk_gb = _disk_free_gb(DATA_DIR)
+
+    return {
+        'api': {'ok': True, 'service': 'SHANK API'},
+        'worker': worker_status,
+        'ffmpeg': {'available': ffmpeg_path is not None, 'path': ffmpeg_path},
+        'yt_dlp': {'available': yt_dlp_path is not None, 'path': yt_dlp_path},
+        'stem_backend': stem_backend_status,
+        'models': {
+            'model_dir': models_status.get('model_dir'),
+            'models_ready': bool(models_status.get('models_ready')),
+            'found': found_models,
+            'missing': missing_models,
+        },
+        'transcription': transcription_status,
+        'data_dir': {
+            'path': str(DATA_DIR),
+            'writable': _is_dir_writable(DATA_DIR),
+        },
+        'disk': {'free_gb': free_disk_gb},
+    }
 
 
 @app.get('/transcription/status')
