@@ -378,9 +378,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-11T00:52:16Z
-- Latest commit: `e7cfd39`
-- Commit message: Merge pull request #152 from julesdg6/copilot/fix-mt3-status-endpoints  [WIP] Consolidate MT3 status checks into a single endpoint
+- Last automated update: 2026-06-11T00:52:37Z
+- Latest commit: `b93608b`
+- Commit message: Merge pull request #156 from julesdg6/copilot/fix-dockerfile-copy-scripts-folder  [WIP] Fix Dockerfile to copy scripts folder
 <!-- readme-update:end -->
 
 ## 🥁 Beat Detection & Beat Grid
