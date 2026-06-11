@@ -378,9 +378,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-10T23:37:18Z
-- Latest commit: `04e8ffd`
-- Commit message: Merge pull request #154 from julesdg6/copilot/fix-dockerfile-healthcheck-port  fix: correct Unraid template container port and document internal vs host port
+- Last automated update: 2026-06-11T00:52:16Z
+- Latest commit: `e7cfd39`
+- Commit message: Merge pull request #152 from julesdg6/copilot/fix-mt3-status-endpoints  [WIP] Consolidate MT3 status checks into a single endpoint
 <!-- readme-update:end -->
 
 ## 🥁 Beat Detection & Beat Grid
