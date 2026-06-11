@@ -2226,7 +2226,8 @@
 
   function updateStemModeFromModel() {
     if (!stemModeSelect || !stemModelSelect || stemModeSelect.dataset.userSelected === 'true') return;
-    stemModeSelect.value = stemModelSelect.value.includes('6s') ? '6_stem' : '4_stem';
+    const modelValue = typeof stemModelSelect.value === 'string' ? stemModelSelect.value : '';
+    stemModeSelect.value = modelValue.includes('6s') ? '6_stem' : '4_stem';
   }
 
   async function refreshAnalysisSettings() {
@@ -2252,8 +2253,9 @@
       const midiStatus = data?.midi || {};
       const activeBackend = data?.stem_backends?.active_backend || 'disabled';
       const stemBackends = data?.stem_backends || {};
+      const selectedModelValue = stemModelSelect ? stemModelSelect.value : '';
       const modelReady = Array.isArray(data?.available_models)
-        ? data.available_models.find((model) => model.name === stemModelSelect?.value)
+        ? data.available_models.find((model) => model.name === selectedModelValue)
         : null;
 
       mt3StatusNote.textContent = midiStatus.reason_detail || 'MIDI transcription status unavailable.';

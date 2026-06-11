@@ -560,7 +560,7 @@ def _build_analysis_config(
     task_fields = {
         'enable_mt3': bool(midi_enabled),
         'stem_backend': resolved_backend,
-        'stem_model': resolved_model if resolved_backend == 'audio_separator' else resolved_model,
+        'stem_model': resolved_model,
         'stem_device': resolved_device,
         'stem_mode': resolved_mode,
         'reprocess_mode': _normalize_reprocess_setting(reprocess_mode),
@@ -970,7 +970,6 @@ def reprocess_task(task_id: str, body: ReprocessRequest):
         'source': source,
         'status': 'pending',
         'created_at': datetime.now(timezone.utc).isoformat(),
-        'reprocess_source_task_id': task_id,
         'reprocess_target': body.mode,
         'reprocess_count': int(original.get('reprocess_count') or 0) + 1,
         **analysis_fields,
