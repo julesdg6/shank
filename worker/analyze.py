@@ -35,7 +35,9 @@ _TEMPO_WINDOW_BEATS = 4
 _TEMPO_CHANGE_THRESHOLD_BPM = 6.0
 _TEMPO_CHANGE_MIN_GAP_SECONDS = 1.0
 _BARS_PER_SECTION = 8
+# Applied to the middle sections (everything between intro and outro).
 _STRUCTURE_CORE_SEQUENCE = ('Verse', 'Chorus', 'Verse', 'Chorus', 'Bridge', 'Breakdown', 'Chorus')
+_STRUCTURE_FALLBACK_SEQUENCE = ('Verse', 'Chorus')
 _OUTRO_OFFSET_SECONDS = 8.0
 _SILENT_LUFS = -70.0
 _BEAT_MODES = {'constant_tempo', 'variable_tempo'}
@@ -557,7 +559,8 @@ def _derive_song_structure(sections: list[dict], duration_seconds: float) -> lis
             if core_index < len(_STRUCTURE_CORE_SEQUENCE):
                 label = _STRUCTURE_CORE_SEQUENCE[core_index]
             else:
-                label = 'Chorus' if core_index % 2 else 'Verse'
+                fallback_index = core_index - len(_STRUCTURE_CORE_SEQUENCE)
+                label = _STRUCTURE_FALLBACK_SEQUENCE[fallback_index % len(_STRUCTURE_FALLBACK_SEQUENCE)]
         structure.append({
             'label': label,
             'start_seconds': round(start, 3),
