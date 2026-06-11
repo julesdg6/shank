@@ -335,6 +335,7 @@ A completed task response looks like:
   "beats": [0.51, 1.04, 1.57],
   "downbeats": [0.51],
   "sections": [{"start_seconds": 0.51, "end_seconds": 245.31, "label": "section_1"}],
+  "structure": [{"label": "Intro", "start_seconds": 0.0, "end_seconds": 16.0, "timestamp": "00:00"}],
   "cue_points": [{"name": "intro", "time_seconds": 0.51}],
   "tempo_changes": [],
   "duration_seconds": 245.31,
@@ -400,7 +401,7 @@ Use `ACE_STEP_API_URL` and `ACE_STEP_API_KEY` (with underscore). Legacy names su
 ### Phase 3: Advanced Analysis & UI
 - [x] Implement Chord progression detection
 - [ ] Implement Melody -> MIDI extraction
-- [ ] Implement Song structure/segmentation detection
+- [x] Implement Song structure/segmentation detection
 - [x] Build Web UI (Dashboard, task list, result viewing)
 
 ### Phase 4: Stem Separation & Optimization

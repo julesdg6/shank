@@ -488,6 +488,7 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
     results_task_json = results_dir / 'task.json'
     results_analysis_json = results_dir / 'analysis.json'
     results_beatgrid_json = results_dir / 'beatgrid.json'
+    results_structure_json = results_dir / 'structure.json'
     waveform_beats_png = results_dir / 'waveform_beats.png'
     tempo_curve_png = results_dir / 'tempo_curve.png'
     beatgraph_png = results_dir / 'beatgraph.png'
@@ -506,6 +507,7 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
     results_task_json.write_text(json.dumps({'status': 'done'}))
     results_analysis_json.write_text(json.dumps({'full_mix': {'bpm': 120.0}}))
     results_beatgrid_json.write_text(json.dumps({'bpm': 120.0, 'beats': []}))
+    results_structure_json.write_text(json.dumps([{'label': 'Intro', 'start_seconds': 0.0}]))
     waveform_beats_png.write_bytes(b'\x89PNG\r\n\x1a\n')
     tempo_curve_png.write_bytes(b'\x89PNG\r\n\x1a\n')
     beatgraph_png.write_bytes(b'\x89PNG\r\n\x1a\n')
@@ -534,6 +536,7 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
             'task_json': str(results_task_json),
             'analysis_json': str(results_analysis_json),
             'beatgrid_json': str(results_beatgrid_json),
+            'structure_json': str(results_structure_json),
             'waveform_beats_png': str(waveform_beats_png),
             'tempo_curve_png': str(tempo_curve_png),
             'beatgraph_png': str(beatgraph_png),
@@ -557,6 +560,7 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
             'results_task_json',
             'stem_vocals_midi',
             'stem_vocals_wav',
+            'structure_json',
             'tempo_curve_png',
             'waveform_beats_png',
         ],
