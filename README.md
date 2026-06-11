@@ -414,9 +414,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-11T01:13:11Z
-- Latest commit: `0d9138f`
-- Commit message: Merge pull request #159 from julesdg6/copilot/add-doctor-endpoint  [WIP] Add doctor endpoint for deployment checks
+- Last automated update: 2026-06-11T01:47:27Z
+- Latest commit: `2e71575`
+- Commit message: Merge pull request #163 from julesdg6/copilot/fix-dockerfile-healthcheck-issues  Align runtime deployment status with actual backend/model readiness and compose usage
 <!-- readme-update:end -->
 
 ## 🥁 Beat Detection & Beat Grid
