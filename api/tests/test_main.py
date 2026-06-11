@@ -745,15 +745,15 @@ def test_stem_backend_status_audio_separator_active_when_available_and_ready(cli
     model_dir = tmp_path / 'models' / 'separator'
     model_dir.mkdir(parents=True, exist_ok=True)
     (model_dir / 'htdemucs_ft.yaml').write_text('version: 1\n')
-    (model_dir / 'htdemucs_ft.ckpt').write_bytes(b'\0' * (6 * 1024 * 1024))
+    (model_dir / 'htdemucs_ft.ckpt').write_bytes(b'\0' * (main_module._MODEL_WEIGHT_MIN_BYTES + 1))
     monkeypatch.setenv('AUDIO_SEPARATOR_MODEL_DIR', str(model_dir))
     monkeypatch.setenv('STEM_BACKEND', 'audio_separator')
     monkeypatch.delenv('ACE_STEP_API_URL', raising=False)
 
-    import api.main as main_module  # noqa: PLC0415
-    importlib.reload(main_module)
-    with patch.object(main_module.importlib.util, 'find_spec', return_value=object()):
-        c = TestClient(main_module.app)
+    import api.main as reloaded_main  # noqa: PLC0415
+    importlib.reload(reloaded_main)
+    with patch.object(reloaded_main.importlib.util, 'find_spec', return_value=object()):
+        c = TestClient(reloaded_main.app)
         response = c.get('/stem-backend/status')
 
     assert response.status_code == 200
@@ -773,9 +773,9 @@ def test_mt3_status_reports_available(client, monkeypatch):
     monkeypatch.setenv('MT3_ENABLED', 'true')
     monkeypatch.setenv('MT3_SERVICE_URL', 'http://127.0.0.1:8090')
     monkeypatch.setenv('TRANSCRIPTION_BACKEND', 'mt3')
-    import api.main as main_module  # noqa: PLC0415
-    importlib.reload(main_module)
-    c = TestClient(main_module.app)
+    import api.main as reloaded_main  # noqa: PLC0415
+    importlib.reload(reloaded_main)
+    c = TestClient(reloaded_main.app)
 
     response = c.get('/mt3/status')
     assert response.status_code == 200
@@ -792,9 +792,9 @@ def test_mt3_status_reports_disabled_when_mt3_off(client, monkeypatch):
     monkeypatch.setenv('MT3_ENABLED', 'false')
     monkeypatch.setenv('MT3_SERVICE_URL', 'http://127.0.0.1:8090')
     monkeypatch.setenv('TRANSCRIPTION_BACKEND', 'mt3')
-    import api.main as main_module  # noqa: PLC0415
-    importlib.reload(main_module)
-    c = TestClient(main_module.app)
+    import api.main as reloaded_main  # noqa: PLC0415
+    importlib.reload(reloaded_main)
+    c = TestClient(reloaded_main.app)
 
     response = c.get('/mt3/status')
     assert response.status_code == 200
@@ -862,11 +862,11 @@ def test_models_status_reports_ready_when_model_exists(client, monkeypatch, tmp_
     model_dir = tmp_path / 'models' / 'separator'
     model_dir.mkdir(parents=True, exist_ok=True)
     (model_dir / 'htdemucs_ft.yaml').write_text('version: 1\n')
-    (model_dir / 'htdemucs_ft.ckpt').write_bytes(b'\0' * (6 * 1024 * 1024))
+    (model_dir / 'htdemucs_ft.ckpt').write_bytes(b'\0' * (main_module._MODEL_WEIGHT_MIN_BYTES + 1))
     monkeypatch.setenv('AUDIO_SEPARATOR_MODEL_DIR', str(model_dir))
-    import api.main as main_module  # noqa: PLC0415
-    importlib.reload(main_module)
-    c = TestClient(main_module.app)
+    import api.main as reloaded_main  # noqa: PLC0415
+    importlib.reload(reloaded_main)
+    c = TestClient(reloaded_main.app)
 
     response = c.get('/api/models/status')
     assert response.status_code == 200
@@ -881,12 +881,12 @@ def test_models_status_reports_ready_when_model_exists(client, monkeypatch, tmp_
 def test_models_status_reports_config_only_when_yaml_exists_without_weights(client, monkeypatch, tmp_path):
     model_dir = tmp_path / 'models' / 'separator'
     model_dir.mkdir(parents=True, exist_ok=True)
-    # Keep this file below the 1024-byte config-only threshold used by the API.
-    (model_dir / 'htdemucs_ft.yaml').write_text('x' * 1023)
+    # Keep this file below the config-only threshold used by the API.
+    (model_dir / 'htdemucs_ft.yaml').write_text('x' * (main_module._MODEL_CONFIG_MIN_BYTES - 1))
     monkeypatch.setenv('AUDIO_SEPARATOR_MODEL_DIR', str(model_dir))
-    import api.main as main_module  # noqa: PLC0415
-    importlib.reload(main_module)
-    c = TestClient(main_module.app)
+    import api.main as reloaded_main  # noqa: PLC0415
+    importlib.reload(reloaded_main)
+    c = TestClient(reloaded_main.app)
 
     response = c.get('/api/models/status')
     assert response.status_code == 200
