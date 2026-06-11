@@ -1800,10 +1800,10 @@
         const isMt3Backend = backend.toLowerCase() === 'mt3';
         const statusLabel = isMt3Backend ? 'MT3 Status' : 'MIDI Transcription Status';
         const modelLabel = isMt3Backend ? 'MT3 Model' : 'MIDI Transcription Model';
-        const backendLabel = isMt3Backend ? '' : ` (${backend})`;
+        const backendLabel = isMt3Backend ? '' : ` (${escapeHtml(backend)})`;
         
         list.innerHTML += [
-          item(statusLabel, escapeHtml(mt3.status || '—') + (isMt3Backend ? '' : escapeHtml(backendLabel))),
+          item(statusLabel, escapeHtml(mt3.status || '—') + backendLabel),
           item(modelLabel, escapeHtml(mt3.model || '—')),
           item('Full Mix MIDI', mt3.full_mix && mt3.full_mix.midi_path ? mt3MidiLink('full_mix', 'download') : '—'),
           item('Full Mix Notes', mt3.full_mix && mt3.full_mix.notes_path ? mt3NotesLink('full_mix', 'view') : '—'),
