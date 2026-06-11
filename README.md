@@ -378,9 +378,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-11T00:53:56Z
-- Latest commit: `22e50e9`
-- Commit message: Merge pull request #158 from julesdg6/copilot/add-regression-tests-model-download-docker-path  [WIP] Add regression tests for Docker model download path
+- Last automated update: 2026-06-11T00:56:18Z
+- Latest commit: `a75aed3`
+- Commit message: Merge pull request #157 from julesdg6/copilot/fix-mt3-unavailable-wording  Fix MT3 wording when backend is Basic Pitch
 <!-- readme-update:end -->
 
 ## 🥁 Beat Detection & Beat Grid
