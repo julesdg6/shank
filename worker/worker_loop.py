@@ -124,6 +124,94 @@ def _record_task_progress(task_file: Path, progress_percent: int, message: str |
     _write_task(task_file, task)
 
 
+def _infer_stem_mode(model_name: str | None, stem_tracks: dict[str, str] | None = None) -> str:
+    if isinstance(stem_tracks, dict) and {'guitar', 'piano'}.intersection(stem_tracks):
+        return '6_stem'
+    if isinstance(model_name, str) and '6s' in model_name.lower():
+        return '6_stem'
+    return '4_stem'
+
+
+def _task_stem_backend(task: dict[str, Any]) -> str:
+    raw_value = task.get('stem_backend')
+    if isinstance(raw_value, str) and raw_value.strip():
+        normalized = raw_value.strip().lower().replace('-', '_')
+    else:
+        normalized = STEM_BACKEND
+    return 'disabled' if normalized in ('none', 'disabled') else normalized
+
+
+def _task_stem_model(task: dict[str, Any]) -> str:
+    raw_value = task.get('stem_model')
+    if isinstance(raw_value, str) and raw_value.strip():
+        return raw_value.strip()
+    return os.getenv('AUDIO_SEPARATOR_MODEL', 'htdemucs_ft.yaml').strip() or 'htdemucs_ft.yaml'
+
+
+def _task_stem_device(task: dict[str, Any], backend: str) -> str:
+    raw_value = task.get('stem_device')
+    if isinstance(raw_value, str) and raw_value.strip() and raw_value.strip().lower() != 'auto':
+        return raw_value.strip().lower()
+    if backend == 'demucs':
+        return os.getenv('DEMUCS_DEVICE', 'cpu').strip().lower() or 'cpu'
+    return os.getenv('AUDIO_SEPARATOR_DEVICE', 'cpu').strip().lower() or 'cpu'
+
+
+def _task_stem_mode(task: dict[str, Any], stem_model: str, stem_tracks: dict[str, str] | None = None) -> str:
+    raw_value = task.get('stem_mode')
+    if isinstance(raw_value, str) and raw_value.strip():
+        return raw_value.strip().lower().replace('-', '_')
+    return _infer_stem_mode(stem_model, stem_tracks)
+
+
+def _resolved_analysis_config(
+    *,
+    task: dict[str, Any],
+    effective_backend: str,
+    stem_model: str,
+    stem_device: str,
+    stem_tracks: dict[str, str] | None,
+    midi_enabled: bool,
+    midi_reason: str | None = None,
+    stem_reason: str | None = None,
+) -> dict[str, Any]:
+    backend_value = 'disabled' if effective_backend in ('none', 'disabled') else effective_backend
+    config = {
+        'midi': {
+            'enabled': bool(midi_enabled),
+            'backend': TRANSCRIPTION_BACKEND,
+        },
+        'stems': {
+            'enabled': backend_value != 'disabled',
+            'backend': backend_value,
+            'model': stem_model if backend_value == 'audio_separator' else None,
+            'device': stem_device,
+            'mode': _task_stem_mode(task, stem_model, stem_tracks),
+        },
+        'reprocess': (
+            task.get('analysis_config', {}).get('reprocess')
+            if isinstance(task.get('analysis_config'), dict)
+            and isinstance(task['analysis_config'].get('reprocess'), dict)
+            else {
+                'replace_existing': True,
+                'archive_previous': False,
+                'use_current_settings': True,
+            }
+        ),
+    }
+    warnings = []
+    existing_warnings = task.get('analysis_config', {}).get('warnings') if isinstance(task.get('analysis_config'), dict) else None
+    if isinstance(existing_warnings, list):
+        warnings.extend(str(item) for item in existing_warnings if isinstance(item, str))
+    if stem_reason:
+        warnings.append(stem_reason)
+    if midi_reason:
+        warnings.append(midi_reason)
+    if warnings:
+        config['warnings'] = warnings
+    return config
+
+
 def _task_artifact_paths(
     normalized_path: str,
     stem_tracks: dict[str, str] | None,
@@ -599,14 +687,19 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
             continue
 
         stem_tracks: dict[str, str] | None = None
-        effective_backend = STEM_BACKEND
+        requested_backend = _task_stem_backend(task)
+        stem_model = _task_stem_model(task)
+        stem_device = _task_stem_device(task, requested_backend)
+        effective_backend = requested_backend
+        stem_reason: str | None = None
 
-        if effective_backend != 'none':
+        if effective_backend not in ('none', 'disabled'):
             _record_task_progress(task_file, 65, 'Separating stems')
 
         if effective_backend == 'acestep':
             # Strict Ace-Step mode: fail the task if Ace-Step is unavailable or fails.
             if not ACE_STEP_API_URL:
+                stem_reason = 'Stem separation skipped: Ace-Step is not configured.'
                 _update_task(task_file, {
                     'status': 'failed',
                     'error': 'STEM_BACKEND=acestep but ACE_STEP_API_URL is not configured',
@@ -623,7 +716,9 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                 if stem_data.get('tracks'):
                     stem_tracks = _prepare_ace_step_stems_for_mt3(task_id, stem_data['tracks'])
                     task_updates['stems'] = stem_tracks
+                task_updates['stem_mode'] = _task_stem_mode(task, stem_model, stem_tracks)
                 _update_task(task_file, task_updates)
+                _record_task_progress(task_file, 70, 'Stem separation enabled via Ace-Step')
             except Exception as exc:
                 log.exception('Task %s Ace-Step stem separation failed: %s', task_id, exc)
                 _update_task(task_file, {
@@ -637,12 +732,27 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
         elif effective_backend == 'audio_separator':
             # Strict audio-separator mode: fail the task if unavailable or separation fails.
             try:
-                stem_data = separate_stems_with_audio_separator(normalized_path, task_id)
-                task_updates = {'stem_backend': 'audio_separator'}
+                stem_data = separate_stems_with_audio_separator(
+                    normalized_path,
+                    task_id,
+                    model_name=stem_model,
+                    device=stem_device,
+                )
+                task_updates = {
+                    'stem_backend': 'audio_separator',
+                    'stem_model': stem_model,
+                    'stem_device': stem_device,
+                }
                 if stem_data.get('tracks'):
                     stem_tracks = stem_data['tracks']
                     task_updates['stems'] = stem_tracks
+                task_updates['stem_mode'] = _task_stem_mode(task, stem_model, stem_tracks)
                 _update_task(task_file, task_updates)
+                _record_task_progress(
+                    task_file,
+                    70,
+                    f'Stem separation enabled via Audio Separator ({stem_model}, {stem_device}, {task_updates["stem_mode"]})',
+                )
             except Exception as exc:
                 log.exception('Task %s audio-separator stem separation failed: %s', task_id, exc)
                 _update_task(task_file, {
@@ -656,12 +766,17 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
         elif effective_backend == 'demucs':
             # Strict Demucs mode: fail the task if Demucs is unavailable or fails.
             try:
-                stem_data = separate_stems_with_demucs(normalized_path, task_id)
-                task_updates = {'stem_backend': 'demucs'}
+                stem_data = separate_stems_with_demucs(normalized_path, task_id, device=stem_device)
+                task_updates = {
+                    'stem_backend': 'demucs',
+                    'stem_device': stem_device,
+                }
                 if stem_data.get('tracks'):
                     stem_tracks = stem_data['tracks']
                     task_updates['stems'] = stem_tracks
+                task_updates['stem_mode'] = _task_stem_mode(task, stem_model, stem_tracks)
                 _update_task(task_file, task_updates)
+                _record_task_progress(task_file, 70, f'Stem separation enabled via Demucs ({stem_device})')
             except Exception as exc:
                 log.exception('Task %s Demucs stem separation failed: %s', task_id, exc)
                 _update_task(task_file, {
@@ -687,6 +802,7 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                     if stem_data.get('tracks'):
                         stem_tracks = _prepare_ace_step_stems_for_mt3(task_id, stem_data['tracks'])
                         task_updates['stems'] = stem_tracks
+                    task_updates['stem_mode'] = _task_stem_mode(task, stem_model, stem_tracks)
                     _update_task(task_file, task_updates)
                 except Exception as exc:
                     log.warning(
@@ -698,11 +814,21 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
             if stem_tracks is None and _is_audio_separator_available():
                 audio_separator_attempted = True
                 try:
-                    stem_data = separate_stems_with_audio_separator(normalized_path, task_id)
-                    task_updates = {'stem_backend': 'audio_separator'}
+                    stem_data = separate_stems_with_audio_separator(
+                        normalized_path,
+                        task_id,
+                        model_name=stem_model,
+                        device=stem_device,
+                    )
+                    task_updates = {
+                        'stem_backend': 'audio_separator',
+                        'stem_model': stem_model,
+                        'stem_device': stem_device,
+                    }
                     if stem_data.get('tracks'):
                         stem_tracks = stem_data['tracks']
                         task_updates['stems'] = stem_tracks
+                    task_updates['stem_mode'] = _task_stem_mode(task, stem_model, stem_tracks)
                     _update_task(task_file, task_updates)
                     if ace_step_attempted:
                         log.info(
@@ -717,11 +843,15 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
 
             if stem_tracks is None and _is_demucs_available():
                 try:
-                    stem_data = separate_stems_with_demucs(normalized_path, task_id)
-                    task_updates = {'stem_backend': 'demucs'}
+                    stem_data = separate_stems_with_demucs(normalized_path, task_id, device=stem_device)
+                    task_updates = {
+                        'stem_backend': 'demucs',
+                        'stem_device': stem_device,
+                    }
                     if stem_data.get('tracks'):
                         stem_tracks = stem_data['tracks']
                         task_updates['stems'] = stem_tracks
+                    task_updates['stem_mode'] = _task_stem_mode(task, stem_model, stem_tracks)
                     _update_task(task_file, task_updates)
                     prior = []
                     if ace_step_attempted:
@@ -747,13 +877,40 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                     ' continuing without stems',
                     task_id,
                 )
+                stem_reason = 'Stem separation skipped: no available backend succeeded.'
 
-        # effective_backend == 'none' (or any unrecognized value): skip stem separation.
+            if stem_tracks:
+                current_task = _read_task(task_file) or {}
+                effective_backend = str(current_task.get('stem_backend') or effective_backend)
+                _record_task_progress(task_file, 70, f'Stem separation enabled via {effective_backend}')
+            else:
+                effective_backend = 'disabled'
+
+        else:
+            effective_backend = 'disabled'
+            stem_reason = 'Stem separation skipped: disabled by analysis settings.'
+            _record_task_progress(task_file, 65, stem_reason)
 
         task_mt3_override = task.get('enable_mt3')
         mt3_enabled_for_task = task_mt3_override if isinstance(task_mt3_override, bool) else MT3_ENABLED
+        midi_reason: str | None = None
         if mt3_enabled_for_task:
             _record_task_progress(task_file, 78, 'Transcribing MIDI')
+        else:
+            midi_reason = 'MIDI transcription skipped: disabled by analysis settings.'
+            _record_task_progress(task_file, 78, midi_reason)
+        _update_task(task_file, {
+            'analysis_config': _resolved_analysis_config(
+                task=task,
+                effective_backend=effective_backend,
+                stem_model=stem_model,
+                stem_device=stem_device,
+                stem_tracks=stem_tracks,
+                midi_enabled=mt3_enabled_for_task,
+                midi_reason=midi_reason,
+                stem_reason=stem_reason,
+            ),
+        })
         mt3_result = run_mt3_transcription(
             task_id,
             normalized_path,
@@ -763,6 +920,16 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
         _update_task(task_file, {
             'mt3': mt3_result,
             'transcription': _transcription_payload_from_mt3(mt3_result),
+            'analysis_config': _resolved_analysis_config(
+                task=_read_task(task_file) or task,
+                effective_backend=effective_backend,
+                stem_model=stem_model,
+                stem_device=stem_device,
+                stem_tracks=stem_tracks,
+                midi_enabled=bool(mt3_result.get('enabled')),
+                midi_reason=midi_reason,
+                stem_reason=stem_reason,
+            ),
         })
         if MT3_FAIL_TASK_ON_ERROR and mt3_result.get('status') in ('failed', 'partial'):
             error_msg = '; '.join(mt3_result.get('errors') or []) or 'MT3 transcription failed'

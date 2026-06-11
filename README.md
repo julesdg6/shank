@@ -227,7 +227,7 @@ docker build -t shank:local .
 | `POST` | `/tasks/melody` | Upload audio and queue a melody-focused analysis task |
 | `POST` | `/tasks/url` | Submit a YouTube URL for download and analysis |
 | `GET` | `/tasks/{task_id}` | Retrieve the status and results of a task |
-| `POST` | `/tasks/{task_id}/reprocess` | Create a new task reprocessing the same source (see below) |
+| `POST` | `/tasks/{task_id}/reprocess` | Requeue an existing task using current or original analysis settings |
 | `GET` | `/tasks/{task_id}/chords` | Return chord detection results for a completed task |
 | `GET` | `/tasks/{task_id}/beatgrid` | Return beat grid and beat detection metadata for a completed task |
 | `GET` | `/tasks/{task_id}/artifacts` | List downloadable output files for a completed task |
@@ -237,6 +237,7 @@ docker build -t shank:local .
 | `GET` | `/tasks/{task_id}/mt3/notes/{track_name}` | Retrieve MT3 note metadata JSON |
 | `GET` | `/worker/status` | Return worker liveness and last-heartbeat timestamp |
 | `GET` | `/doctor` | Return consolidated deployment health checks (worker, tooling, models, transcription, disk) |
+| `GET` | `/analysis/settings` | Return current analysis defaults, backend/model availability, devices, and warnings |
 | `GET` | `/stem-backend/status` | Report which stem-separation backend is active |
 | `GET` | `/mt3/status` | Report MT3 transcription availability and backend configuration |
 | `GET` | `/api/models/status` | Report separator model availability and download progress |
@@ -246,12 +247,12 @@ docker build -t shank:local .
 
 ### Reprocess a task
 
-`POST /tasks/{task_id}/reprocess` creates a new pending task using the same source as the original. The original report is preserved by default.
+`POST /tasks/{task_id}/reprocess` resets the existing task to `pending` using either the current page-level analysis settings or the original task snapshot. By default the current report is replaced in place; archive modes store the previous task JSON before reprocessing.
 
 ```bash
 curl -X POST http://localhost:8088/tasks/<task_id>/reprocess \
      -H 'Content-Type: application/json' \
-     -d '{"mode": "all", "preserve_existing": true}'
+     -d '{"mode": "all", "reprocess_mode": "use_current_replace"}'
 ```
 
 Request body fields:
@@ -259,14 +260,17 @@ Request body fields:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `mode` | string | `"all"` | What to reprocess: `all`, `audio_analysis`, `stems`, `midi`, `metadata`, `ai_prompts` |
-| `preserve_existing` | bool | `true` | Keep the original task/report untouched |
-| `enable_mt3` | bool\|null | null | Override MT3 setting (null = inherit from original) |
+| `reprocess_mode` | string | `"use_current_replace"` | One of `use_current_replace`, `use_current_archive`, `reuse_original_replace`, `reuse_original_archive` |
+| `enable_mt3` | bool\|null | null | Override MIDI transcription for the reprocess |
 | `stem_backend` | string\|null | null | Override stem backend for this run |
+| `stem_model` | string\|null | null | Override Audio Separator model |
+| `stem_device` | string\|null | null | Override device (`auto`, `cpu`, `cuda`) |
+| `stem_mode` | string\|null | null | Override stem output mode (`4_stem`, `6_stem`) |
 
 Response:
 
 ```json
-{"task_id": "new-task-id", "source_task_id": "original-task-id", "status": "pending"}
+{"task_id": "existing-task-id", "source_task_id": "existing-task-id", "status": "pending"}
 ```
 
 ### Example — submit a YouTube URL

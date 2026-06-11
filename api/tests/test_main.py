@@ -43,6 +43,9 @@ def test_root_serves_dashboard_html_for_browser_requests(client):
     assert response.headers['content-type'].startswith('text/html')
     assert 'SHANK — AI Song Analyzer' in response.text
     assert 'Upload Audio File' in response.text
+    assert 'Analysis Settings' in response.text
+    assert 'Stem Separation' in response.text
+    assert 'Reprocess Behaviour' in response.text
     assert 'Spectrogram Preview' in response.text
     assert 'MIDI Piano Roll' in response.text
 
@@ -178,6 +181,31 @@ def test_upload_persists_mt3_disable_override(client, tmp_path):
     assert task['enable_mt3'] is False
 
 
+def test_upload_persists_analysis_settings_snapshot(client, tmp_path):
+    response = client.post(
+        '/tasks/upload',
+        files={'file': ('song.wav', io.BytesIO(b'RIFF' + b'\x00' * 36), 'audio/wav')},
+        data={
+            'enable_mt3': 'true',
+            'stem_backend': 'audio_separator',
+            'stem_model': 'htdemucs_6s.yaml',
+            'stem_device': 'cpu',
+            'stem_mode': '6_stem',
+        },
+    )
+    assert response.status_code == 202
+    task_id = response.json()['task_id']
+    task = json.loads((tmp_path / 'tasks' / f'{task_id}.json').read_text())
+    assert task['enable_mt3'] is True
+    assert task['stem_backend'] == 'audio_separator'
+    assert task['stem_model'] == 'htdemucs_6s.yaml'
+    assert task['stem_device'] == 'cpu'
+    assert task['stem_mode'] == '6_stem'
+    assert task['analysis_config']['midi']['enabled'] is True
+    assert task['analysis_config']['stems']['backend'] == 'audio_separator'
+    assert task['analysis_config']['stems']['mode'] == '6_stem'
+
+
 def test_upload_invalid_extension(client):
     response = client.post(
         '/tasks/upload',
@@ -279,13 +307,35 @@ def test_submit_url_persists_mt3_enabled_override(client, tmp_path):
     assert task['enable_mt3'] is True
 
 
-def test_submit_url_omits_mt3_override_when_not_provided(client, tmp_path):
+def test_submit_url_uses_default_analysis_settings_when_not_provided(client, tmp_path):
     response = client.post('/tasks/url', json={'url': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'})
     assert response.status_code == 202
     task_id = response.json()['task_id']
     task_file = tmp_path / 'tasks' / f'{task_id}.json'
     task = json.loads(task_file.read_text())
-    assert 'enable_mt3' not in task
+    assert 'enable_mt3' in task
+    assert 'analysis_config' in task
+
+
+def test_submit_url_persists_shared_analysis_settings(client, tmp_path):
+    response = client.post(
+        '/tasks/url',
+        json={
+            'url': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+            'enable_mt3': True,
+            'stem_backend': 'demucs',
+            'stem_device': 'cpu',
+            'stem_mode': '4_stem',
+        },
+    )
+    assert response.status_code == 202
+    task_id = response.json()['task_id']
+    task = json.loads((tmp_path / 'tasks' / f'{task_id}.json').read_text())
+    assert task['enable_mt3'] is True
+    assert task['stem_backend'] == 'demucs'
+    assert task['stem_device'] == 'cpu'
+    assert task['analysis_config']['stems']['backend'] == 'demucs'
+    assert task['analysis_config']['stems']['mode'] == '4_stem'
 
 
 # ---------------------------------------------------------------------------
@@ -839,6 +889,35 @@ def test_mt3_status_reports_service_unconfigured_reason(client, monkeypatch):
     assert 'not configured' in data['reason_detail']
 
 
+def test_analysis_settings_returns_defaults_and_availability(client, monkeypatch, tmp_path):
+    model_dir = tmp_path / 'models' / 'separator'
+    model_dir.mkdir(parents=True, exist_ok=True)
+    (model_dir / 'htdemucs_ft.yaml').write_text('version: 1\n')
+    (model_dir / 'htdemucs_ft.ckpt').write_bytes(b'\0' * (main_module._MODEL_WEIGHT_MIN_BYTES + 1))
+    monkeypatch.setenv('AUDIO_SEPARATOR_MODEL_DIR', str(model_dir))
+    monkeypatch.setenv('AUDIO_SEPARATOR_MODEL', 'htdemucs_ft.yaml')
+    monkeypatch.setenv('STEM_BACKEND', 'auto')
+    monkeypatch.setenv('MT3_ENABLED', 'true')
+    monkeypatch.setenv('TRANSCRIPTION_BACKEND', 'basic_pitch')
+    import api.main as reloaded_main  # noqa: PLC0415
+    importlib.reload(reloaded_main)
+
+    with (
+        patch.object(reloaded_main.importlib.util, 'find_spec', return_value=object()),
+        patch.object(shutil, 'which', side_effect=lambda binary: '/usr/bin/nvidia-smi' if binary == 'nvidia-smi' else None),
+    ):
+        c = TestClient(reloaded_main.app)
+        response = c.get('/analysis/settings')
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data['defaults']['midi']['selection'] == 'auto'
+    assert data['defaults']['stems']['backend'] == 'auto'
+    assert data['stem_backends']['active_backend'] == 'audio_separator'
+    assert any(model['name'] == 'htdemucs_ft.yaml' for model in data['available_models'])
+    assert data['devices']['cuda_available'] is True
+
+
 # ---------------------------------------------------------------------------
 # /api/models/*
 # ---------------------------------------------------------------------------
@@ -1232,8 +1311,8 @@ def test_doctor_status_reports_missing_binaries(monkeypatch):
 # POST /tasks/{task_id}/reprocess
 # ---------------------------------------------------------------------------
 
-def test_reprocess_url_task_creates_new_pending_task(client, tmp_path):
-    """Reprocessing a URL task creates a new pending task with source_task_id."""
+def test_reprocess_url_task_replaces_existing_task_by_default(client, tmp_path):
+    """Reprocessing should reset the existing task instead of creating a duplicate."""
     original_id = str(uuid.uuid4())
     tasks_dir = tmp_path / 'tasks'
     tasks_dir.mkdir(parents=True, exist_ok=True)
@@ -1242,6 +1321,7 @@ def test_reprocess_url_task_creates_new_pending_task(client, tmp_path):
         'type': 'url',
         'source': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
         'status': 'done',
+        'analysis': {'full_mix': {'bpm': 120.0}},
     }))
 
     response = client.post(f'/tasks/{original_id}/reprocess', json={'mode': 'all'})
@@ -1249,16 +1329,16 @@ def test_reprocess_url_task_creates_new_pending_task(client, tmp_path):
     data = response.json()
     assert data['source_task_id'] == original_id
     assert data['status'] == 'pending'
-    new_id = data['task_id']
+    assert data['task_id'] == original_id
 
-    # Verify the new task file was created correctly.
-    new_task = json.loads((tasks_dir / f'{new_id}.json').read_text())
-    assert new_task['task_id'] == new_id
-    assert new_task['source_task_id'] == original_id
-    assert new_task['type'] == 'url'
-    assert new_task['source'] == 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
-    assert new_task['status'] == 'pending'
-    assert new_task['reprocess_mode'] == 'all'
+    updated_task = json.loads((tasks_dir / f'{original_id}.json').read_text())
+    assert updated_task['task_id'] == original_id
+    assert updated_task['type'] == 'url'
+    assert updated_task['source'] == 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+    assert updated_task['status'] == 'pending'
+    assert updated_task['reprocess_mode'] == 'use_current_replace'
+    assert updated_task['reprocess_target'] == 'all'
+    assert 'analysis' not in updated_task
 
 
 def test_reprocess_upload_task_carries_file_path(client, tmp_path):
@@ -1277,10 +1357,10 @@ def test_reprocess_upload_task_carries_file_path(client, tmp_path):
 
     response = client.post(f'/tasks/{original_id}/reprocess', json={'mode': 'audio_analysis'})
     assert response.status_code == 202
-    new_id = response.json()['task_id']
-    new_task = json.loads((tasks_dir / f'{new_id}.json').read_text())
-    assert new_task['file_path'] == file_path
-    assert new_task['reprocess_mode'] == 'audio_analysis'
+    updated_task = json.loads((tasks_dir / f'{original_id}.json').read_text())
+    assert updated_task['file_path'] == file_path
+    assert updated_task['reprocess_target'] == 'audio_analysis'
+    assert updated_task['reprocess_mode'] == 'use_current_replace'
 
 
 def test_reprocess_not_found_returns_404(client):
@@ -1319,11 +1399,51 @@ def test_reprocess_with_enable_mt3_override(client, tmp_path):
         'enable_mt3': False,
     }))
 
-    response = client.post(f'/tasks/{original_id}/reprocess', json={'mode': 'all', 'enable_mt3': True})
+    response = client.post(
+        f'/tasks/{original_id}/reprocess',
+        json={'mode': 'all', 'enable_mt3': True, 'reprocess_mode': 'use_current_archive'},
+    )
     assert response.status_code == 202
-    new_id = response.json()['task_id']
-    new_task = json.loads((tasks_dir / f'{new_id}.json').read_text())
-    assert new_task['enable_mt3'] is True
+    updated_task = json.loads((tasks_dir / f'{original_id}.json').read_text())
+    assert updated_task['enable_mt3'] is True
+    assert updated_task['analysis_config']['reprocess']['archive_previous'] is True
+    assert updated_task['analysis_config']['reprocess']['use_current_settings'] is True
+    assert updated_task['archived_analysis']
+
+
+def test_reprocess_can_reuse_original_settings(client, tmp_path):
+    original_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{original_id}.json').write_text(json.dumps({
+        'task_id': original_id,
+        'type': 'url',
+        'source': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+        'status': 'done',
+        'enable_mt3': False,
+        'stem_backend': 'demucs',
+        'stem_device': 'cpu',
+        'analysis_config': {
+            'midi': {'enabled': False, 'backend': 'basic_pitch'},
+            'stems': {'enabled': True, 'backend': 'demucs', 'model': None, 'device': 'cpu', 'mode': '4_stem'},
+            'reprocess': {'replace_existing': True, 'archive_previous': False, 'use_current_settings': True},
+        },
+    }))
+
+    response = client.post(
+        f'/tasks/{original_id}/reprocess',
+        json={
+            'mode': 'all',
+            'enable_mt3': True,
+            'stem_backend': 'audio_separator',
+            'reprocess_mode': 'reuse_original_replace',
+        },
+    )
+    assert response.status_code == 202
+    updated_task = json.loads((tasks_dir / f'{original_id}.json').read_text())
+    assert updated_task['enable_mt3'] is False
+    assert updated_task['stem_backend'] == 'demucs'
+    assert updated_task['analysis_config']['reprocess']['use_current_settings'] is False
 
 
 def test_reprocess_all_valid_modes(client, tmp_path):

@@ -298,7 +298,13 @@ def _parse_audio_separator_stem_name(filename: str) -> str:
     return Path(filename).stem.lower()
 
 
-def separate_stems_with_audio_separator(src_audio_path: str, task_id: str) -> dict:
+def separate_stems_with_audio_separator(
+    src_audio_path: str,
+    task_id: str,
+    *,
+    model_name: str | None = None,
+    device: str | None = None,
+) -> dict:
     """Run python-audio-separator stem separation and return ``{'tracks': dict[str, str]}``.
 
     Output stems are stored under ``DATA_DIR/stems/<task_id>/``.
@@ -310,15 +316,14 @@ def separate_stems_with_audio_separator(src_audio_path: str, task_id: str) -> di
     from audio_separator.separator import Separator  # noqa: PLC0415 – lazy import
 
     stems_cache_dir = Path(os.getenv('DATA_DIR', _DEFAULT_DATA_DIR)) / 'stems'
-    audio_separator_model = (
-        os.getenv('AUDIO_SEPARATOR_MODEL', _DEFAULT_AUDIO_SEPARATOR_MODEL).strip()
-        or _DEFAULT_AUDIO_SEPARATOR_MODEL
-    )
+    audio_separator_model = (model_name or os.getenv('AUDIO_SEPARATOR_MODEL', _DEFAULT_AUDIO_SEPARATOR_MODEL)).strip()
+    if not audio_separator_model:
+        audio_separator_model = _DEFAULT_AUDIO_SEPARATOR_MODEL
     audio_separator_model_dir = (
         os.getenv('AUDIO_SEPARATOR_MODEL_DIR', _DEFAULT_AUDIO_SEPARATOR_MODEL_DIR).strip()
         or _DEFAULT_AUDIO_SEPARATOR_MODEL_DIR
     )
-    audio_separator_device = os.getenv('AUDIO_SEPARATOR_DEVICE', 'cpu').strip().lower() or 'cpu'
+    audio_separator_device = (device or os.getenv('AUDIO_SEPARATOR_DEVICE', 'cpu')).strip().lower() or 'cpu'
 
     out_dir = stems_cache_dir / task_id
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -356,7 +361,12 @@ def _is_demucs_available() -> bool:
     return shutil.which('demucs') is not None
 
 
-def separate_stems_with_demucs(src_audio_path: str, task_id: str) -> dict:
+def separate_stems_with_demucs(
+    src_audio_path: str,
+    task_id: str,
+    *,
+    device: str | None = None,
+) -> dict:
     """Run Demucs stem separation and return ``{'tracks': dict[str, str]}``.
 
     Output stems are stored under ``DATA_DIR/stems/<task_id>/`` to mirror the
@@ -366,7 +376,7 @@ def separate_stems_with_demucs(src_audio_path: str, task_id: str) -> dict:
     """
     stems_cache_dir = Path(os.getenv('DATA_DIR', _DEFAULT_DATA_DIR)) / 'stems'
     demucs_model = os.getenv('DEMUCS_MODEL', _DEFAULT_DEMUCS_MODEL).strip() or _DEFAULT_DEMUCS_MODEL
-    demucs_device = os.getenv('DEMUCS_DEVICE', 'cpu').strip() or 'cpu'
+    demucs_device = (device or os.getenv('DEMUCS_DEVICE', 'cpu')).strip() or 'cpu'
 
     out_base = stems_cache_dir / task_id
     out_base.mkdir(parents=True, exist_ok=True)

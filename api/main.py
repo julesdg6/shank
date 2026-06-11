@@ -28,6 +28,15 @@ DEFAULT_SEPARATOR_MODEL_DIR = Path(os.getenv('AUDIO_SEPARATOR_MODEL_DIR', '/srv/
 ALLOWED_AUDIO_EXTENSIONS = {'.mp3', '.wav', '.flac'}
 ALLOWED_REQUESTED_TYPES = {'melody'}
 MAX_UPLOAD_SIZE = 200 * 1024 * 1024  # 200 MB
+VALID_STEM_BACKENDS = frozenset({'auto', 'disabled', 'audio_separator', 'demucs', 'acestep'})
+VALID_STEM_DEVICES = frozenset({'auto', 'cpu', 'cuda'})
+VALID_STEM_MODES = frozenset({'4_stem', '6_stem'})
+VALID_REPROCESS_SETTINGS = frozenset({
+    'use_current_replace',
+    'use_current_archive',
+    'reuse_original_replace',
+    'reuse_original_archive',
+})
 
 _MODEL_DOWNLOAD_LOCK = threading.Lock()
 _MODEL_DOWNLOAD_STATE: dict[str, Any] = {
@@ -343,11 +352,329 @@ def _resolve_data_path(path_value: str) -> Path | None:
     return resolved
 
 
+def _env_flag(name: str, default: str = 'false') -> bool:
+    return os.getenv(name, default).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _normalize_stem_backend(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower().replace('-', '_')
+    if normalized == 'none':
+        normalized = 'disabled'
+    if normalized not in VALID_STEM_BACKENDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid stem_backend '{value}'. Valid values: {sorted(VALID_STEM_BACKENDS)}",
+        )
+    return normalized
+
+
+def _normalize_stem_device(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if normalized in ('gpu', 'cuda/gpu'):
+        normalized = 'cuda'
+    if normalized not in VALID_STEM_DEVICES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid stem_device '{value}'. Valid values: {sorted(VALID_STEM_DEVICES)}",
+        )
+    return normalized
+
+
+def _normalize_stem_mode(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower().replace('-', '_')
+    if normalized in ('4stem', 'four_stem'):
+        normalized = '4_stem'
+    if normalized in ('6stem', 'six_stem'):
+        normalized = '6_stem'
+    if normalized not in VALID_STEM_MODES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid stem_mode '{value}'. Valid values: {sorted(VALID_STEM_MODES)}",
+        )
+    return normalized
+
+
+def _normalize_reprocess_setting(value: str | None) -> str:
+    if value is None:
+        return 'use_current_replace'
+    normalized = value.strip().lower().replace('-', '_')
+    if normalized not in VALID_REPROCESS_SETTINGS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid reprocess_mode '{value}'. Valid values: {sorted(VALID_REPROCESS_SETTINGS)}",
+        )
+    return normalized
+
+
+def _infer_stem_mode_from_model(model_name: str | None) -> str:
+    if isinstance(model_name, str) and '6s' in model_name.lower():
+        return '6_stem'
+    return '4_stem'
+
+
+def _cuda_available() -> bool:
+    nvidia_visible = os.getenv('NVIDIA_VISIBLE_DEVICES', '').strip().lower()
+    if nvidia_visible and nvidia_visible != 'none':
+        return True
+    cuda_visible = os.getenv('CUDA_VISIBLE_DEVICES', '').strip()
+    if cuda_visible and cuda_visible != '-1':
+        return True
+    return shutil.which('nvidia-smi') is not None
+
+
+def _analysis_defaults() -> dict[str, Any]:
+    configured_backend = _normalize_stem_backend(os.getenv('STEM_BACKEND', 'auto')) or 'auto'
+    default_model = os.getenv('AUDIO_SEPARATOR_MODEL', 'htdemucs_ft.yaml').strip() or 'htdemucs_ft.yaml'
+    default_mode = _infer_stem_mode_from_model(default_model)
+    return {
+        'midi_enabled': _env_flag('MT3_ENABLED', 'false'),
+        'midi_backend': os.getenv('TRANSCRIPTION_BACKEND', 'basic_pitch').strip().lower() or 'basic_pitch',
+        'stem_backend': configured_backend,
+        'stem_model': default_model,
+        'stem_device': _normalize_stem_device(os.getenv('AUDIO_SEPARATOR_DEVICE', 'cpu')) or 'cpu',
+        'stem_mode': default_mode,
+    }
+
+
+def _resolve_reprocess_settings(
+    reprocess_mode: str | None,
+    *,
+    preserve_existing: bool | None = None,
+) -> dict[str, bool]:
+    if reprocess_mode is None and preserve_existing is not None:
+        normalized = 'use_current_archive' if preserve_existing else 'use_current_replace'
+    else:
+        normalized = _normalize_reprocess_setting(reprocess_mode)
+    return {
+        'use_current_settings': normalized.startswith('use_current_'),
+        'replace_existing': normalized.endswith('replace'),
+        'archive_previous': normalized.endswith('archive'),
+    }
+
+
+def _task_analysis_inputs(task: dict[str, Any]) -> dict[str, Any]:
+    analysis_config = task.get('analysis_config')
+    midi_config = analysis_config.get('midi') if isinstance(analysis_config, dict) else None
+    stems_config = analysis_config.get('stems') if isinstance(analysis_config, dict) else None
+    reprocess_config = analysis_config.get('reprocess') if isinstance(analysis_config, dict) else None
+    return {
+        'enable_mt3': (
+            task.get('enable_mt3')
+            if isinstance(task.get('enable_mt3'), bool)
+            else (midi_config.get('enabled') if isinstance(midi_config, dict) else None)
+        ),
+        'stem_backend': task.get('stem_backend') or (stems_config.get('backend') if isinstance(stems_config, dict) else None),
+        'stem_model': task.get('stem_model') or (stems_config.get('model') if isinstance(stems_config, dict) else None),
+        'stem_device': task.get('stem_device') or (stems_config.get('device') if isinstance(stems_config, dict) else None),
+        'stem_mode': task.get('stem_mode') or (stems_config.get('mode') if isinstance(stems_config, dict) else None),
+        'reprocess_mode': (
+            task.get('reprocess_mode')
+            or (
+                'reuse_original_archive'
+                if isinstance(reprocess_config, dict)
+                and not reprocess_config.get('use_current_settings', True)
+                and reprocess_config.get('archive_previous')
+                else 'reuse_original_replace'
+                if isinstance(reprocess_config, dict)
+                and not reprocess_config.get('use_current_settings', True)
+                else 'use_current_archive'
+                if isinstance(reprocess_config, dict) and reprocess_config.get('archive_previous')
+                else 'use_current_replace'
+            )
+        ),
+    }
+
+
+def _build_analysis_config(
+    *,
+    enable_mt3: bool | None = None,
+    stem_backend: str | None = None,
+    stem_model: str | None = None,
+    stem_device: str | None = None,
+    stem_mode: str | None = None,
+    reprocess_mode: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    defaults = _analysis_defaults()
+    backend_status = get_stem_backend_status()
+    models_status = _snapshot_model_download_status()
+    models = models_status.get('models', {})
+
+    resolved_backend = _normalize_stem_backend(stem_backend) or defaults['stem_backend']
+    if resolved_backend == 'auto':
+        resolved_backend = backend_status.get('active_backend') or 'disabled'
+    resolved_mode = _normalize_stem_mode(stem_mode)
+    resolved_model = stem_model.strip() if isinstance(stem_model, str) and stem_model.strip() else defaults['stem_model']
+    if resolved_mode is None:
+        resolved_mode = _infer_stem_mode_from_model(resolved_model)
+    elif not stem_model:
+        candidate = 'htdemucs_6s.yaml' if resolved_mode == '6_stem' else 'htdemucs_ft.yaml'
+        if candidate in models:
+            resolved_model = candidate
+    resolved_device = _normalize_stem_device(stem_device)
+    if resolved_device in (None, 'auto'):
+        if resolved_backend == 'demucs':
+            resolved_device = _normalize_stem_device(os.getenv('DEMUCS_DEVICE', 'cpu')) or 'cpu'
+        else:
+            resolved_device = defaults['stem_device']
+    reprocess_settings = _resolve_reprocess_settings(reprocess_mode)
+    midi_enabled = defaults['midi_enabled'] if enable_mt3 is None else enable_mt3
+
+    warnings: list[str] = []
+    if resolved_backend == 'audio_separator':
+        model_state = models.get(resolved_model)
+        if not isinstance(model_state, dict):
+            warnings.append(f'Audio Separator model {resolved_model} is not present in the model directory.')
+        elif not model_state.get('ready'):
+            warnings.append(f'Audio Separator model {resolved_model} is not ready yet.')
+    if resolved_backend == 'demucs' and not backend_status.get('demucs', {}).get('available'):
+        warnings.append('Demucs is not currently available.')
+    if resolved_backend == 'acestep' and not backend_status.get('acestep', {}).get('configured'):
+        warnings.append('Ace-Step is not configured.')
+    if resolved_backend in ('disabled', 'none'):
+        warnings.append('Stem separation is disabled.')
+        resolved_backend = 'disabled'
+
+    analysis_config: dict[str, Any] = {
+        'midi': {
+            'enabled': bool(midi_enabled),
+            'backend': defaults['midi_backend'],
+        },
+        'stems': {
+            'enabled': resolved_backend != 'disabled',
+            'backend': resolved_backend,
+            'model': resolved_model if resolved_backend == 'audio_separator' else None,
+            'device': resolved_device,
+            'mode': resolved_mode,
+        },
+        'reprocess': reprocess_settings,
+    }
+    if warnings:
+        analysis_config['warnings'] = warnings
+
+    task_fields = {
+        'enable_mt3': bool(midi_enabled),
+        'stem_backend': resolved_backend,
+        'stem_model': resolved_model,
+        'stem_device': resolved_device,
+        'stem_mode': resolved_mode,
+        'reprocess_mode': _normalize_reprocess_setting(reprocess_mode),
+        'analysis_config': analysis_config,
+    }
+    return analysis_config, task_fields
+
+
+def _analysis_settings_payload() -> dict[str, Any]:
+    defaults = _analysis_defaults()
+    stem_status = get_stem_backend_status()
+    midi_status = get_mt3_status()
+    models_status = _snapshot_model_download_status()
+    warnings: list[str] = []
+    if isinstance(models_status.get('warning'), str) and models_status.get('warning'):
+        warnings.append(models_status['warning'])
+    output_tail = models_status.get('output_tail')
+    warnings.extend(output_tail[-3:] if isinstance(output_tail, list) else [])
+
+    model_entries = []
+    for name, details in models_status.get('models', {}).items():
+        if not isinstance(details, dict):
+            continue
+        model_entries.append({
+            'name': name,
+            'mode': _infer_stem_mode_from_model(name),
+            'available': bool(details.get('exists')),
+            'ready': bool(details.get('ready')),
+            'config_only': bool(details.get('config_only')),
+        })
+
+    return {
+        'defaults': {
+            'midi': {
+                'selection': 'auto',
+                'enabled': defaults['midi_enabled'],
+                'backend': defaults['midi_backend'],
+            },
+            'stems': {
+                'backend': defaults['stem_backend'],
+                'model': defaults['stem_model'],
+                'device': 'auto',
+                'mode': defaults['stem_mode'],
+                'active_backend': stem_status.get('active_backend'),
+            },
+            'reprocess': {
+                'mode': 'use_current_replace',
+                'replace_existing': True,
+                'archive_previous': False,
+                'use_current_settings': True,
+            },
+        },
+        'midi': midi_status,
+        'stem_backends': {
+            'configured_backend': stem_status.get('configured_backend'),
+            'active_backend': stem_status.get('active_backend'),
+            'audio_separator': {
+                **stem_status.get('audio_separator', {}),
+                'status': (
+                    'available, model ready'
+                    if stem_status.get('audio_separator', {}).get('available')
+                    and stem_status.get('audio_separator', {}).get('model_ready')
+                    else 'available, model missing'
+                    if stem_status.get('audio_separator', {}).get('available')
+                    else 'unavailable'
+                ),
+            },
+            'demucs': {
+                **stem_status.get('demucs', {}),
+                'status': 'available' if stem_status.get('demucs', {}).get('available') else 'unavailable',
+            },
+            'acestep': {
+                **stem_status.get('acestep', {}),
+                'status': (
+                    'available'
+                    if stem_status.get('acestep', {}).get('healthy')
+                    else 'not configured'
+                    if not stem_status.get('acestep', {}).get('configured')
+                    else 'configured but unhealthy'
+                ),
+            },
+        },
+        'available_models': model_entries,
+        'devices': {
+            'default': 'auto',
+            'available': ['auto', 'cpu', *(['cuda'] if _cuda_available() else [])],
+            'cuda_available': _cuda_available(),
+        },
+        'warnings': warnings,
+    }
+
+
+def _archive_task_snapshot(task: dict[str, Any]) -> str | None:
+    task_id = task.get('task_id')
+    if not isinstance(task_id, str) or not task_id:
+        return None
+    archive_dir = DATA_DIR / 'results_archives' / task_id
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    archive_name = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}.json"
+    archive_path = archive_dir / archive_name
+    archive_path.write_text(json.dumps(task, indent=2))
+    return str(archive_path)
+
+
 async def _queue_audio_task(
     file: UploadFile,
     *,
     requested_type: str | None = None,
     enable_mt3: bool | None = None,
+    stem_backend: str | None = None,
+    stem_model: str | None = None,
+    stem_device: str | None = None,
+    stem_mode: str | None = None,
+    reprocess_mode: str | None = None,
 ) -> dict:
     if requested_type is not None and requested_type not in ALLOWED_REQUESTED_TYPES:
         raise HTTPException(status_code=400, detail='Unsupported requested_type')
@@ -380,6 +707,15 @@ async def _queue_audio_task(
     upload_path = UPLOADS_DIR / f"{task_id}{suffix}"
     upload_path.write_bytes(content)
 
+    _, analysis_fields = _build_analysis_config(
+        enable_mt3=enable_mt3,
+        stem_backend=stem_backend,
+        stem_model=stem_model,
+        stem_device=stem_device,
+        stem_mode=stem_mode,
+        reprocess_mode=reprocess_mode,
+    )
+
     task: dict[str, Any] = {
         'task_id': task_id,
         'type': 'upload',
@@ -387,11 +723,10 @@ async def _queue_audio_task(
         'file_path': str(upload_path),
         'status': 'pending',
         'created_at': datetime.now(timezone.utc).isoformat(),
+        **analysis_fields,
     }
     if requested_type is not None:
         task['requested_type'] = requested_type
-    if enable_mt3 is not None:
-        task['enable_mt3'] = enable_mt3
     _write_task(task)
 
     return {'task_id': task_id, 'status': 'pending'}
@@ -439,20 +774,46 @@ def read_root(request: Request):
 async def upload_audio(
     file: UploadFile = File(...),
     enable_mt3: bool | None = Form(default=None),
+    stem_backend: str | None = Form(default=None),
+    stem_model: str | None = Form(default=None),
+    stem_device: str | None = Form(default=None),
+    stem_mode: str | None = Form(default=None),
 ):
     """Accept an audio file (MP3, WAV, FLAC) and queue it for analysis."""
-    return JSONResponse(status_code=202, content=await _queue_audio_task(file, enable_mt3=enable_mt3))
+    return JSONResponse(
+        status_code=202,
+        content=await _queue_audio_task(
+            file,
+            enable_mt3=enable_mt3,
+            stem_backend=stem_backend,
+            stem_model=stem_model,
+            stem_device=stem_device,
+            stem_mode=stem_mode,
+        ),
+    )
 
 
 @app.post('/tasks/melody', status_code=202)
 async def submit_melody(
     file: UploadFile = File(...),
     enable_mt3: bool = Form(True),
+    stem_backend: str | None = Form(default=None),
+    stem_model: str | None = Form(default=None),
+    stem_device: str | None = Form(default=None),
+    stem_mode: str | None = Form(default=None),
 ):
     """Accept an audio file and queue a melody-focused analysis task."""
     return JSONResponse(
         status_code=202,
-        content=await _queue_audio_task(file, requested_type='melody', enable_mt3=enable_mt3),
+        content=await _queue_audio_task(
+            file,
+            requested_type='melody',
+            enable_mt3=enable_mt3,
+            stem_backend=stem_backend,
+            stem_model=stem_model,
+            stem_device=stem_device,
+            stem_mode=stem_mode,
+        ),
     )
 
 
@@ -463,6 +824,10 @@ async def submit_melody(
 class URLRequest(BaseModel):
     url: str
     enable_mt3: bool | None = None
+    stem_backend: str | None = None
+    stem_model: str | None = None
+    stem_device: str | None = None
+    stem_mode: str | None = None
 
     @field_validator('url')
     @classmethod
@@ -479,6 +844,13 @@ class URLRequest(BaseModel):
 def submit_url(body: URLRequest):
     """Accept a YouTube URL and queue it for analysis."""
     task_id = str(uuid.uuid4())
+    _, analysis_fields = _build_analysis_config(
+        enable_mt3=body.enable_mt3,
+        stem_backend=body.stem_backend,
+        stem_model=body.stem_model,
+        stem_device=body.stem_device,
+        stem_mode=body.stem_mode,
+    )
 
     task: dict[str, Any] = {
         'task_id': task_id,
@@ -486,9 +858,8 @@ def submit_url(body: URLRequest):
         'source': body.url,
         'status': 'pending',
         'created_at': datetime.now(timezone.utc).isoformat(),
+        **analysis_fields,
     }
-    if body.enable_mt3 is not None:
-        task['enable_mt3'] = body.enable_mt3
     _write_task(task)
 
     return JSONResponse(status_code=202, content={'task_id': task_id, 'status': 'pending'})
@@ -527,18 +898,18 @@ _VALID_REPROCESS_MODES = frozenset({
 
 class ReprocessRequest(BaseModel):
     mode: str = 'all'
-    preserve_existing: bool = True
+    preserve_existing: bool | None = None
     enable_mt3: bool | None = None
     stem_backend: str | None = None
+    stem_model: str | None = None
+    stem_device: str | None = None
+    stem_mode: str | None = None
+    reprocess_mode: str | None = None
 
 
 @app.post('/tasks/{task_id}/reprocess', status_code=202)
 def reprocess_task(task_id: str, body: ReprocessRequest):
-    """Create a new task that reprocesses the same source as *task_id*.
-
-    The original task is not modified. The new task records ``source_task_id``
-    pointing back to the original so callers can trace the lineage.
-    """
+    """Requeue a task using either current settings or the original task snapshot."""
     if body.mode not in _VALID_REPROCESS_MODES:
         raise HTTPException(
             status_code=400,
@@ -554,44 +925,79 @@ def reprocess_task(task_id: str, body: ReprocessRequest):
     if task_type not in ('url', 'upload'):
         raise HTTPException(status_code=400, detail=f"Cannot reprocess task of type '{task_type}'")
 
-    new_task_id = str(uuid.uuid4())
+    reprocess_settings = _resolve_reprocess_settings(
+        body.reprocess_mode,
+        preserve_existing=body.preserve_existing,
+    )
+    normalized_reprocess_mode = (
+        _normalize_reprocess_setting(body.reprocess_mode)
+        if body.reprocess_mode is not None
+        else 'use_current_archive'
+        if body.preserve_existing is True
+        else 'use_current_replace'
+    )
+    original_inputs = _task_analysis_inputs(original)
+    current_analysis_inputs = {
+        'enable_mt3': body.enable_mt3,
+        'stem_backend': body.stem_backend,
+        'stem_model': body.stem_model,
+        'stem_device': body.stem_device,
+        'stem_mode': body.stem_mode,
+        'reprocess_mode': body.reprocess_mode,
+    }
+    selected_inputs = current_analysis_inputs if reprocess_settings['use_current_settings'] else original_inputs
+    selected_enable_mt3 = selected_inputs.get('enable_mt3')
+    selected_stem_backend = selected_inputs.get('stem_backend')
+    selected_stem_model = selected_inputs.get('stem_model')
+    selected_stem_device = selected_inputs.get('stem_device')
+    selected_stem_mode = selected_inputs.get('stem_mode')
+    _, analysis_fields = _build_analysis_config(
+        enable_mt3=selected_enable_mt3 if isinstance(selected_enable_mt3, bool) else None,
+        stem_backend=selected_stem_backend if isinstance(selected_stem_backend, str) else None,
+        stem_model=selected_stem_model if isinstance(selected_stem_model, str) else None,
+        stem_device=selected_stem_device if isinstance(selected_stem_device, str) else None,
+        stem_mode=selected_stem_mode if isinstance(selected_stem_mode, str) else None,
+        reprocess_mode=normalized_reprocess_mode,
+    )
+    analysis_fields['analysis_config']['reprocess'] = reprocess_settings
+    analysis_fields['reprocess_mode'] = normalized_reprocess_mode
 
-    new_task: dict[str, Any] = {
-        'task_id': new_task_id,
+    archive_path = _archive_task_snapshot(original) if reprocess_settings['archive_previous'] else None
+
+    reset_task: dict[str, Any] = {
+        'task_id': task_id,
         'type': task_type,
         'source': source,
         'status': 'pending',
         'created_at': datetime.now(timezone.utc).isoformat(),
-        'source_task_id': task_id,
-        'reprocess_mode': body.mode,
+        'reprocess_target': body.mode,
+        'reprocess_count': int(original.get('reprocess_count') or 0) + 1,
+        **analysis_fields,
     }
+    if archive_path:
+        reset_task['archived_analysis'] = archive_path
 
-    # Carry over the original file_path for upload tasks so the worker can
-    # reuse the already-uploaded file without re-uploading.
     if task_type == 'upload':
         file_path = original.get('file_path')
         if file_path:
-            new_task['file_path'] = file_path
+            reset_task['file_path'] = file_path
         requested_type = original.get('requested_type')
         if requested_type:
-            new_task['requested_type'] = requested_type
+            reset_task['requested_type'] = requested_type
 
-    # Allow per-reprocess overrides; fall back to the original task's settings.
-    enable_mt3_for_new_task = body.enable_mt3 if body.enable_mt3 is not None else original.get('enable_mt3')
-    if enable_mt3_for_new_task is not None:
-        new_task['enable_mt3'] = enable_mt3_for_new_task
+    if task_type == 'url' and isinstance(original.get('youtube'), dict):
+        reset_task['youtube'] = original['youtube']
+        reset_task['source_type'] = original.get('source_type')
 
-    if body.stem_backend is not None:
-        new_task['stem_backend'] = body.stem_backend
-
-    _write_task(new_task)
+    _write_task(reset_task)
 
     return JSONResponse(
         status_code=202,
         content={
-            'task_id': new_task_id,
+            'task_id': task_id,
             'source_task_id': task_id,
             'status': 'pending',
+            'archived_analysis': archive_path,
         },
     )
 
@@ -863,6 +1269,12 @@ def get_doctor_status():
     }
 
 
+@app.get('/analysis/settings')
+def get_analysis_settings():
+    """Return page-level analysis defaults, availability, and warnings."""
+    return _analysis_settings_payload()
+
+
 @app.get('/transcription/status')
 def get_transcription_status():
     """Return MT3 transcription availability and current backend configuration."""
@@ -925,7 +1337,7 @@ def get_stem_backend_status():
     else:  # auto
         if ace_step_url and ace_step_healthy:
             active_backend = 'acestep'
-        elif audio_separator_available:
+        elif audio_separator_available and audio_separator_ready:
             active_backend = 'audio_separator'
         elif demucs_available:
             active_backend = 'demucs'
