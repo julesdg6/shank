@@ -493,6 +493,9 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
     tempo_curve_png = results_dir / 'tempo_curve.png'
     beatgraph_png = results_dir / 'beatgraph.png'
     results_mt3_json = results_dir / 'mt3.json'
+    results_lyrics_json = results_dir / 'lyrics.json'
+    results_credits_json = results_dir / 'credits.json'
+    results_song_metadata_json = results_dir / 'song_metadata.json'
     results_artifacts_json = results_dir / 'artifacts.json'
 
     normalized.parent.mkdir(parents=True, exist_ok=True)
@@ -512,6 +515,9 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
     tempo_curve_png.write_bytes(b'\x89PNG\r\n\x1a\n')
     beatgraph_png.write_bytes(b'\x89PNG\r\n\x1a\n')
     results_mt3_json.write_text(json.dumps({'status': 'completed'}))
+    results_lyrics_json.write_text(json.dumps({'plain_lyrics': 'Never gonna give you up'}))
+    results_credits_json.write_text(json.dumps({'track_title': 'Never Gonna Give You Up'}))
+    results_song_metadata_json.write_text(json.dumps({'enabled': True}))
     results_artifacts_json.write_text(json.dumps({'normalized_wav': str(normalized)}))
 
     tasks_dir = tmp_path / 'tasks'
@@ -541,6 +547,9 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
             'tempo_curve_png': str(tempo_curve_png),
             'beatgraph_png': str(beatgraph_png),
             'mt3_json': str(results_mt3_json),
+            'lyrics_json': str(results_lyrics_json),
+            'credits_json': str(results_credits_json),
+            'song_metadata_json': str(results_song_metadata_json),
             'artifacts_json': str(results_artifacts_json),
         },
     }))
@@ -551,6 +560,8 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
         'artifacts': [
             'beatgraph_png',
             'beatgrid_json',
+            'credits_json',
+            'lyrics_json',
             'midi',
             'normalized_wav',
             'notes_json',
@@ -558,6 +569,7 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
             'results_artifacts_json',
             'results_mt3_json',
             'results_task_json',
+            'song_metadata_json',
             'stem_vocals_midi',
             'stem_vocals_wav',
             'structure_json',

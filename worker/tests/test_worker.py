@@ -155,6 +155,9 @@ def test_pending_upload_task_is_normalized(data_dir):
     assert Path(updated['results']['beatgraph_png']).is_file()
     assert Path(updated['results']['task_json']).is_file()
     assert Path(updated['results']['mt3_json']).is_file()
+    assert Path(updated['results']['lyrics_json']).is_file()
+    assert Path(updated['results']['credits_json']).is_file()
+    assert Path(updated['results']['song_metadata_json']).is_file()
     assert Path(updated['results']['artifacts_json']).is_file()
     structured_analysis = json.loads(Path(updated['results']['analysis_json']).read_text())
     assert structured_analysis == updated['analysis']

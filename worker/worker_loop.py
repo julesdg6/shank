@@ -14,6 +14,7 @@ import numpy as np
 
 from analyze import analyze_audio
 from downloader import download_youtube, extract_youtube_metadata
+from metadata import collect_song_metadata
 from mt3_client import transcribe_with_service
 from stems import (
     _is_audio_separator_available,
@@ -257,6 +258,9 @@ def _task_artifact_paths(
             ('waveform_beats_png', 'waveform_beats_png'),
             ('tempo_curve_png', 'tempo_curve_png'),
             ('beatgraph_png', 'beatgraph_png'),
+            ('lyrics_json', 'lyrics_json'),
+            ('credits_json', 'credits_json'),
+            ('song_metadata_json', 'song_metadata_json'),
         ):
             value = result_artifacts.get(key)
             if isinstance(value, str) and value:
@@ -277,6 +281,9 @@ def _structured_result_paths(task_id: str) -> dict[str, str]:
         'tempo_curve_png': str(result_dir / 'tempo_curve.png'),
         'beatgraph_png': str(result_dir / 'beatgraph.png'),
         'mt3_json': str(result_dir / 'mt3.json'),
+        'lyrics_json': str(result_dir / 'lyrics.json'),
+        'credits_json': str(result_dir / 'credits.json'),
+        'song_metadata_json': str(result_dir / 'song_metadata.json'),
         'artifacts_json': str(result_dir / 'artifacts.json'),
     }
 
@@ -408,6 +415,7 @@ def _write_structured_results(
     task_payload: dict[str, Any],
     normalized_path: str,
     analysis_payload: dict[str, Any],
+    metadata_payload: dict[str, Any],
     mt3_result: dict[str, Any] | None,
     stem_tracks: dict[str, str] | None,
 ) -> None:
@@ -417,6 +425,9 @@ def _write_structured_results(
     task_path = Path(result_artifacts['task_json'])
     analysis_path = Path(result_artifacts['analysis_json'])
     mt3_path = Path(result_artifacts['mt3_json'])
+    lyrics_path = Path(result_artifacts['lyrics_json'])
+    credits_path = Path(result_artifacts['credits_json'])
+    song_metadata_path = Path(result_artifacts['song_metadata_json'])
     artifacts_path = Path(result_artifacts['artifacts_json'])
 
     task_path.write_text(json.dumps(task_payload, indent=2))
@@ -424,7 +435,12 @@ def _write_structured_results(
     _write_beat_outputs(result_artifacts, analysis_payload)
     _write_structure_output(result_artifacts, analysis_payload)
     mt3_payload = mt3_result if isinstance(mt3_result, dict) else {}
+    lyrics_payload = metadata_payload.get('lyrics') if isinstance(metadata_payload.get('lyrics'), dict) else {}
+    credits_payload = metadata_payload.get('credits') if isinstance(metadata_payload.get('credits'), dict) else {}
     mt3_path.write_text(json.dumps(mt3_payload, indent=2))
+    lyrics_path.write_text(json.dumps(lyrics_payload, indent=2))
+    credits_path.write_text(json.dumps(credits_payload, indent=2))
+    song_metadata_path.write_text(json.dumps(metadata_payload, indent=2))
     artifacts_path.write_text(
         json.dumps(_task_artifact_paths(normalized_path, stem_tracks, mt3_payload, result_artifacts), indent=2),
     )
@@ -976,10 +992,14 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                 analysis_payload['warnings'] = analysis_warnings
 
             current_task = _read_task(task_file) or {}
+            metadata_payload = collect_song_metadata(current_task, input_path)
             completion_updates: dict[str, Any] = {
                 'status': 'done',
                 'normalized_path': normalized_path,
                 'analysis': analysis_payload,
+                'lyrics': metadata_payload.get('lyrics'),
+                'credits': metadata_payload.get('credits'),
+                'song_metadata': metadata_payload,
                 'bpm': full_mix_analysis['bpm'],
                 'key': full_mix_analysis['key'],
                 **({'duration_seconds': full_mix_analysis.get('duration_seconds')} if full_mix_analysis.get('duration_seconds') is not None else {}),
@@ -993,6 +1013,7 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                 task_payload=completed_task_payload,
                 normalized_path=normalized_path,
                 analysis_payload=analysis_payload,
+                metadata_payload=metadata_payload,
                 mt3_result=mt3_result,
                 stem_tracks=stem_tracks,
             )
