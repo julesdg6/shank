@@ -378,9 +378,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-11T00:56:18Z
-- Latest commit: `a75aed3`
-- Commit message: Merge pull request #157 from julesdg6/copilot/fix-mt3-unavailable-wording  Fix MT3 wording when backend is Basic Pitch
+- Last automated update: 2026-06-11T01:01:06Z
+- Latest commit: `d2c60bf`
+- Commit message: Merge pull request #161 from julesdg6/copilot/feature-interactive-waveform-analysis  feat: add section markers and cue points to waveform timeline
 <!-- readme-update:end -->
 
 ## 🥁 Beat Detection & Beat Grid
