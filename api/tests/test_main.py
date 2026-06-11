@@ -3,7 +3,9 @@ import importlib
 import io
 import json
 import shutil
+import subprocess
 import uuid
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -724,6 +726,94 @@ def test_get_mt3_notes_returns_404_when_no_notes_path(client, tmp_path):
 
     response = client.get(f'/tasks/{task_id}/mt3/notes/full_mix')
     assert response.status_code == 404
+
+
+def test_loop_exports_endpoint_prepares_audio_midi_and_zip(client, tmp_path, monkeypatch):
+    task_id = str(uuid.uuid4())
+    normalized = tmp_path / 'normalized' / f'{task_id}.wav'
+    bass_stem = tmp_path / 'stems' / task_id / 'bass.wav'
+    notes_file = tmp_path / 'mt3' / task_id / 'full_mix.notes.json'
+    normalized.parent.mkdir(parents=True, exist_ok=True)
+    bass_stem.parent.mkdir(parents=True, exist_ok=True)
+    notes_file.parent.mkdir(parents=True, exist_ok=True)
+    normalized.write_bytes(b'RIFF' + b'\x00' * 36)
+    bass_stem.write_bytes(b'RIFF' + b'\x00' * 36)
+    notes_file.write_text(json.dumps([
+        {'pitch': 72, 'start': 0.2, 'end': 1.0, 'velocity': 100},
+        {'pitch': 48, 'start': 0.3, 'end': 1.2, 'velocity': 100},
+    ]))
+
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'source': 'track.wav',
+        'bpm': 128.0,
+        'key': 'C minor',
+        'normalized_path': str(normalized),
+        'stems': {'bass': str(bass_stem)},
+        'analysis': {
+            'full_mix': {
+                'beatgrid': {
+                    'beats': [{'index': idx + 1, 'time': float(idx) * 0.5} for idx in range(48)],
+                },
+                'chords': {
+                    'segments': [{'symbol': 'Cm', 'start_seconds': 0.0, 'end_seconds': 8.0}],
+                },
+            },
+        },
+        'mt3': {
+            'status': 'completed',
+            'full_mix': {'notes_path': str(notes_file)},
+            'stems': {},
+        },
+    }))
+
+    def fake_ffmpeg(cmd, capture_output, text):
+        out_path = Path(cmd[-1])
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(b'RIFF' + b'\x00' * 36)
+        return subprocess.CompletedProcess(cmd, 0, '', '')
+
+    monkeypatch.setattr(main_module.subprocess, 'run', fake_ffmpeg)
+
+    response = client.get(f'/tasks/{task_id}/loops?start_bar=1&bars=4')
+    assert response.status_code == 200
+    body = response.json()
+    clip_ids = {clip['clip_id'] for clip in body['clips']}
+    assert 'fullmix_wav' in clip_ids
+    assert 'bass_wav' in clip_ids
+    assert 'melody_midi' in clip_ids
+    assert 'bass_midi' in clip_ids
+    assert 'chord_midi' in clip_ids
+    assert body['zip_url'].endswith('start_bar=1&bars=4')
+
+    zip_response = client.get(body['zip_url'])
+    assert zip_response.status_code == 200
+    assert zip_response.headers['content-type'].startswith('application/zip')
+
+    first_clip = body['clips'][0]
+    clip_response = client.get(first_clip['download_url'])
+    assert clip_response.status_code == 200
+
+
+def test_loop_exports_rejects_invalid_bar_length(client, tmp_path):
+    task_id = str(uuid.uuid4())
+    normalized = tmp_path / 'normalized' / f'{task_id}.wav'
+    normalized.parent.mkdir(parents=True, exist_ok=True)
+    normalized.write_bytes(b'RIFF' + b'\x00' * 36)
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'normalized_path': str(normalized),
+        'analysis': {'full_mix': {'beatgrid': {'beats': [{'index': idx + 1, 'time': float(idx)} for idx in range(16)]}}},
+    }))
+
+    response = client.get(f'/tasks/{task_id}/loops?start_bar=1&bars=3')
+    assert response.status_code == 400
 
 
 # ---------------------------------------------------------------------------

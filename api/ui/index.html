@@ -709,6 +709,21 @@
           </div>
         </div>
         <canvas id="timeline-canvas" class="timeline-canvas"></canvas>
+        <div id="loop-selection-controls" style="display:flex;flex-wrap:wrap;align-items:center;gap:0.5rem;margin-top:0.65rem;font-size:0.82rem">
+          <strong style="color:var(--text-muted)">Loop export</strong>
+          <label for="loop-start-bar">Start bar</label>
+          <input id="loop-start-bar" type="number" min="1" value="1" style="width:90px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:0.28rem 0.4rem" />
+          <label for="loop-bars">Bars</label>
+          <select id="loop-bars" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:0.32rem 0.4rem">
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="4" selected>4</option>
+            <option value="8">8</option>
+            <option value="16">16</option>
+          </select>
+          <button class="btn btn-ghost btn-sm" id="loop-refresh-btn">Refresh loop clips</button>
+          <span id="loop-selection-status" style="color:var(--text-muted)"></span>
+        </div>
       </div>
       <div class="detail-grid">
         <div class="panel">
@@ -747,6 +762,8 @@
     </div>
     <div class="panel" style="margin-top:1rem">
       <h4 style="margin-bottom:0.5rem">Downloads</h4>
+      <div id="loop-clip-cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:0.5rem;margin-bottom:0.65rem"></div>
+      <div id="loop-zip-download" style="margin-bottom:0.65rem"></div>
       <div id="download-buttons" style="display:flex;flex-wrap:wrap;gap:0.5rem"></div>
     </div>
     <div class="panel" style="margin-top:1rem">
@@ -831,6 +848,7 @@
     rafId: null,
     timelinePixelsPerSecond: 100,
     timelineTaskData: null,
+    loopSelection: null,
   };
   let analysisSettingsPayload = null;
 
@@ -1114,6 +1132,76 @@
       const barHeight = Math.max(4, intensity * height);
       ctx.fillRect(idx * barWidth + 1, height - barHeight, Math.max(1, barWidth - 2), barHeight);
     });
+  }
+
+  function currentLoopSelectionInput() {
+    const startInput = document.getElementById('loop-start-bar');
+    const barsSelect = document.getElementById('loop-bars');
+    const startBar = Math.max(1, Number(startInput?.value || 1));
+    const bars = Number(barsSelect?.value || 4);
+    return { startBar, bars };
+  }
+
+  async function renderLoopExports(taskData) {
+    const cards = document.getElementById('loop-clip-cards');
+    const zipWrap = document.getElementById('loop-zip-download');
+    const status = document.getElementById('loop-selection-status');
+    if (!cards || !zipWrap || !status) return;
+    const { startBar, bars } = currentLoopSelectionInput();
+    status.textContent = 'Preparing loop exports…';
+    cards.innerHTML = '';
+    zipWrap.innerHTML = '';
+    try {
+      const url = `/tasks/${encodeURIComponent(taskData.task_id)}/loops?start_bar=${encodeURIComponent(startBar)}&bars=${encodeURIComponent(bars)}`;
+      const res = await fetch(url, { cache: 'no-store' });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload?.detail || 'Loop export unavailable');
+      stemPlayer.loopSelection = {
+        startBar: payload.start_bar,
+        bars: payload.bars,
+        startSeconds: Number(payload.start_seconds || 0),
+        endSeconds: Number(payload.end_seconds || 0),
+      };
+      drawTimeline();
+      const clips = Array.isArray(payload.clips) ? payload.clips : [];
+      if (clips.length === 0) {
+        status.textContent = 'No loop clips available for this range.';
+        return;
+      }
+      status.textContent = `Bars ${payload.start_bar}-${payload.start_bar + payload.bars - 1} ready`;
+      cards.innerHTML = clips.map((clip) => `
+        <a class="btn btn-ghost btn-sm loop-clip-card"
+           href="${escapeHtml(clip.download_url)}"
+           draggable="true"
+           data-href="${escapeHtml(clip.download_url)}"
+           data-filename="${escapeHtml(clip.filename)}"
+           data-media-type="${escapeHtml(clip.media_type || (clip.format === 'mid' ? 'audio/midi' : 'audio/wav'))}"
+           style="display:flex;justify-content:space-between;gap:0.6rem;align-items:center;padding:0.55rem 0.65rem;text-align:left">
+          <span>${escapeHtml(clip.label)}</span>
+          <span style="font-size:0.72rem;color:var(--text-muted)">${escapeHtml((clip.format || '').toUpperCase())}</span>
+        </a>
+      `).join('');
+      cards.querySelectorAll('.loop-clip-card').forEach((card) => {
+        card.addEventListener('dragstart', (event) => {
+          const href = card.getAttribute('data-href') || card.getAttribute('href') || '';
+          const filename = card.getAttribute('data-filename') || 'loop.wav';
+          const mediaType = card.getAttribute('data-media-type') || 'audio/wav';
+          const absoluteUrl = new URL(href, window.location.origin).toString();
+          event.dataTransfer?.setData('text/uri-list', absoluteUrl);
+          event.dataTransfer?.setData('text/plain', absoluteUrl);
+          event.dataTransfer?.setData('DownloadURL', `${mediaType}:${filename}:${absoluteUrl}`);
+        });
+      });
+      const zipUrl = payload.zip_url;
+      if (typeof zipUrl === 'string' && zipUrl) {
+        zipWrap.innerHTML = `<a class="btn btn-primary btn-sm" href="${escapeHtml(zipUrl)}">Download ZIP (DAW/browser fallback)</a>`;
+      }
+    } catch (error) {
+      stemPlayer.loopSelection = null;
+      drawTimeline();
+      status.textContent = '';
+      cards.innerHTML = `<span style="font-size:0.82rem;color:#fca5a5">${escapeHtml(error?.message || 'Loop exports failed')}</span>`;
+    }
   }
 
   function renderArtifactDownloads(taskData) {
@@ -1443,6 +1531,27 @@
       }
     }
 
+    const loopSelection = stemPlayer.loopSelection;
+    if (loopSelection && Number.isFinite(loopSelection.startSeconds) && Number.isFinite(loopSelection.endSeconds) && loopSelection.endSeconds > loopSelection.startSeconds) {
+      const xStart = cx + (loopSelection.startSeconds - currentTime) * pps;
+      const xEnd = cx + (loopSelection.endSeconds - currentTime) * pps;
+      const xClipped = Math.max(0, xStart);
+      const xClippedEnd = Math.min(W, xEnd);
+      const selectionWidth = xClippedEnd - xClipped;
+      if (selectionWidth > 0) {
+        ctx.fillStyle = 'rgba(34,197,94,0.12)';
+        ctx.fillRect(xClipped, RULER_H, selectionWidth, WAVE_H);
+        ctx.strokeStyle = 'rgba(34,197,94,0.8)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(xStart, RULER_H);
+        ctx.lineTo(xStart, RULER_H + WAVE_H);
+        ctx.moveTo(xEnd, RULER_H);
+        ctx.lineTo(xEnd, RULER_H + WAVE_H);
+        ctx.stroke();
+      }
+    }
+
     // ── Waveform ─────────────────────────────────────────────────────────────
     if (waveform.length > 0 && duration > 0) {
       const numBins = waveform.length;
@@ -1628,6 +1737,7 @@
     stemPlayer.tracks = [];
     stemPlayer.timelineTaskData = null;
     stemPlayer.timelinePixelsPerSecond = 100;
+    stemPlayer.loopSelection = null;
 
     const stems = taskData.stems && typeof taskData.stems === 'object' ? taskData.stems : {};
     const trackSpecs = [{ name: 'full_mix', artifactName: 'normalized_wav' }].concat(
@@ -1743,7 +1853,30 @@
         const x = e.clientX - rect.left;
         const cx = timelineCanvas.clientWidth / 2;
         const clickTime = getTransportTime() + (x - cx) / stemPlayer.timelinePixelsPerSecond;
-        seekStemPlayback(clickTime);
+        if (e.shiftKey) {
+          const analysis = (taskData.analysis && typeof taskData.analysis === 'object') ? taskData.analysis.full_mix || null : null;
+          const beatRows = Array.isArray(analysis?.beatgrid?.beats) ? analysis.beatgrid.beats : [];
+          const barStarts = beatRows
+            .map((entry) => toFiniteNumber(entry?.time, NaN))
+            .filter((value) => Number.isFinite(value))
+            .filter((_, idx) => idx % 4 === 0);
+          if (barStarts.length > 0) {
+            let nearestIdx = 0;
+            let nearestDistance = Math.abs(barStarts[0] - clickTime);
+            for (let idx = 1; idx < barStarts.length; idx += 1) {
+              const dist = Math.abs(barStarts[idx] - clickTime);
+              if (dist < nearestDistance) {
+                nearestIdx = idx;
+                nearestDistance = dist;
+              }
+            }
+            const startInput = document.getElementById('loop-start-bar');
+            if (startInput) startInput.value = String(nearestIdx + 1);
+            renderLoopExports(taskData);
+          }
+        } else {
+          seekStemPlayback(clickTime);
+        }
       };
     }
 
@@ -1764,8 +1897,15 @@
       updateZoomLabel();
       drawTimeline();
     };
+    const loopRefreshBtn = document.getElementById('loop-refresh-btn');
+    const loopStartInput = document.getElementById('loop-start-bar');
+    const loopBars = document.getElementById('loop-bars');
+    if (loopRefreshBtn) loopRefreshBtn.onclick = () => { renderLoopExports(taskData); };
+    if (loopStartInput) loopStartInput.onchange = () => { renderLoopExports(taskData); };
+    if (loopBars) loopBars.onchange = () => { renderLoopExports(taskData); };
     updateZoomLabel();
     drawTimeline();
+    await renderLoopExports(taskData);
   }
 
   // ── Render ───────────────────────────────────────────────────────────────
