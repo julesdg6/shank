@@ -349,7 +349,7 @@ def test_auto_mode_falls_back_to_demucs_when_ace_step_fails(data_dir, monkeypatc
     bass = vocals.parent / 'bass.wav'
     other = vocals.parent / 'other.wav'
 
-    def fake_demucs(src_path, tid):
+    def fake_demucs(src_path, tid, **_kwargs):
         for f in (vocals, drums, bass, other):
             f.parent.mkdir(parents=True, exist_ok=True)
             f.write_bytes(b'fake-wav')
@@ -357,6 +357,7 @@ def test_auto_mode_falls_back_to_demucs_when_ace_step_fails(data_dir, monkeypatc
 
     with patch('worker_loop.normalize_audio'), \
          patch('worker_loop.separate_stems_with_ace_step', side_effect=RuntimeError('Ace-step down')), \
+         patch('worker_loop._is_audio_separator_available', return_value=False), \
          patch('worker_loop.separate_stems_with_demucs', side_effect=fake_demucs), \
          patch('worker_loop._is_demucs_available', return_value=True), \
          patch('worker_loop.analyze_audio', return_value={'bpm': 120.0, 'key': 'C major'}):
@@ -435,7 +436,7 @@ def test_demucs_backend_strict_mode_records_stems_on_success(data_dir, monkeypat
     vocals = data_dir / 'stems' / task['task_id'] / 'htdemucs' / task['task_id'] / 'vocals.wav'
     drums = vocals.parent / 'drums.wav'
 
-    def fake_demucs(src_path, tid):
+    def fake_demucs(src_path, tid, **_kwargs):
         for f in (vocals, drums):
             f.parent.mkdir(parents=True, exist_ok=True)
             f.write_bytes(b'fake-wav')
@@ -540,6 +541,62 @@ def test_task_mt3_override_false_skips_transcription_even_when_enabled(data_dir,
     updated = json.loads(task_file.read_text())
     assert updated['mt3']['status'] == 'disabled'
     assert updated['transcription']['enabled'] is False
+
+
+def test_pending_upload_task_uses_task_level_analysis_settings(data_dir, monkeypatch):
+    monkeypatch.setenv('MT3_ENABLED', 'true')
+    monkeypatch.setenv('MT3_SERVICE_URL', DEFAULT_MT3_SERVICE_URL)
+    importlib.reload(worker_loop)
+    _, task_file = _make_upload_task(data_dir)
+    task = json.loads(task_file.read_text())
+    task.update({
+        'enable_mt3': False,
+        'stem_backend': 'audio_separator',
+        'stem_model': 'htdemucs_6s.yaml',
+        'stem_device': 'cpu',
+        'stem_mode': '6_stem',
+        'analysis_config': {
+            'midi': {'enabled': False, 'backend': 'basic_pitch'},
+            'stems': {
+                'enabled': True,
+                'backend': 'audio_separator',
+                'model': 'htdemucs_6s.yaml',
+                'device': 'cpu',
+                'mode': '6_stem',
+            },
+            'reprocess': {'replace_existing': True, 'archive_previous': False, 'use_current_settings': True},
+        },
+    })
+    task_file.write_text(json.dumps(task, indent=2))
+
+    stem_outputs = {'vocals': str(data_dir / 'stems' / 'vocals.wav')}
+    fake_disabled = {
+        'enabled': False,
+        'backend': 'basic_pitch',
+        'status': 'disabled',
+        'model': 'mt3',
+        'output_paths': [],
+        'warnings': [],
+        'errors': [],
+        'full_mix': None,
+        'stems': {},
+    }
+    with patch('worker_loop.normalize_audio'), \
+         patch('worker_loop.separate_stems_with_audio_separator', return_value={'tracks': stem_outputs}) as mock_stems, \
+         patch('worker_loop.run_mt3_transcription', return_value=fake_disabled) as mock_mt3, \
+         patch('worker_loop.analyze_audio', return_value={'bpm': 120.0, 'key': 'C major'}):
+        count = worker_loop.process_pending_tasks()
+
+    assert count == 1
+    assert mock_stems.call_args.kwargs == {'model_name': 'htdemucs_6s.yaml', 'device': 'cpu'}
+    assert mock_mt3.call_args.kwargs['enabled'] is False
+    updated = json.loads(task_file.read_text())
+    assert updated['analysis_config']['stems']['backend'] == 'audio_separator'
+    assert updated['analysis_config']['stems']['mode'] == '6_stem'
+    assert updated['analysis_config']['midi']['enabled'] is False
+    messages = [entry['message'] for entry in updated['logs']]
+    assert any('Audio Separator' in message for message in messages)
+    assert any('MIDI transcription skipped' in message for message in messages)
 
 
 def test_pending_upload_task_caches_ace_step_url_stems_for_mt3(data_dir, monkeypatch):
@@ -1187,7 +1244,7 @@ def test_audio_separator_backend_strict_mode_records_stems_on_success(data_dir, 
     bass = stems_dir / 'song_(Bass)_htdemucs_ft.wav'
     other = stems_dir / 'song_(Other)_htdemucs_ft.wav'
 
-    def fake_audio_separator(src_path, tid):
+    def fake_audio_separator(src_path, tid, **_kwargs):
         for f in (vocals, drums, bass, other):
             f.parent.mkdir(parents=True, exist_ok=True)
             f.write_bytes(b'fake-wav')
@@ -1229,7 +1286,7 @@ def test_auto_mode_falls_back_to_audio_separator_when_ace_step_fails(data_dir, m
     bass = stems_dir / 'song_(Bass)_htdemucs_ft.wav'
     other = stems_dir / 'song_(Other)_htdemucs_ft.wav'
 
-    def fake_audio_separator(src_path, tid):
+    def fake_audio_separator(src_path, tid, **_kwargs):
         for f in (vocals, drums, bass, other):
             f.parent.mkdir(parents=True, exist_ok=True)
             f.write_bytes(b'fake-wav')
@@ -1266,7 +1323,7 @@ def test_auto_mode_falls_back_to_demucs_when_audio_separator_also_fails(data_dir
     vocals = data_dir / 'stems' / task['task_id'] / 'htdemucs' / f"{task['task_id']}" / 'vocals.wav'
     drums = vocals.parent / 'drums.wav'
 
-    def fake_demucs(src_path, tid):
+    def fake_demucs(src_path, tid, **_kwargs):
         for f in (vocals, drums):
             f.parent.mkdir(parents=True, exist_ok=True)
             f.write_bytes(b'fake-wav')

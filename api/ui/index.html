@@ -468,6 +468,68 @@
 </header>
 
 <main>
+  <div class="card" id="analysis-settings-panel" style="margin-bottom:1.5rem">
+    <div class="tasks-header">
+      <h2><span class="icon">🎛️</span> Analysis Settings</h2>
+      <span id="analysis-settings-summary" style="font-size:0.8rem;color:var(--text-muted)">Loading current analysis settings…</span>
+    </div>
+    <div class="detail-grid">
+      <div class="input-group">
+        <label for="mt3-toggle" style="font-size:0.84rem;color:var(--text-muted)">MIDI Transcription</label>
+        <select id="mt3-toggle" class="select-control">
+          <option value="auto">🎚️ Auto</option>
+          <option value="true">🎤 Enabled</option>
+          <option value="false">🚫 Disabled</option>
+        </select>
+        <div class="settings-note" id="mt3-status-note">Checking transcription availability…</div>
+      </div>
+      <div class="input-group">
+        <label for="stem-backend-select" style="font-size:0.84rem;color:var(--text-muted)">Stem Separation</label>
+        <select id="stem-backend-select" class="select-control">
+          <option value="auto">🎚️ Auto</option>
+          <option value="disabled">🚫 Disabled</option>
+          <option value="audio_separator">Audio Separator</option>
+          <option value="demucs">Demucs</option>
+          <option value="acestep">Ace-Step</option>
+        </select>
+        <div class="settings-note" id="stem-backend-note">Checking stem backend availability…</div>
+      </div>
+      <div class="input-group">
+        <label for="stem-model-select" style="font-size:0.84rem;color:var(--text-muted)">Stem Model</label>
+        <select id="stem-model-select" class="select-control"></select>
+        <div class="settings-note" id="stem-model-note">Loading available models…</div>
+      </div>
+      <div class="input-group">
+        <label for="stem-device-select" style="font-size:0.84rem;color:var(--text-muted)">Device</label>
+        <select id="stem-device-select" class="select-control">
+          <option value="auto">🎚️ Auto</option>
+          <option value="cpu">CPU</option>
+          <option value="cuda">CUDA / GPU</option>
+        </select>
+        <div class="settings-note" id="stem-device-note">Detecting available devices…</div>
+      </div>
+      <div class="input-group">
+        <label for="stem-mode-select" style="font-size:0.84rem;color:var(--text-muted)">Stem Output Mode</label>
+        <select id="stem-mode-select" class="select-control">
+          <option value="4_stem">4 stems — vocals, drums, bass, other</option>
+          <option value="6_stem">6 stems — vocals, drums, bass, guitar, piano, other</option>
+        </select>
+        <div class="settings-note" id="stem-mode-note">4-stem and 6-stem model readiness will be shown here.</div>
+      </div>
+      <div class="input-group">
+        <label for="reprocess-setting-select" style="font-size:0.84rem;color:var(--text-muted)">Reprocess Behaviour</label>
+        <select id="reprocess-setting-select" class="select-control">
+          <option value="use_current_replace">Use current settings · Replace existing analysis</option>
+          <option value="use_current_archive">Use current settings · Archive previous analysis</option>
+          <option value="reuse_original_replace">Reuse original task settings · Replace existing analysis</option>
+          <option value="reuse_original_archive">Reuse original task settings · Archive previous analysis</option>
+        </select>
+        <div class="settings-note" id="reprocess-note">Reprocess replaces the current report by default.</div>
+      </div>
+    </div>
+    <div class="settings-note" id="analysis-warnings" style="margin-top:0.75rem"></div>
+  </div>
+
   <div id="dashboard-view">
     <div class="grid">
 
@@ -487,7 +549,7 @@
         <div class="alert" id="upload-alert"></div>
         <div style="margin-top:0.75rem">
           <label style="display:flex;align-items:center;gap:0.45rem;font-size:0.9rem;color:var(--text)">
-            <span>🎵 Use Analysis Options below to configure MIDI transcription.</span>
+            <span>🎵 Use the shared Analysis Settings panel to control MIDI, stems, and reprocess behaviour.</span>
           </label>
         </div>
         <button class="btn btn-primary" id="upload-btn" style="margin-top:1rem;width:100%" disabled>
@@ -510,19 +572,6 @@
           <button class="btn btn-primary" id="url-btn">
             Submit &amp; Analyze
           </button>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2><span class="icon">🎛️</span> Analysis Options</h2>
-        <div class="input-group">
-          <label for="mt3-toggle" style="font-size:0.84rem;color:var(--text-muted)">MIDI Transcription</label>
-          <select id="mt3-toggle" class="select-control">
-            <option value="auto">🎚️ Auto (default)</option>
-            <option value="true">🎤 Enable</option>
-            <option value="false">🚫 Disable</option>
-          </select>
-          <div class="settings-note" id="mt3-status-note">Checking transcription availability…</div>
         </div>
       </div>
 
@@ -723,7 +772,7 @@
     <button class="modal-close" id="reprocess-modal-close">✕</button>
     <h3>Reprocess Song</h3>
     <p style="font-size:0.88rem;color:var(--text-muted);margin-bottom:1rem">
-      A new analysis task will be created using the same source. The existing report is preserved.
+      Reprocess uses the shared Analysis Settings panel above. Existing analysis is replaced by default unless you choose an archive mode.
     </p>
     <label style="display:block;margin-bottom:0.4rem;font-size:0.88rem;font-weight:600">What to reprocess</label>
     <select id="reprocess-mode" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:0.4rem;margin-bottom:1rem">
@@ -762,6 +811,7 @@
   let completedTasks = [];
   let pollTimer = null;
   let completedPollTimer = null;
+  const ANALYSIS_SETTINGS_KEY = 'shank_analysis_settings';
   const STEM_COLORS = {
     drums: '#f97316',
     bass: '#3b82f6',
@@ -782,6 +832,7 @@
     timelinePixelsPerSecond: 100,
     timelineTaskData: null,
   };
+  let analysisSettingsPayload = null;
 
   // ── Utilities ────────────────────────────────────────────────────────────
   function saveTasks() { localStorage.setItem('shank_tasks', JSON.stringify(tasks)); }
@@ -2057,10 +2108,12 @@
       confirmBtn.disabled = true;
       if (reprocessAlert) reprocessAlert.innerHTML = '';
       try {
+        const analysisPayload = currentAnalysisPayload();
+        const reprocessMode = reprocessSettingSelect?.value || 'use_current_replace';
         const res = await fetch(`${API}/tasks/${encodeURIComponent(taskId)}/reprocess`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mode, preserve_existing: true }),
+          body: JSON.stringify({ mode, reprocess_mode: reprocessMode, ...analysisPayload }),
         });
         const result = await res.json();
         if (!res.ok) {
@@ -2086,6 +2139,18 @@
   const uploadAlert = document.getElementById('upload-alert');
   const mt3Toggle = document.getElementById('mt3-toggle');
   const mt3StatusNote = document.getElementById('mt3-status-note');
+  const stemBackendSelect = document.getElementById('stem-backend-select');
+  const stemBackendNote = document.getElementById('stem-backend-note');
+  const stemModelSelect = document.getElementById('stem-model-select');
+  const stemModelNote = document.getElementById('stem-model-note');
+  const stemDeviceSelect = document.getElementById('stem-device-select');
+  const stemDeviceNote = document.getElementById('stem-device-note');
+  const stemModeSelect = document.getElementById('stem-mode-select');
+  const stemModeNote = document.getElementById('stem-mode-note');
+  const reprocessSettingSelect = document.getElementById('reprocess-setting-select');
+  const reprocessNote = document.getElementById('reprocess-note');
+  const analysisWarnings = document.getElementById('analysis-warnings');
+  const analysisSettingsSummary = document.getElementById('analysis-settings-summary');
 
   let selectedFile = null;
   let mt3Available = false;
@@ -2097,25 +2162,123 @@
     return null;
   }
 
-  async function refreshMt3Status() {
-    if (!mt3Toggle || !mt3StatusNote) return;
+  function savedAnalysisSettings() {
     try {
-      const res = await fetch(`${API}/mt3/status`, { cache: 'no-store' });
-      if (!res.ok) throw new Error('Unable to fetch transcription status');
+      return JSON.parse(localStorage.getItem(ANALYSIS_SETTINGS_KEY) || '{}');
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function persistAnalysisSettings() {
+    const payload = {
+      midi: mt3Toggle?.value || 'auto',
+      stem_backend: stemBackendSelect?.value || 'auto',
+      stem_model: stemModelSelect?.value || '',
+      stem_device: stemDeviceSelect?.value || 'auto',
+      stem_mode: stemModeSelect?.value || '4_stem',
+      reprocess_mode: reprocessSettingSelect?.value || 'use_current_replace',
+    };
+    localStorage.setItem(ANALYSIS_SETTINGS_KEY, JSON.stringify(payload));
+    renderAnalysisSummary();
+  }
+
+  function currentAnalysisPayload() {
+    const payload = {};
+    const mt3Override = selectedMt3Override();
+    if (mt3Override !== null) payload.enable_mt3 = mt3Override;
+    if (stemBackendSelect?.value) payload.stem_backend = stemBackendSelect.value;
+    if (stemModelSelect?.value) payload.stem_model = stemModelSelect.value;
+    if (stemDeviceSelect?.value) payload.stem_device = stemDeviceSelect.value;
+    if (stemModeSelect?.value) payload.stem_mode = stemModeSelect.value;
+    return payload;
+  }
+
+  function renderAnalysisSummary() {
+    if (!analysisSettingsSummary) return;
+    const midiLabel = mt3Toggle?.selectedOptions?.[0]?.textContent?.trim() || 'Auto';
+    const stemLabel = stemBackendSelect?.selectedOptions?.[0]?.textContent?.trim() || 'Auto';
+    const modeLabel = stemModeSelect?.value === '6_stem' ? '6 stems' : '4 stems';
+    analysisSettingsSummary.textContent = `MIDI: ${midiLabel} · Stems: ${stemLabel} · Mode: ${modeLabel}`;
+  }
+
+  function populateModelOptions(settings) {
+    if (!stemModelSelect) return;
+    const currentValue = stemModelSelect.value;
+    const models = Array.isArray(settings?.available_models) ? settings.available_models : [];
+    const options = models.length > 0 ? models : [{
+      name: settings?.defaults?.stems?.model || 'htdemucs_ft.yaml',
+      ready: false,
+      available: false,
+      mode: settings?.defaults?.stems?.mode || '4_stem',
+    }];
+    stemModelSelect.innerHTML = options.map((model) => {
+      const readiness = model.ready ? 'ready' : (model.available ? 'present' : 'missing');
+      const modeLabel = model.mode === '6_stem' ? '6 stems' : '4 stems';
+      return `<option value="${escapeHtml(model.name)}">${escapeHtml(model.name)} · ${modeLabel} · ${readiness}</option>`;
+    }).join('');
+    const saved = savedAnalysisSettings().stem_model;
+    const desiredValue = saved || currentValue || settings?.defaults?.stems?.model;
+    if (desiredValue && Array.from(stemModelSelect.options).some((option) => option.value === desiredValue)) {
+      stemModelSelect.value = desiredValue;
+    }
+  }
+
+  function updateStemModeFromModel() {
+    if (!stemModeSelect || !stemModelSelect || stemModeSelect.dataset.userSelected === 'true') return;
+    stemModeSelect.value = stemModelSelect.value.includes('6s') ? '6_stem' : '4_stem';
+  }
+
+  async function refreshAnalysisSettings() {
+    try {
+      const res = await fetch(`${API}/analysis/settings`, { cache: 'no-store' });
+      if (!res.ok) throw new Error('Unable to fetch analysis settings');
       const data = await res.json();
-      mt3Available = Boolean(data?.available);
-      mt3Toggle.disabled = !mt3Available;
-      if (!mt3Available) mt3Toggle.value = 'auto';
-      
-      // Use backend_display for user-friendly backend name
-      const backendDisplay = data?.backend_display || data?.backend || 'unknown';
-      mt3StatusNote.textContent = data?.reason_detail
-        || `MIDI transcription is ${mt3Available ? 'available' : 'unavailable'} (${backendDisplay}).`;
+      analysisSettingsPayload = data;
+      mt3Available = Boolean(data?.midi?.available);
+
+      populateModelOptions(data);
+
+      const saved = savedAnalysisSettings();
+      if (mt3Toggle) mt3Toggle.value = saved.midi || data?.defaults?.midi?.selection || 'auto';
+      if (stemBackendSelect) stemBackendSelect.value = saved.stem_backend || data?.defaults?.stems?.backend || 'auto';
+      if (stemDeviceSelect) stemDeviceSelect.value = saved.stem_device || data?.devices?.default || 'auto';
+      if (stemModeSelect) {
+        stemModeSelect.value = saved.stem_mode || data?.defaults?.stems?.mode || '4_stem';
+        stemModeSelect.dataset.userSelected = saved.stem_mode ? 'true' : 'false';
+      }
+      if (reprocessSettingSelect) reprocessSettingSelect.value = saved.reprocess_mode || data?.defaults?.reprocess?.mode || 'use_current_replace';
+
+      const midiStatus = data?.midi || {};
+      const activeBackend = data?.stem_backends?.active_backend || 'disabled';
+      const stemBackends = data?.stem_backends || {};
+      const modelReady = Array.isArray(data?.available_models)
+        ? data.available_models.find((model) => model.name === stemModelSelect?.value)
+        : null;
+
+      mt3StatusNote.textContent = midiStatus.reason_detail || 'MIDI transcription status unavailable.';
+      stemBackendNote.textContent = `Audio Separator: ${stemBackends?.audio_separator?.status || 'unknown'} · Demucs: ${stemBackends?.demucs?.status || 'unknown'} · Ace-Step: ${stemBackends?.acestep?.status || 'unknown'} · Active backend: ${activeBackend}`;
+      stemModelNote.textContent = modelReady
+        ? `${modelReady.name} is ${modelReady.ready ? 'ready' : (modelReady.available ? 'present but not ready' : 'missing')}.`
+        : 'Choose the model that should be used when Audio Separator runs.';
+      stemDeviceNote.textContent = data?.devices?.cuda_available
+        ? 'CPU and CUDA / GPU are available.'
+        : 'CPU is available. CUDA / GPU is not currently detected.';
+      stemModeNote.textContent = stemModeSelect?.value === '6_stem'
+        ? '6-stem mode expects vocals, drums, bass, guitar, piano, other.'
+        : '4-stem mode expects vocals, drums, bass, other.';
+      reprocessNote.textContent = reprocessSettingSelect?.value?.includes('archive')
+        ? 'Reprocess will archive the previous analysis before replacing it.'
+        : 'Reprocess replaces the current report by default.';
+      analysisWarnings.textContent = Array.isArray(data?.warnings) && data.warnings.length
+        ? `Warnings: ${data.warnings.join(' · ')}`
+        : '';
+      persistAnalysisSettings();
     } catch (_) {
       mt3Available = false;
-      mt3Toggle.disabled = true;
-      mt3Toggle.value = 'auto';
-      mt3StatusNote.textContent = 'Could not verify MIDI transcription status.';
+      if (mt3StatusNote) mt3StatusNote.textContent = 'Could not verify analysis settings.';
+      if (stemBackendNote) stemBackendNote.textContent = 'Stem backend status unavailable.';
+      if (analysisWarnings) analysisWarnings.textContent = 'Warnings: could not load analysis settings from the API.';
     }
   }
 
@@ -2128,6 +2291,18 @@
   }
 
   fileInput.addEventListener('change', () => setFile(fileInput.files[0]));
+  [mt3Toggle, stemBackendSelect, stemModelSelect, stemDeviceSelect, reprocessSettingSelect].forEach((el) => {
+    el?.addEventListener('change', () => {
+      if (el === stemModelSelect) updateStemModeFromModel();
+      persistAnalysisSettings();
+      refreshAnalysisSettings();
+    });
+  });
+  stemModeSelect?.addEventListener('change', () => {
+    stemModeSelect.dataset.userSelected = 'true';
+    persistAnalysisSettings();
+    refreshAnalysisSettings();
+  });
 
   dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragging'); });
   dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragging'));
@@ -2150,10 +2325,10 @@
     try {
       const formData = new FormData();
       formData.append('file', selectedFile);
-      const mt3Override = selectedMt3Override();
-      if (mt3Override !== null) {
-        formData.append('enable_mt3', String(mt3Override));
-      }
+      const analysisPayload = currentAnalysisPayload();
+      Object.entries(analysisPayload).forEach(([key, value]) => {
+        formData.append(key, String(value));
+      });
 
       // Use XMLHttpRequest for upload progress
       const result = await new Promise((resolve, reject) => {
@@ -2203,11 +2378,7 @@
     urlBtn.disabled = true;
 
     try {
-      const payload = { url };
-      const mt3Override = selectedMt3Override();
-      if (mt3Override !== null) {
-        payload.enable_mt3 = mt3Override;
-      }
+      const payload = { url, ...currentAnalysisPayload() };
       const res = await fetch(`${API}/tasks/url`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2231,8 +2402,8 @@
 
   urlBtn.addEventListener('click', submitUrl);
   urlInput.addEventListener('keydown', e => { if (e.key === 'Enter') submitUrl(); });
-  refreshMt3Status();
-  setInterval(refreshMt3Status, 60000);
+  refreshAnalysisSettings();
+  setInterval(refreshAnalysisSettings, 60000);
 
   // ── Model Download ────────────────────────────────────────────────────────
   const modelsReadyChip = document.getElementById('models-ready-chip');
