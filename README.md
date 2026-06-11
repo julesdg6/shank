@@ -420,9 +420,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-11T13:45:53Z
-- Latest commit: `b3a44ec`
-- Commit message: Merge pull request #167 from julesdg6/copilot/feature-lyrics-and-song-credits  Add optional lyrics + song credits enrichment and structured metadata artifacts
+- Last automated update: 2026-06-11T15:46:53Z
+- Latest commit: `ff86855`
+- Commit message: Merge pull request #168 from julesdg6/copilot/feature-drag-and-drop-loops  Add bar-snapped loop exports + DAW drag/drop clip delivery from song detail
 <!-- readme-update:end -->
 
 ## 🥁 Beat Detection & Beat Grid
