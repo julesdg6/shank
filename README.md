@@ -404,9 +404,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-11T01:01:06Z
-- Latest commit: `d2c60bf`
-- Commit message: Merge pull request #161 from julesdg6/copilot/feature-interactive-waveform-analysis  feat: add section markers and cue points to waveform timeline
+- Last automated update: 2026-06-11T01:01:25Z
+- Latest commit: `587a4f9`
+- Commit message: Merge pull request #162 from julesdg6/copilot/feature-reprocess-button-youtube-embed  feat: Reprocess button and YouTube embed/link in song reports
 <!-- readme-update:end -->
 
 ## 🥁 Beat Detection & Beat Grid
