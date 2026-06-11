@@ -745,7 +745,7 @@ def test_stem_backend_status_audio_separator_active_when_available_and_ready(cli
     model_dir = tmp_path / 'models' / 'separator'
     model_dir.mkdir(parents=True, exist_ok=True)
     (model_dir / 'htdemucs_ft.yaml').write_text('version: 1\n')
-    (model_dir / 'htdemucs-ft.ckpt').write_bytes(b'\0' * (6 * 1024 * 1024))
+    (model_dir / 'htdemucs_ft.ckpt').write_bytes(b'\0' * (6 * 1024 * 1024))
     monkeypatch.setenv('AUDIO_SEPARATOR_MODEL_DIR', str(model_dir))
     monkeypatch.setenv('STEM_BACKEND', 'audio_separator')
     monkeypatch.delenv('ACE_STEP_API_URL', raising=False)
@@ -862,7 +862,7 @@ def test_models_status_reports_ready_when_model_exists(client, monkeypatch, tmp_
     model_dir = tmp_path / 'models' / 'separator'
     model_dir.mkdir(parents=True, exist_ok=True)
     (model_dir / 'htdemucs_ft.yaml').write_text('version: 1\n')
-    (model_dir / 'htdemucs-ft.ckpt').write_bytes(b'\0' * (6 * 1024 * 1024))
+    (model_dir / 'htdemucs_ft.ckpt').write_bytes(b'\0' * (6 * 1024 * 1024))
     monkeypatch.setenv('AUDIO_SEPARATOR_MODEL_DIR', str(model_dir))
     import api.main as main_module  # noqa: PLC0415
     importlib.reload(main_module)
