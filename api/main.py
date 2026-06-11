@@ -142,6 +142,7 @@ def _disk_free_gb(path: Path) -> float | None:
 
 
 def _is_dir_writable(path: Path) -> bool:
+    """Return whether the target directory is writable, creating it if needed."""
     try:
         path.mkdir(parents=True, exist_ok=True)
         probe = path / f'.write-test-{uuid.uuid4().hex}'
