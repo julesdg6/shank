@@ -53,6 +53,7 @@ _MODEL_SPECS = {
 _MODEL_CONFIG_MIN_BYTES = 1024
 _MODEL_WEIGHT_MIN_BYTES = 5 * 1024 * 1024
 _MODEL_WEIGHT_EXTENSIONS = ('.ckpt', '.pt', '.pth', '.bin', '.safetensors')
+_MODEL_CONFIG_EXTENSIONS = ('.yaml', '.yml')
 
 
 def _get_media_type_quality(accept_header: str, media_type: str) -> float:
@@ -136,7 +137,11 @@ def _models_payload(model_dir: Path) -> dict[str, dict[str, Any]]:
         path = model_dir / model_name
         exists = path.is_file()
         size_bytes = path.stat().st_size if exists else 0
-        looks_like_config_only = exists and path.suffix.lower() in ('.yaml', '.yml') and size_bytes < _MODEL_CONFIG_MIN_BYTES
+        looks_like_config_only = (
+            exists
+            and path.suffix.lower() in _MODEL_CONFIG_EXTENSIONS
+            and size_bytes < _MODEL_CONFIG_MIN_BYTES
+        )
         ready = exists and (not looks_like_config_only or has_weight_files)
         payload[model_name] = {
             'exists': exists,

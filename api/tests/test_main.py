@@ -881,7 +881,8 @@ def test_models_status_reports_ready_when_model_exists(client, monkeypatch, tmp_
 def test_models_status_reports_config_only_when_yaml_exists_without_weights(client, monkeypatch, tmp_path):
     model_dir = tmp_path / 'models' / 'separator'
     model_dir.mkdir(parents=True, exist_ok=True)
-    (model_dir / 'htdemucs_ft.yaml').write_text('x' * 149)
+    # Keep this file below the 1 KB config-only threshold used by the API.
+    (model_dir / 'htdemucs_ft.yaml').write_text('x' * 1023)
     monkeypatch.setenv('AUDIO_SEPARATOR_MODEL_DIR', str(model_dir))
     import api.main as main_module  # noqa: PLC0415
     importlib.reload(main_module)
