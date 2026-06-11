@@ -633,6 +633,21 @@
       </div>
     </div>
     <div class="alert" id="detail-alert"></div>
+    <!-- YouTube source panel — shown only for YouTube-origin tasks -->
+    <div id="youtube-panel" class="panel" style="display:none;margin-bottom:1rem">
+      <h4 style="margin-bottom:0.5rem">🎬 Source</h4>
+      <div id="youtube-meta" style="margin-bottom:0.75rem;font-size:0.9rem"></div>
+      <div id="youtube-embed-wrap" style="position:relative;padding-bottom:56.25%;height:0;overflow:hidden;border-radius:8px;background:#000">
+        <iframe id="youtube-iframe"
+          style="position:absolute;top:0;left:0;width:100%;height:100%;border:0"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowfullscreen
+          title="YouTube video player"></iframe>
+      </div>
+      <div style="margin-top:0.6rem">
+        <a id="youtube-link" class="btn btn-ghost btn-sm" href="#" target="_blank" rel="noopener noreferrer">Open on YouTube ↗</a>
+      </div>
+    </div>
     <ul class="detail-list" id="detail-list"></ul>
     <div id="stem-workbench" style="display:none">
       <div class="panel" style="margin-bottom:1rem">
@@ -695,8 +710,37 @@
     </div>
     <h3 style="font-size:0.95rem;margin-bottom:0.5rem">Full Task JSON</h3>
     <pre id="detail-pre"></pre>
+    <!-- Reprocess button -->
+    <div style="margin-top:1.5rem;display:flex;justify-content:flex-end">
+      <button class="btn btn-primary" id="reprocess-btn">🔄 Reprocess</button>
+    </div>
   </div>
 </main>
+
+<!-- ── Reprocess Modal ── -->
+<div id="reprocess-modal" style="display:none;position:fixed;inset:0;z-index:200;background:rgba(0,0,0,0.55);align-items:center;justify-content:center">
+  <div class="modal-box" style="max-width:420px;width:100%">
+    <button class="modal-close" id="reprocess-modal-close">✕</button>
+    <h3>Reprocess Song</h3>
+    <p style="font-size:0.88rem;color:var(--text-muted);margin-bottom:1rem">
+      A new analysis task will be created using the same source. The existing report is preserved.
+    </p>
+    <label style="display:block;margin-bottom:0.4rem;font-size:0.88rem;font-weight:600">What to reprocess</label>
+    <select id="reprocess-mode" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:0.4rem;margin-bottom:1rem">
+      <option value="all">Everything</option>
+      <option value="audio_analysis">Audio analysis only</option>
+      <option value="stems">Stems only</option>
+      <option value="midi">MIDI transcription only</option>
+      <option value="metadata">Metadata / lyrics / credits only</option>
+      <option value="ai_prompts">AI prompts only</option>
+    </select>
+    <div id="reprocess-alert" class="alert" style="margin-bottom:0.75rem"></div>
+    <div style="display:flex;gap:0.5rem;justify-content:flex-end">
+      <button class="btn btn-ghost btn-sm" id="reprocess-cancel">Cancel</button>
+      <button class="btn btn-primary btn-sm" id="reprocess-confirm">Start Reprocess</button>
+    </div>
+  </div>
+</div>
 
 <!-- ── Result Modal ── -->
 <div id="result-modal">
@@ -1812,10 +1856,103 @@
       renderArtifactDownloads(data);
       renderBeatGraphPreviews(data);
       await drawMidiPianoRoll(data);
+      renderYouTubePanel(data);
     } catch (_) {
       showAlert(alert, '❌ Failed to load task details.', 'error');
     }
   }
+
+  // ── YouTube source panel ─────────────────────────────────────────────────
+  function extractYouTubeVideoId(url) {
+    if (!url || typeof url !== 'string') return null;
+    const m = url.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/)|youtu\.be\/|music\.youtube\.com\/watch\?v=)([A-Za-z0-9_-]{11})/);
+    return m ? m[1] : null;
+  }
+
+  function renderYouTubePanel(data) {
+    const panel = document.getElementById('youtube-panel');
+    const metaDiv = document.getElementById('youtube-meta');
+    const iframe = document.getElementById('youtube-iframe');
+    const link = document.getElementById('youtube-link');
+    if (!panel || !metaDiv || !iframe || !link) return;
+
+    // Determine video ID: prefer stored metadata, fall back to parsing source URL.
+    const yt = data.youtube && typeof data.youtube === 'object' ? data.youtube : null;
+    const videoId = (yt && yt.video_id) || extractYouTubeVideoId(data.source || '');
+
+    if (!videoId) {
+      panel.style.display = 'none';
+      iframe.src = '';
+      return;
+    }
+
+    panel.style.display = '';
+
+    // Safely build embed URL from video ID only (never raw user input).
+    const safeId = encodeURIComponent(videoId);
+    iframe.src = `https://www.youtube.com/embed/${safeId}`;
+
+    const sourceUrl = (yt && yt.webpage_url) || data.source || `https://www.youtube.com/watch?v=${safeId}`;
+    link.href = sourceUrl;
+
+    const parts = [];
+    if (yt && yt.title) parts.push(`<strong>${escapeHtml(yt.title)}</strong>`);
+    if (yt && yt.channel) parts.push(`<span style="color:var(--text-muted)">${escapeHtml(yt.channel)}</span>`);
+    metaDiv.innerHTML = parts.join('<br>') || `<span style="color:var(--text-muted)">${escapeHtml(sourceUrl)}</span>`;
+  }
+
+  // ── Reprocess button & modal ─────────────────────────────────────────────
+  (function () {
+    const modal = document.getElementById('reprocess-modal');
+    const openBtn = document.getElementById('reprocess-btn');
+    const closeBtn = document.getElementById('reprocess-modal-close');
+    const cancelBtn = document.getElementById('reprocess-cancel');
+    const confirmBtn = document.getElementById('reprocess-confirm');
+    const modeSelect = document.getElementById('reprocess-mode');
+    const reprocessAlert = document.getElementById('reprocess-alert');
+
+    if (!modal || !openBtn) return;
+
+    function openModal() {
+      if (reprocessAlert) reprocessAlert.innerHTML = '';
+      modal.style.display = 'flex';
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+    }
+
+    openBtn.addEventListener('click', openModal);
+    closeBtn.addEventListener('click', closeModal);
+    cancelBtn.addEventListener('click', closeModal);
+    modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
+
+    confirmBtn.addEventListener('click', async () => {
+      const taskId = new URLSearchParams(window.location.search).get('task_id');
+      if (!taskId) return;
+      const mode = modeSelect ? modeSelect.value : 'all';
+      confirmBtn.disabled = true;
+      if (reprocessAlert) reprocessAlert.innerHTML = '';
+      try {
+        const res = await fetch(`${API}/tasks/${encodeURIComponent(taskId)}/reprocess`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode, preserve_existing: true }),
+        });
+        const result = await res.json();
+        if (!res.ok) {
+          const msg = result?.detail || 'Failed to create reprocess task';
+          if (reprocessAlert) reprocessAlert.innerHTML = `<div class="alert alert-error">❌ ${escapeHtml(String(msg))}</div>`;
+          confirmBtn.disabled = false;
+          return;
+        }
+        closeModal();
+        window.location.href = `/ui/?task_id=${encodeURIComponent(result.task_id)}`;
+      } catch (err) {
+        if (reprocessAlert) reprocessAlert.innerHTML = `<div class="alert alert-error">❌ ${escapeHtml(String(err))}</div>`;
+        confirmBtn.disabled = false;
+      }
+    });
+  }());
 
   // ── File Upload ──────────────────────────────────────────────────────────
   const dropzone  = document.getElementById('dropzone');
