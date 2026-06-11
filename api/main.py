@@ -1084,6 +1084,9 @@ def _task_artifacts(task: dict) -> dict[str, Path]:
             'tempo_curve_png': structured_results.get('tempo_curve_png'),
             'beatgraph_png': structured_results.get('beatgraph_png'),
             'results_mt3_json': structured_results.get('mt3_json'),
+            'lyrics_json': structured_results.get('lyrics_json'),
+            'credits_json': structured_results.get('credits_json'),
+            'song_metadata_json': structured_results.get('song_metadata_json'),
             'results_artifacts_json': structured_results.get('artifacts_json'),
         }
         for artifact_name, artifact_path in structured_files.items():

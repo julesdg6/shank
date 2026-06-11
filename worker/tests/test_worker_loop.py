@@ -71,6 +71,33 @@ def test_pending_url_task_is_downloaded_and_analyzed(data_dir):
     assert any(entry.get('message') == 'Task completed' for entry in task.get('logs', []))
 
 
+def test_processing_persists_song_metadata_payload(data_dir):
+    task_id, task_file = _make_task(data_dir)
+    uploads_dir = data_dir / 'uploads'
+    fake_output = uploads_dir / f'{task_id}.mp3'
+    fake_analysis = {'bpm': 120.0, 'key': 'C major', 'duration_seconds': 180.2}
+    fake_metadata = {
+        'enabled': True,
+        'credits': {'track_title': 'Example', 'artist': 'Artist', 'confidence_score': 0.9},
+        'lyrics': {'plain_lyrics': 'la la la', 'synced_lyrics_lrc': None, 'confidence_score': 0.55},
+    }
+
+    with patch('worker_loop.download_youtube', return_value=fake_output), \
+         patch('worker_loop.normalize_audio'), \
+         patch('worker_loop.analyze_audio', return_value=fake_analysis), \
+         patch('worker_loop.collect_song_metadata', return_value=fake_metadata):
+        worker_loop.process_pending_tasks()
+
+    task = json.loads(task_file.read_text())
+    assert task['song_metadata'] == fake_metadata
+    assert task['credits'] == fake_metadata['credits']
+    assert task['lyrics'] == fake_metadata['lyrics']
+    results = task['results']
+    assert json.loads(Path(results['song_metadata_json']).read_text()) == fake_metadata
+    assert json.loads(Path(results['credits_json']).read_text()) == fake_metadata['credits']
+    assert json.loads(Path(results['lyrics_json']).read_text()) == fake_metadata['lyrics']
+
+
 def test_no_tasks_returns_zero(data_dir):
     """process_pending_tasks should return 0 when there are no tasks."""
     tasks_dir = data_dir / 'tasks'

@@ -19,7 +19,8 @@ To provide users with an automated pipeline that transforms raw audio/URLs into 
 - **Built-in Stem Separation**: [python-audio-separator](https://github.com/nomadkaraoke/python-audio-separator) separates vocals, drums, bass, and other instruments (4-stem or 6-stem) — no external service required. Optional **ACE-Step** integration for comparison.
 - **Optional MT3 Transcription**: Worker can call a dedicated `shank-mt3` service to generate MIDI + note metadata from normalized mix and stems.
 - **Asynchronous Workflow**: A background worker polls a filesystem task queue and processes jobs independently of the API.
-- **Structured Result Artifacts**: Completed tasks now write a predictable `DATA_DIR/results/<task_id>/` folder with `task.json`, `analysis.json`, `beatgrid.json`, `waveform_beats.png`, `tempo_curve.png`, `beatgraph.png`, `mt3.json`, and `artifacts.json`.
+- **Structured Result Artifacts**: Completed tasks now write a predictable `DATA_DIR/results/<task_id>/` folder with `task.json`, `analysis.json`, `beatgrid.json`, `structure.json`, `waveform_beats.png`, `tempo_curve.png`, `beatgraph.png`, `mt3.json`, `lyrics.json`, `credits.json`, `song_metadata.json`, and `artifacts.json`.
+- **Optional Lyrics + Credits Lookup**: SHANK can enrich tasks with local song metadata (embedded tags, YouTube metadata, and sidecar `.lrc` files) and store `lyrics`, `credits`, and `song_metadata` on each completed task.
 - **Web Dashboard**: A built-in UI at `/ui` to submit tasks, monitor progress, and inspect results.
 - **MCP Automation Server**: Optional MCP server exposing SHANK task operations for automation clients.
 
