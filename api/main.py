@@ -36,6 +36,10 @@ VALID_STEM_BACKENDS = frozenset({'auto', 'disabled', 'audio_separator', 'demucs'
 VALID_STEM_DEVICES = frozenset({'auto', 'cpu', 'cuda'})
 VALID_STEM_MODES = frozenset({'4_stem', '6_stem'})
 VALID_LOOP_BAR_LENGTHS = frozenset({1, 2, 4, 8, 16})
+LOOP_BEATS_PER_BAR = 4
+MIDI_TICKS_PER_BEAT = 480
+CHORD_BASE_MIDI_NOTE = 48
+BASS_MELODY_SPLIT_MIDI = 60
 VALID_REPROCESS_SETTINGS = frozenset({
     'use_current_replace',
     'use_current_archive',
@@ -367,6 +371,13 @@ def _loop_track_slug(task: dict[str, Any]) -> str:
     return slug or 'track'
 
 
+def _validated_task_id(task_id: str) -> str:
+    try:
+        return str(uuid.UUID(task_id))
+    except ValueError:
+        raise HTTPException(status_code=404, detail='Task not found')
+
+
 def _loop_key_slug(task: dict[str, Any]) -> str:
     key = task.get('key')
     if not isinstance(key, str) or not key.strip():
@@ -415,13 +426,13 @@ def _task_beat_times(task: dict[str, Any]) -> list[float]:
     return beat_times
 
 
-def _task_bar_starts(task: dict[str, Any], beats_per_bar: int = 4) -> list[float]:
+def _task_bar_starts(task: dict[str, Any], beats_per_bar: int = LOOP_BEATS_PER_BAR) -> list[float]:
     beat_times = _task_beat_times(task)
     bar_starts = [beat_times[idx] for idx in range(0, len(beat_times), beats_per_bar)]
     return bar_starts
 
 
-def _loop_time_range(task: dict[str, Any], start_bar: int, bars: int, beats_per_bar: int = 4) -> tuple[float, float, list[float]]:
+def _loop_time_range(task: dict[str, Any], start_bar: int, bars: int, beats_per_bar: int = LOOP_BEATS_PER_BAR) -> tuple[float, float, list[float]]:
     bar_starts = _task_bar_starts(task, beats_per_bar=beats_per_bar)
     if start_bar < 1:
         raise HTTPException(status_code=400, detail='start_bar must be >= 1')
@@ -483,7 +494,7 @@ def _midi_var_len(value: int) -> bytes:
 
 
 def _write_notes_to_midi(notes: list[dict[str, Any]], bpm: float, output_path: Path) -> None:
-    ticks_per_beat = 480
+    ticks_per_beat = MIDI_TICKS_PER_BEAT
     bpm_value = bpm if bpm > 0 else 120.0
     seconds_per_tick = 60.0 / (bpm_value * ticks_per_beat)
     events: list[tuple[int, int, int, int]] = []
@@ -550,13 +561,24 @@ def _clip_notes_to_window(notes: list[dict[str, Any]], start_seconds: float, end
 
 def _chord_symbol_to_pitches(symbol: str) -> list[int]:
     mapping = {'C': 0, 'C#': 1, 'Db': 1, 'D': 2, 'D#': 3, 'Eb': 3, 'E': 4, 'F': 5, 'F#': 6, 'Gb': 6, 'G': 7, 'G#': 8, 'Ab': 8, 'A': 9, 'A#': 10, 'Bb': 10, 'B': 11}
-    root_token = symbol[:-1] if symbol.endswith('m') else symbol
+    parsed = re.match(r'^([A-G](?:#|b)?)(.*)$', symbol.strip())
+    if not parsed:
+        return []
+    root_token = parsed.group(1)
+    suffix = parsed.group(2).lower()
+    is_minor = suffix.startswith('m') and not suffix.startswith('maj')
     root = mapping.get(root_token)
     if root is None:
         return []
-    intervals = [0, 3, 7] if symbol.endswith('m') else [0, 4, 7]
-    base = 48
-    return [base + ((root + interval) % 12) for interval in intervals]
+    intervals = [0, 3, 7] if is_minor else [0, 4, 7]
+    base = CHORD_BASE_MIDI_NOTE
+    notes: list[int] = []
+    for interval in intervals:
+        candidate = base + root + interval
+        if notes and candidate <= notes[-1]:
+            candidate += 12
+        notes.append(candidate)
+    return notes
 
 
 def _chords_to_notes(task: dict[str, Any], start_seconds: float, end_seconds: float) -> list[dict[str, Any]]:
@@ -597,12 +619,12 @@ def _render_audio_loop(input_path: Path, output_path: Path, start_seconds: float
     cmd = [
         'ffmpeg',
         '-y',
+        '-i',
+        str(input_path),
         '-ss',
         f'{start_seconds:.6f}',
         '-to',
         f'{end_seconds:.6f}',
-        '-i',
-        str(input_path),
         '-ar',
         '44100',
         '-ac',
@@ -618,12 +640,13 @@ def _render_audio_loop(input_path: Path, output_path: Path, start_seconds: float
 
 def _prepare_loop_exports(task: dict[str, Any], task_id: str, start_bar: int, bars: int) -> dict[str, Any]:
     start_seconds, end_seconds, bar_starts = _loop_time_range(task, start_bar=start_bar, bars=bars)
+    safe_task_id = _validated_task_id(task_id)
     bar_end = start_bar + bars - 1
     bpm_raw = task.get('bpm')
     bpm = float(bpm_raw) if isinstance(bpm_raw, (int, float)) else 120.0
     track_slug = _loop_track_slug(task)
     key_slug = _loop_key_slug(task)
-    loop_dir = RESULTS_DIR / task_id / 'loops' / f'bars_{start_bar:03d}-{bar_end:03d}'
+    loop_dir = RESULTS_DIR / safe_task_id / 'loops' / f'bars_{start_bar:03d}-{bar_end:03d}'
     loop_dir.mkdir(parents=True, exist_ok=True)
 
     generated: list[dict[str, Any]] = []
@@ -654,8 +677,16 @@ def _prepare_loop_exports(task: dict[str, Any], task_id: str, start_bar: int, ba
         })
 
     full_mix_notes = _load_mt3_notes(task, 'full_mix')
-    bass_notes = _load_mt3_notes(task, 'bass') or [note for note in full_mix_notes if isinstance(note.get('pitch'), (int, float)) and float(note['pitch']) < 60]
-    melody_notes = [note for note in full_mix_notes if isinstance(note.get('pitch'), (int, float)) and float(note['pitch']) >= 60]
+    bass_notes = _load_mt3_notes(task, 'bass') or [
+        note
+        for note in full_mix_notes
+        if isinstance(note.get('pitch'), (int, float)) and float(note['pitch']) < BASS_MELODY_SPLIT_MIDI
+    ]
+    melody_notes = [
+        note
+        for note in full_mix_notes
+        if isinstance(note.get('pitch'), (int, float)) and float(note['pitch']) >= BASS_MELODY_SPLIT_MIDI
+    ]
     drum_notes = _load_mt3_notes(task, 'drums')
     chord_notes = _chords_to_notes(task, start_seconds, end_seconds)
     midi_sources: list[tuple[str, str, list[dict[str, Any]]]] = [
@@ -1536,6 +1567,7 @@ def get_task_beatgrid(task_id: str):
 
 @app.get('/tasks/{task_id}/loops')
 def list_task_loop_exports(task_id: str, start_bar: int = 1, bars: int = 4):
+    safe_task_id = _validated_task_id(task_id)
     task = _load_task(task_id)
     exports = _prepare_loop_exports(task, task_id, start_bar=start_bar, bars=bars)
     clips: list[dict[str, Any]] = []
@@ -1546,7 +1578,7 @@ def list_task_loop_exports(task_id: str, start_bar: int = 1, bars: int = 4):
             'format': clip['format'],
             'filename': clip['filename'],
             'download_url': (
-                f'/tasks/{task_id}/loops/{clip["clip_id"]}'
+                f'/tasks/{safe_task_id}/loops/{clip["clip_id"]}'
                 f'?start_bar={start_bar}&bars={bars}'
             ),
             'media_type': clip['media_type'],
@@ -1558,7 +1590,7 @@ def list_task_loop_exports(task_id: str, start_bar: int = 1, bars: int = 4):
         'start_seconds': exports['start_seconds'],
         'end_seconds': exports['end_seconds'],
         'clips': clips,
-        'zip_url': f'/tasks/{task_id}/loops/zip?start_bar={start_bar}&bars={bars}',
+        'zip_url': f'/tasks/{safe_task_id}/loops/zip?start_bar={start_bar}&bars={bars}',
     }
 
 
@@ -1567,7 +1599,10 @@ def download_task_loop_zip(task_id: str, start_bar: int = 1, bars: int = 4):
     task = _load_task(task_id)
     exports = _prepare_loop_exports(task, task_id, start_bar=start_bar, bars=bars)
     zip_path = exports['zip_path']
-    return FileResponse(path=zip_path, filename=zip_path.name, media_type='application/zip')
+    resolved_zip = _resolve_data_path(str(zip_path))
+    if resolved_zip is None:
+        raise HTTPException(status_code=404, detail='Loop ZIP not available')
+    return FileResponse(path=resolved_zip, filename=resolved_zip.name, media_type='application/zip')
 
 
 @app.get('/tasks/{task_id}/loops/{clip_id}')
@@ -1577,7 +1612,10 @@ def download_task_loop_clip(task_id: str, clip_id: str, start_bar: int = 1, bars
     clip = next((entry for entry in exports['clips'] if entry['clip_id'] == clip_id), None)
     if clip is None:
         raise HTTPException(status_code=404, detail='Loop clip not available')
-    return FileResponse(path=clip['path'], filename=clip['filename'], media_type=clip['media_type'])
+    resolved_clip = _resolve_data_path(str(clip['path']))
+    if resolved_clip is None:
+        raise HTTPException(status_code=404, detail='Loop clip not available')
+    return FileResponse(path=resolved_clip, filename=clip['filename'], media_type=clip['media_type'])
 
 
 # ---------------------------------------------------------------------------

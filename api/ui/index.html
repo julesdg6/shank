@@ -723,6 +723,7 @@
           </select>
           <button class="btn btn-ghost btn-sm" id="loop-refresh-btn">Refresh loop clips</button>
           <span id="loop-selection-status" style="color:var(--text-muted)"></span>
+          <span style="color:var(--text-muted)">Tip: Shift-click timeline to snap loop start</span>
         </div>
       </div>
       <div class="detail-grid">
@@ -822,6 +823,7 @@
   const API = ''; // same origin; API served from same host
   const TASK_ID_PREFIX_LEN = 8; // characters shown before "…" in the task table
   const MAX_UI_TASK_LOGS = 8;
+  const BEATS_PER_BAR = 4;
 
   // ── State ───────────────────────────────────────────────────────────────
   let tasks = JSON.parse(localStorage.getItem('shank_tasks') || '[]');
@@ -1142,6 +1144,11 @@
     return { startBar, bars };
   }
 
+  function loopClipMediaType(clip) {
+    if (typeof clip?.media_type === 'string' && clip.media_type) return clip.media_type;
+    return clip?.format === 'mid' ? 'audio/midi' : 'audio/wav';
+  }
+
   async function renderLoopExports(taskData) {
     const cards = document.getElementById('loop-clip-cards');
     const zipWrap = document.getElementById('loop-zip-download');
@@ -1175,7 +1182,7 @@
            draggable="true"
            data-href="${escapeHtml(clip.download_url)}"
            data-filename="${escapeHtml(clip.filename)}"
-           data-media-type="${escapeHtml(clip.media_type || (clip.format === 'mid' ? 'audio/midi' : 'audio/wav'))}"
+           data-media-type="${escapeHtml(loopClipMediaType(clip))}"
            style="display:flex;justify-content:space-between;gap:0.6rem;align-items:center;padding:0.55rem 0.65rem;text-align:left">
           <span>${escapeHtml(clip.label)}</span>
           <span style="font-size:0.72rem;color:var(--text-muted)">${escapeHtml((clip.format || '').toUpperCase())}</span>
@@ -1438,7 +1445,7 @@
 
     // ── Beat and bar markers ─────────────────────────────────────────────────
     if (beatTimes.length > 0 && duration > 0) {
-      const beatsPerBar = 4;
+      const beatsPerBar = BEATS_PER_BAR;
       beatTimes.forEach((beatTime, idx) => {
         const x = cx + (beatTime - currentTime) * pps;
         if (x < -MARKER_VIEW_PADDING || x > W + MARKER_VIEW_PADDING) return;
@@ -1478,7 +1485,7 @@
       });
     } else if (bpm > 0 && duration > 0) {
       const beatInterval = 60 / bpm;
-      const beatsPerBar = 4;
+      const beatsPerBar = BEATS_PER_BAR;
       // Extra ±1 beat buffer ensures markers at the very edge of the viewport
       // are computed and drawn even after floating-point rounding.
       const firstBeat = Math.max(0, Math.floor((currentTime - cx / pps) / beatInterval) - 1);
@@ -1859,7 +1866,7 @@
           const barStarts = beatRows
             .map((entry) => toFiniteNumber(entry?.time, NaN))
             .filter((value) => Number.isFinite(value))
-            .filter((_, idx) => idx % 4 === 0);
+            .filter((_, idx) => idx % BEATS_PER_BAR === 0);
           if (barStarts.length > 0) {
             let nearestIdx = 0;
             let nearestDistance = Math.abs(barStarts[0] - clickTime);
