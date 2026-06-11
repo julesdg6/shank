@@ -1796,11 +1796,22 @@
           .join('; ') || '—';
         
         // Determine if we should use MT3-specific labels or generic labels
-        const backend = mt3.backend || 'mt3';
+        const backend = mt3.backend || 'unknown';
         const isMt3Backend = backend.toLowerCase() === 'mt3';
+        
+        // Map backend names to user-friendly display names
+        const backendDisplayMap = {
+          'basic_pitch': 'Basic Pitch',
+          'mt3': 'MT3',
+          'omnizart': 'Omnizart',
+          'disabled': 'disabled',
+          'unknown': 'unknown'
+        };
+        const backendDisplay = backendDisplayMap[backend] || backend;
+        
         const statusLabel = isMt3Backend ? 'MT3 Status' : 'MIDI Transcription Status';
         const modelLabel = isMt3Backend ? 'MT3 Model' : 'MIDI Transcription Model';
-        const backendLabel = isMt3Backend ? '' : ` (${escapeHtml(backend)})`;
+        const backendLabel = isMt3Backend ? '' : ` (${escapeHtml(backendDisplay)})`;
         
         list.innerHTML += [
           item(statusLabel, escapeHtml(mt3.status || '—') + backendLabel),
