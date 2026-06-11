@@ -2,11 +2,14 @@ import json
 import importlib.util
 import logging
 import os
+import re
+import struct
 import subprocess
 import shutil
 import threading
 import urllib.request
 import uuid
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -23,6 +26,7 @@ log = logging.getLogger(__name__)
 DATA_DIR = Path(os.getenv('DATA_DIR', '/srv/shank/data'))
 UPLOADS_DIR = DATA_DIR / 'uploads'
 TASKS_DIR = DATA_DIR / 'tasks'
+RESULTS_DIR = DATA_DIR / 'results'
 DEFAULT_SEPARATOR_MODEL_DIR = Path(os.getenv('AUDIO_SEPARATOR_MODEL_DIR', '/srv/shank/models/separator'))
 
 ALLOWED_AUDIO_EXTENSIONS = {'.mp3', '.wav', '.flac'}
@@ -31,6 +35,11 @@ MAX_UPLOAD_SIZE = 200 * 1024 * 1024  # 200 MB
 VALID_STEM_BACKENDS = frozenset({'auto', 'disabled', 'audio_separator', 'demucs', 'acestep'})
 VALID_STEM_DEVICES = frozenset({'auto', 'cpu', 'cuda'})
 VALID_STEM_MODES = frozenset({'4_stem', '6_stem'})
+VALID_LOOP_BAR_LENGTHS = frozenset({1, 2, 4, 8, 16})
+LOOP_BEATS_PER_BAR = 4
+MIDI_TICKS_PER_BEAT = 480
+CHORD_BASE_MIDI_NOTE = 48
+BASS_MELODY_SPLIT_MIDI = 60
 VALID_REPROCESS_SETTINGS = frozenset({
     'use_current_replace',
     'use_current_archive',
@@ -350,6 +359,374 @@ def _resolve_data_path(path_value: str) -> Path | None:
     if not resolved.is_file():
         return None
     return resolved
+
+
+def _loop_track_slug(task: dict[str, Any]) -> str:
+    source = task.get('source')
+    if isinstance(source, str) and source.strip():
+        base_name = Path(source.strip()).stem or 'track'
+    else:
+        base_name = f"track_{str(task.get('task_id') or '')[:8] or 'unknown'}"
+    slug = re.sub(r'[^a-zA-Z0-9_-]+', '_', base_name).strip('_').lower()
+    return slug or 'track'
+
+
+def _validated_task_id(task_id: str) -> str:
+    try:
+        return str(uuid.UUID(task_id))
+    except ValueError:
+        raise HTTPException(status_code=404, detail='Task not found')
+
+
+def _loop_key_slug(task: dict[str, Any]) -> str:
+    key = task.get('key')
+    if not isinstance(key, str) or not key.strip():
+        return 'unk'
+    normalized = key.strip().replace(' minor', 'min').replace(' major', 'maj').replace(' ', '')
+    return re.sub(r'[^a-zA-Z0-9#b_-]+', '', normalized) or 'unk'
+
+
+def _task_beat_times(task: dict[str, Any]) -> list[float]:
+    analysis_raw = task.get('analysis')
+    analysis: dict[str, Any] = analysis_raw if isinstance(analysis_raw, dict) else {}
+    full_mix_raw = analysis.get('full_mix')
+    full_mix: dict[str, Any] = full_mix_raw if isinstance(full_mix_raw, dict) else {}
+    beatgrid_raw = full_mix.get('beatgrid')
+    beatgrid = beatgrid_raw if isinstance(beatgrid_raw, dict) else task.get('beatgrid')
+
+    beat_times: list[float] = []
+    beat_rows = beatgrid.get('beats') if isinstance(beatgrid, dict) else None
+    if isinstance(beat_rows, list):
+        for beat in beat_rows:
+            value = beat.get('time') if isinstance(beat, dict) else beat
+            if isinstance(value, (int, float)) and float(value) >= 0:
+                beat_times.append(float(value))
+    if beat_times:
+        return sorted(set(beat_times))
+
+    legacy_beats = full_mix.get('beats')
+    if isinstance(legacy_beats, list):
+        for beat in legacy_beats:
+            if isinstance(beat, (int, float)) and float(beat) >= 0:
+                beat_times.append(float(beat))
+    if beat_times:
+        return sorted(set(beat_times))
+
+    bpm_raw = full_mix.get('bpm')
+    bpm = bpm_raw if isinstance(bpm_raw, (int, float)) else task.get('bpm')
+    duration = full_mix.get('duration_seconds')
+    if not isinstance(duration, (int, float)):
+        duration = task.get('duration_seconds')
+    if isinstance(bpm, (int, float)) and isinstance(duration, (int, float)) and float(bpm) > 0 and float(duration) > 0:
+        interval = 60.0 / float(bpm)
+        current = 0.0
+        while current <= float(duration) + interval:
+            beat_times.append(round(current, 6))
+            current += interval
+    return beat_times
+
+
+def _task_bar_starts(task: dict[str, Any], beats_per_bar: int = LOOP_BEATS_PER_BAR) -> list[float]:
+    beat_times = _task_beat_times(task)
+    bar_starts = [beat_times[idx] for idx in range(0, len(beat_times), beats_per_bar)]
+    return bar_starts
+
+
+def _loop_time_range(task: dict[str, Any], start_bar: int, bars: int, beats_per_bar: int = LOOP_BEATS_PER_BAR) -> tuple[float, float, list[float]]:
+    bar_starts = _task_bar_starts(task, beats_per_bar=beats_per_bar)
+    if start_bar < 1:
+        raise HTTPException(status_code=400, detail='start_bar must be >= 1')
+    if bars not in VALID_LOOP_BAR_LENGTHS:
+        raise HTTPException(status_code=400, detail=f'bars must be one of {sorted(VALID_LOOP_BAR_LENGTHS)}')
+    if not bar_starts:
+        raise HTTPException(status_code=400, detail='Beat/bar markers unavailable for loop export')
+    if start_bar > len(bar_starts):
+        raise HTTPException(status_code=400, detail=f'start_bar exceeds detected bar count ({len(bar_starts)})')
+
+    start_idx = start_bar - 1
+    end_idx = start_idx + bars
+    start_seconds = float(bar_starts[start_idx])
+    if end_idx < len(bar_starts):
+        end_seconds = float(bar_starts[end_idx])
+    else:
+        beat_times = _task_beat_times(task)
+        beat_intervals = [
+            beat_times[idx + 1] - beat_times[idx]
+            for idx in range(len(beat_times) - 1)
+            if beat_times[idx + 1] > beat_times[idx]
+        ]
+        mean_beat_interval = (sum(beat_intervals) / len(beat_intervals)) if beat_intervals else 0.5
+        end_seconds = start_seconds + float(bars * beats_per_bar) * mean_beat_interval
+    if end_seconds <= start_seconds:
+        raise HTTPException(status_code=400, detail='Invalid loop range generated from beatgrid')
+    return start_seconds, end_seconds, bar_starts
+
+
+def _load_mt3_notes(task: dict[str, Any], track_name: str) -> list[dict[str, Any]]:
+    track = _mt3_track(task, track_name)
+    if not isinstance(track, dict):
+        return []
+    notes = track.get('notes')
+    if isinstance(notes, list):
+        return [note for note in notes if isinstance(note, dict)]
+    notes_path = track.get('notes_path')
+    if not isinstance(notes_path, str) or not notes_path:
+        return []
+    resolved = _resolve_data_path(notes_path)
+    if resolved is None:
+        return []
+    try:
+        payload = json.loads(resolved.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(payload, list):
+        return []
+    return [note for note in payload if isinstance(note, dict)]
+
+
+def _midi_var_len(value: int) -> bytes:
+    value = max(0, int(value))
+    output = [value & 0x7F]
+    while value > 0x7F:
+        value >>= 7
+        output.append((value & 0x7F) | 0x80)
+    return bytes(reversed(output))
+
+
+def _write_notes_to_midi(notes: list[dict[str, Any]], bpm: float, output_path: Path) -> None:
+    ticks_per_beat = MIDI_TICKS_PER_BEAT
+    bpm_value = bpm if bpm > 0 else 120.0
+    seconds_per_tick = 60.0 / (bpm_value * ticks_per_beat)
+    events: list[tuple[int, int, int, int]] = []
+    for note in notes:
+        start = note.get('start')
+        end = note.get('end')
+        pitch = note.get('pitch')
+        if not isinstance(start, (int, float)) or not isinstance(end, (int, float)) or not isinstance(pitch, (int, float)):
+            continue
+        if float(end) <= float(start):
+            continue
+        pitch_value = max(0, min(127, int(round(float(pitch)))))
+        velocity_raw = note.get('velocity')
+        velocity = max(1, min(127, int(round(float(velocity_raw))))) if isinstance(velocity_raw, (int, float)) else 90
+        on_tick = max(0, int(round(float(start) / seconds_per_tick)))
+        off_tick = max(on_tick + 1, int(round(float(end) / seconds_per_tick)))
+        events.append((on_tick, 1, pitch_value, velocity))
+        events.append((off_tick, 0, pitch_value, 0))
+
+    events.sort(key=lambda item: (item[0], item[1]))
+    tempo = int(round(60_000_000 / bpm_value))
+    track_data = bytearray()
+    track_data.extend(b'\x00\xFF\x51\x03' + tempo.to_bytes(3, 'big', signed=False))
+    track_data.extend(b'\x00\xFF\x58\x04\x04\x02\x18\x08')
+
+    last_tick = 0
+    for tick, event_type, pitch, velocity in events:
+        delta = tick - last_tick
+        last_tick = tick
+        track_data.extend(_midi_var_len(delta))
+        if event_type == 1:
+            track_data.extend(bytes([0x90, pitch, velocity]))
+        else:
+            track_data.extend(bytes([0x80, pitch, 0]))
+
+    track_data.extend(b'\x00\xFF\x2F\x00')
+    header = b'MThd' + struct.pack('>IHHH', 6, 0, 1, ticks_per_beat)
+    track_chunk = b'MTrk' + struct.pack('>I', len(track_data)) + bytes(track_data)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_bytes(header + track_chunk)
+
+
+def _clip_notes_to_window(notes: list[dict[str, Any]], start_seconds: float, end_seconds: float) -> list[dict[str, Any]]:
+    clipped: list[dict[str, Any]] = []
+    for note in notes:
+        start = note.get('start')
+        end = note.get('end')
+        pitch = note.get('pitch')
+        if not isinstance(start, (int, float)) or not isinstance(end, (int, float)) or not isinstance(pitch, (int, float)):
+            continue
+        note_start = max(float(start), start_seconds)
+        note_end = min(float(end), end_seconds)
+        if note_end <= note_start:
+            continue
+        payload = {
+            'start': note_start - start_seconds,
+            'end': note_end - start_seconds,
+            'pitch': int(round(float(pitch))),
+            'velocity': note.get('velocity', 90),
+        }
+        clipped.append(payload)
+    return clipped
+
+
+def _chord_symbol_to_pitches(symbol: str) -> list[int]:
+    mapping = {'C': 0, 'C#': 1, 'Db': 1, 'D': 2, 'D#': 3, 'Eb': 3, 'E': 4, 'F': 5, 'F#': 6, 'Gb': 6, 'G': 7, 'G#': 8, 'Ab': 8, 'A': 9, 'A#': 10, 'Bb': 10, 'B': 11}
+    parsed = re.match(r'^([A-G](?:#|b)?)(.*)$', symbol.strip())
+    if not parsed:
+        return []
+    root_token = parsed.group(1)
+    suffix = parsed.group(2).lower()
+    is_minor = suffix.startswith('m') and not suffix.startswith('maj')
+    root = mapping.get(root_token)
+    if root is None:
+        return []
+    intervals = [0, 3, 7] if is_minor else [0, 4, 7]
+    base = CHORD_BASE_MIDI_NOTE
+    notes: list[int] = []
+    for interval in intervals:
+        candidate = base + root + interval
+        if notes and candidate <= notes[-1]:
+            candidate += 12
+        notes.append(candidate)
+    return notes
+
+
+def _chords_to_notes(task: dict[str, Any], start_seconds: float, end_seconds: float) -> list[dict[str, Any]]:
+    analysis_raw = task.get('analysis')
+    analysis: dict[str, Any] = analysis_raw if isinstance(analysis_raw, dict) else {}
+    full_mix_raw = analysis.get('full_mix')
+    full_mix: dict[str, Any] = full_mix_raw if isinstance(full_mix_raw, dict) else {}
+    chords_raw = full_mix.get('chords')
+    chords = chords_raw if isinstance(chords_raw, dict) else task.get('chords')
+    segments = chords.get('segments') if isinstance(chords, dict) else None
+    if not isinstance(segments, list):
+        return []
+    notes: list[dict[str, Any]] = []
+    for segment in segments:
+        if not isinstance(segment, dict):
+            continue
+        seg_start = segment.get('start_seconds')
+        seg_end = segment.get('end_seconds')
+        symbol = segment.get('symbol')
+        if not isinstance(seg_start, (int, float)) or not isinstance(seg_end, (int, float)) or not isinstance(symbol, str):
+            continue
+        clipped_start = max(float(seg_start), start_seconds)
+        clipped_end = min(float(seg_end), end_seconds)
+        if clipped_end <= clipped_start:
+            continue
+        for pitch in _chord_symbol_to_pitches(symbol.strip()):
+            notes.append({
+                'pitch': pitch,
+                'start': clipped_start - start_seconds,
+                'end': clipped_end - start_seconds,
+                'velocity': 72,
+            })
+    return notes
+
+
+def _render_audio_loop(input_path: Path, output_path: Path, start_seconds: float, end_seconds: float) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        'ffmpeg',
+        '-y',
+        '-i',
+        str(input_path),
+        '-ss',
+        f'{start_seconds:.6f}',
+        '-to',
+        f'{end_seconds:.6f}',
+        '-ar',
+        '44100',
+        '-ac',
+        '2',
+        '-c:a',
+        'pcm_s16le',
+        str(output_path),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise HTTPException(status_code=500, detail=f'ffmpeg failed while rendering loop: {result.stderr}')
+
+
+def _prepare_loop_exports(task: dict[str, Any], task_id: str, start_bar: int, bars: int) -> dict[str, Any]:
+    start_seconds, end_seconds, bar_starts = _loop_time_range(task, start_bar=start_bar, bars=bars)
+    safe_task_id = _validated_task_id(task_id)
+    bar_end = start_bar + bars - 1
+    bpm_raw = task.get('bpm')
+    bpm = float(bpm_raw) if isinstance(bpm_raw, (int, float)) else 120.0
+    track_slug = _loop_track_slug(task)
+    key_slug = _loop_key_slug(task)
+    loop_dir = RESULTS_DIR / safe_task_id / 'loops' / f'bars_{start_bar:03d}-{bar_end:03d}'
+    loop_dir.mkdir(parents=True, exist_ok=True)
+
+    generated: list[dict[str, Any]] = []
+
+    artifact_sources = _task_artifacts(task)
+    audio_sources: list[tuple[str, str, Path]] = []
+    normalized = artifact_sources.get('normalized_wav')
+    if normalized is not None:
+        audio_sources.append(('fullmix_wav', 'Full Mix WAV', normalized))
+    for stem_name in ('drums', 'bass', 'vocals', 'other'):
+        stem_path = artifact_sources.get(f'stem_{stem_name}_wav')
+        if stem_path is not None:
+            audio_sources.append((f'{stem_name}_wav', f'{stem_name.capitalize()} Stem WAV', stem_path))
+
+    for clip_id, label, source_path in audio_sources:
+        ext = 'wav'
+        file_name = f'{track_slug}_bars_{start_bar:03d}-{bar_end:03d}_{clip_id.replace("_wav", "")}_{int(round(bpm))}bpm_{key_slug}.{ext}'
+        output_path = loop_dir / file_name
+        if not output_path.exists():
+            _render_audio_loop(source_path, output_path, start_seconds, end_seconds)
+        generated.append({
+            'clip_id': clip_id,
+            'label': label,
+            'format': 'wav',
+            'path': output_path,
+            'filename': file_name,
+            'media_type': 'audio/wav',
+        })
+
+    full_mix_notes = _load_mt3_notes(task, 'full_mix')
+    bass_notes = _load_mt3_notes(task, 'bass') or [
+        note
+        for note in full_mix_notes
+        if isinstance(note.get('pitch'), (int, float)) and float(note['pitch']) < BASS_MELODY_SPLIT_MIDI
+    ]
+    melody_notes = [
+        note
+        for note in full_mix_notes
+        if isinstance(note.get('pitch'), (int, float)) and float(note['pitch']) >= BASS_MELODY_SPLIT_MIDI
+    ]
+    drum_notes = _load_mt3_notes(task, 'drums')
+    chord_notes = _chords_to_notes(task, start_seconds, end_seconds)
+    midi_sources: list[tuple[str, str, list[dict[str, Any]]]] = [
+        ('melody_midi', 'Melody MIDI', _clip_notes_to_window(melody_notes, start_seconds, end_seconds)),
+        ('bass_midi', 'Bass MIDI', _clip_notes_to_window(bass_notes, start_seconds, end_seconds)),
+        ('chord_midi', 'Chord MIDI', chord_notes),
+        ('drum_midi', 'Drum MIDI', _clip_notes_to_window(drum_notes, start_seconds, end_seconds)),
+    ]
+
+    for clip_id, label, notes in midi_sources:
+        if not notes:
+            continue
+        file_name = f'{track_slug}_bars_{start_bar:03d}-{bar_end:03d}_{clip_id.replace("_midi", "")}_{int(round(bpm))}bpm_{key_slug}.mid'
+        output_path = loop_dir / file_name
+        if not output_path.exists():
+            _write_notes_to_midi(notes, bpm, output_path)
+        generated.append({
+            'clip_id': clip_id,
+            'label': label,
+            'format': 'mid',
+            'path': output_path,
+            'filename': file_name,
+            'media_type': 'audio/midi',
+        })
+
+    zip_name = f'{track_slug}_bars_{start_bar:03d}-{bar_end:03d}_{int(round(bpm))}bpm_{key_slug}.zip'
+    zip_path = loop_dir / zip_name
+    with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED) as zip_file:
+        for clip in generated:
+            zip_file.write(clip['path'], arcname=clip['filename'])
+
+    return {
+        'start_bar': start_bar,
+        'bars': bars,
+        'bar_count': len(bar_starts),
+        'start_seconds': round(start_seconds, 6),
+        'end_seconds': round(end_seconds, 6),
+        'clips': generated,
+        'zip_path': zip_path,
+    }
 
 
 def _env_flag(name: str, default: str = 'false') -> bool:
@@ -1186,6 +1563,59 @@ def get_task_beatgrid(task_id: str):
     if isinstance(beat_detection, dict):
         result['beat_detection'] = beat_detection
     return result
+
+
+@app.get('/tasks/{task_id}/loops')
+def list_task_loop_exports(task_id: str, start_bar: int = 1, bars: int = 4):
+    safe_task_id = _validated_task_id(task_id)
+    task = _load_task(task_id)
+    exports = _prepare_loop_exports(task, task_id, start_bar=start_bar, bars=bars)
+    clips: list[dict[str, Any]] = []
+    for clip in exports['clips']:
+        clips.append({
+            'clip_id': clip['clip_id'],
+            'label': clip['label'],
+            'format': clip['format'],
+            'filename': clip['filename'],
+            'download_url': (
+                f'/tasks/{safe_task_id}/loops/{clip["clip_id"]}'
+                f'?start_bar={start_bar}&bars={bars}'
+            ),
+            'media_type': clip['media_type'],
+        })
+    return {
+        'start_bar': exports['start_bar'],
+        'bars': exports['bars'],
+        'bar_count': exports['bar_count'],
+        'start_seconds': exports['start_seconds'],
+        'end_seconds': exports['end_seconds'],
+        'clips': clips,
+        'zip_url': f'/tasks/{safe_task_id}/loops/zip?start_bar={start_bar}&bars={bars}',
+    }
+
+
+@app.get('/tasks/{task_id}/loops/zip')
+def download_task_loop_zip(task_id: str, start_bar: int = 1, bars: int = 4):
+    task = _load_task(task_id)
+    exports = _prepare_loop_exports(task, task_id, start_bar=start_bar, bars=bars)
+    zip_path = exports['zip_path']
+    resolved_zip = _resolve_data_path(str(zip_path))
+    if resolved_zip is None:
+        raise HTTPException(status_code=404, detail='Loop ZIP not available')
+    return FileResponse(path=resolved_zip, filename=resolved_zip.name, media_type='application/zip')
+
+
+@app.get('/tasks/{task_id}/loops/{clip_id}')
+def download_task_loop_clip(task_id: str, clip_id: str, start_bar: int = 1, bars: int = 4):
+    task = _load_task(task_id)
+    exports = _prepare_loop_exports(task, task_id, start_bar=start_bar, bars=bars)
+    clip = next((entry for entry in exports['clips'] if entry['clip_id'] == clip_id), None)
+    if clip is None:
+        raise HTTPException(status_code=404, detail='Loop clip not available')
+    resolved_clip = _resolve_data_path(str(clip['path']))
+    if resolved_clip is None:
+        raise HTTPException(status_code=404, detail='Loop clip not available')
+    return FileResponse(path=resolved_clip, filename=clip['filename'], media_type=clip['media_type'])
 
 
 # ---------------------------------------------------------------------------
