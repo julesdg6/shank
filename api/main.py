@@ -376,9 +376,12 @@ def _loop_key_slug(task: dict[str, Any]) -> str:
 
 
 def _task_beat_times(task: dict[str, Any]) -> list[float]:
-    analysis = task.get('analysis') if isinstance(task.get('analysis'), dict) else {}
-    full_mix = analysis.get('full_mix') if isinstance(analysis, dict) and isinstance(analysis.get('full_mix'), dict) else {}
-    beatgrid = full_mix.get('beatgrid') if isinstance(full_mix.get('beatgrid'), dict) else task.get('beatgrid')
+    analysis_raw = task.get('analysis')
+    analysis: dict[str, Any] = analysis_raw if isinstance(analysis_raw, dict) else {}
+    full_mix_raw = analysis.get('full_mix')
+    full_mix: dict[str, Any] = full_mix_raw if isinstance(full_mix_raw, dict) else {}
+    beatgrid_raw = full_mix.get('beatgrid')
+    beatgrid = beatgrid_raw if isinstance(beatgrid_raw, dict) else task.get('beatgrid')
 
     beat_times: list[float] = []
     beat_rows = beatgrid.get('beats') if isinstance(beatgrid, dict) else None
@@ -398,7 +401,8 @@ def _task_beat_times(task: dict[str, Any]) -> list[float]:
     if beat_times:
         return sorted(set(beat_times))
 
-    bpm = full_mix.get('bpm') if isinstance(full_mix.get('bpm'), (int, float)) else task.get('bpm')
+    bpm_raw = full_mix.get('bpm')
+    bpm = bpm_raw if isinstance(bpm_raw, (int, float)) else task.get('bpm')
     duration = full_mix.get('duration_seconds')
     if not isinstance(duration, (int, float)):
         duration = task.get('duration_seconds')
@@ -556,9 +560,12 @@ def _chord_symbol_to_pitches(symbol: str) -> list[int]:
 
 
 def _chords_to_notes(task: dict[str, Any], start_seconds: float, end_seconds: float) -> list[dict[str, Any]]:
-    analysis = task.get('analysis') if isinstance(task.get('analysis'), dict) else {}
-    full_mix = analysis.get('full_mix') if isinstance(analysis, dict) and isinstance(analysis.get('full_mix'), dict) else {}
-    chords = full_mix.get('chords') if isinstance(full_mix.get('chords'), dict) else task.get('chords')
+    analysis_raw = task.get('analysis')
+    analysis: dict[str, Any] = analysis_raw if isinstance(analysis_raw, dict) else {}
+    full_mix_raw = analysis.get('full_mix')
+    full_mix: dict[str, Any] = full_mix_raw if isinstance(full_mix_raw, dict) else {}
+    chords_raw = full_mix.get('chords')
+    chords = chords_raw if isinstance(chords_raw, dict) else task.get('chords')
     segments = chords.get('segments') if isinstance(chords, dict) else None
     if not isinstance(segments, list):
         return []
@@ -612,7 +619,8 @@ def _render_audio_loop(input_path: Path, output_path: Path, start_seconds: float
 def _prepare_loop_exports(task: dict[str, Any], task_id: str, start_bar: int, bars: int) -> dict[str, Any]:
     start_seconds, end_seconds, bar_starts = _loop_time_range(task, start_bar=start_bar, bars=bars)
     bar_end = start_bar + bars - 1
-    bpm = float(task.get('bpm')) if isinstance(task.get('bpm'), (int, float)) else 120.0
+    bpm_raw = task.get('bpm')
+    bpm = float(bpm_raw) if isinstance(bpm_raw, (int, float)) else 120.0
     track_slug = _loop_track_slug(task)
     key_slug = _loop_key_slug(task)
     loop_dir = RESULTS_DIR / task_id / 'loops' / f'bars_{start_bar:03d}-{bar_end:03d}'
