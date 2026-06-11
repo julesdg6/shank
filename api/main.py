@@ -785,19 +785,36 @@ def get_mt3_status():
     service_url = os.getenv('MT3_SERVICE_URL', '').strip()
     state = 'available'
     reason = 'ok'
-    reason_detail = 'MT3 is available.'
+    
+    # Map backend names for display
+    backend_display = {
+        'basic_pitch': 'Basic Pitch',
+        'mt3': 'MT3',
+        'omnizart': 'Omnizart',
+        'disabled': 'disabled'
+    }.get(backend, backend)
+    
+    # Generic transcription wording unless backend is specifically MT3
+    if backend == 'mt3':
+        reason_detail = 'MT3 is available.'
+    else:
+        reason_detail = f'MIDI transcription is available (backend: {backend_display}).'
+    
     if not enabled:
         state = 'unavailable'
-        reason = 'mt3_disabled'
-        reason_detail = 'MT3 is disabled by configuration (MT3_ENABLED=false).'
+        reason = 'transcription_disabled'
+        reason_detail = 'MIDI transcription is disabled by configuration (MT3_ENABLED=false).'
     elif backend == 'disabled':
         state = 'unavailable'
         reason = 'backend_disabled'
-        reason_detail = 'Transcription backend is disabled.'
+        reason_detail = 'MIDI transcription backend is disabled.'
     elif not service_url:
         state = 'unavailable'
         reason = 'service_unconfigured'
-        reason_detail = 'MT3 service URL is not configured.'
+        if backend == 'mt3':
+            reason_detail = 'MT3 service URL is not configured.'
+        else:
+            reason_detail = f'MIDI transcription service URL is not configured (backend: {backend_display}).'
     available = state == 'available'
 
     return {
@@ -807,6 +824,7 @@ def get_mt3_status():
         'reason_detail': reason_detail,
         'enabled': enabled,
         'backend': backend,
+        'backend_display': backend_display,
         'service_url': service_url or None,
         'message': reason_detail,
     }
