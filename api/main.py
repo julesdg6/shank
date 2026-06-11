@@ -1079,6 +1079,7 @@ def _task_artifacts(task: dict) -> dict[str, Path]:
             'results_task_json': structured_results.get('task_json'),
             'results_analysis_json': structured_results.get('analysis_json'),
             'beatgrid_json': structured_results.get('beatgrid_json'),
+            'structure_json': structured_results.get('structure_json'),
             'waveform_beats_png': structured_results.get('waveform_beats_png'),
             'tempo_curve_png': structured_results.get('tempo_curve_png'),
             'beatgraph_png': structured_results.get('beatgraph_png'),

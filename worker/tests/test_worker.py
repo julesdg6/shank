@@ -149,6 +149,7 @@ def test_pending_upload_task_is_normalized(data_dir):
     assert Path(updated['results']['dir']).name == task['task_id']
     assert Path(updated['results']['analysis_json']).is_file()
     assert Path(updated['results']['beatgrid_json']).is_file()
+    assert Path(updated['results']['structure_json']).is_file()
     assert Path(updated['results']['waveform_beats_png']).is_file()
     assert Path(updated['results']['tempo_curve_png']).is_file()
     assert Path(updated['results']['beatgraph_png']).is_file()

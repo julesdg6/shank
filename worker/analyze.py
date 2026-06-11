@@ -35,6 +35,9 @@ _TEMPO_WINDOW_BEATS = 4
 _TEMPO_CHANGE_THRESHOLD_BPM = 6.0
 _TEMPO_CHANGE_MIN_GAP_SECONDS = 1.0
 _BARS_PER_SECTION = 8
+# Applied to the middle sections (everything between intro and outro).
+_STRUCTURE_CORE_SEQUENCE = ('Verse', 'Chorus', 'Verse', 'Chorus', 'Bridge', 'Breakdown', 'Chorus')
+_STRUCTURE_FALLBACK_SEQUENCE = ('Verse', 'Chorus')
 _OUTRO_OFFSET_SECONDS = 8.0
 _SILENT_LUFS = -70.0
 _BEAT_MODES = {'constant_tempo', 'variable_tempo'}
@@ -517,6 +520,56 @@ def _derive_sections(downbeats: list[float], duration_seconds: float) -> list[di
     return sections
 
 
+def _format_timestamp(seconds: float) -> str:
+    rounded = max(0, int(seconds))
+    minutes, remaining_seconds = divmod(rounded, 60)
+    return f'{minutes:02d}:{remaining_seconds:02d}'
+
+
+def _derive_song_structure(sections: list[dict], duration_seconds: float) -> list[dict]:
+    if not sections:
+        sections = [{'start_seconds': 0.0, 'end_seconds': duration_seconds, 'label': 'full_mix'}]
+
+    boundaries: list[tuple[float, float]] = []
+    for section in sections:
+        if not isinstance(section, dict):
+            continue
+        start_raw = section.get('start_seconds')
+        end_raw = section.get('end_seconds')
+        if not isinstance(start_raw, (int, float)) or not isinstance(end_raw, (int, float)):
+            continue
+        start = max(0.0, float(start_raw))
+        end = max(start, float(end_raw))
+        boundaries.append((start, end))
+
+    total_sections = len(boundaries)
+    if total_sections == 0:
+        return []
+
+    structure: list[dict] = []
+    for index, (start, end) in enumerate(boundaries):
+        if total_sections == 1:
+            label = 'Intro'
+        elif index == 0:
+            label = 'Intro'
+        elif index == total_sections - 1:
+            label = 'Outro'
+        else:
+            core_index = index - 1
+            if core_index < len(_STRUCTURE_CORE_SEQUENCE):
+                label = _STRUCTURE_CORE_SEQUENCE[core_index]
+            else:
+                fallback_index = core_index - len(_STRUCTURE_CORE_SEQUENCE)
+                label = _STRUCTURE_FALLBACK_SEQUENCE[fallback_index % len(_STRUCTURE_FALLBACK_SEQUENCE)]
+        structure.append({
+            'label': label,
+            'start_seconds': round(start, 3),
+            'end_seconds': round(end, 3),
+            'timestamp': _format_timestamp(start),
+        })
+    return structure
+
+
 def _derive_cue_points(downbeats: list[float], beats: list[float], duration_seconds: float) -> list[dict]:
     cue_points: list[dict] = []
     if beats:
@@ -598,6 +651,7 @@ def analyze_audio(file_path: str) -> dict:
         beat_mode = 'variable_tempo'
     lufs = _measure_lufs(y, sr)
     sections = _derive_sections(downbeats, duration_seconds)
+    structure = _derive_song_structure(sections, duration_seconds)
     cue_points = _derive_cue_points(downbeats, beats, duration_seconds)
     beatgrid = _build_beatgrid(beats, bpm, beat_mode, local_bpms=local_bpms)
     beat_detection = {
@@ -673,6 +727,7 @@ def analyze_audio(file_path: str) -> dict:
         'beats': beats,
         'downbeats': downbeats,
         'sections': sections,
+        'structure': structure,
         'cue_points': cue_points,
         'chords': chords,
         'beat_detection': beat_detection,

@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 # conftest.py adds the worker directory to sys.path, so we can import directly.
-from analyze import _detect_chords, analyze_audio
+from analyze import _derive_song_structure, _detect_chords, analyze_audio
 import worker_loop
 
 # ---------------------------------------------------------------------------
@@ -102,6 +102,7 @@ def test_analyze_audio_returns_bpm_and_key(tmp_path):
     assert 'beats' in result
     assert 'downbeats' in result
     assert 'sections' in result
+    assert 'structure' in result
     assert 'cue_points' in result
     assert 'chords' in result
     assert 'bpm_source' in result
@@ -119,11 +120,40 @@ def test_analyze_audio_returns_bpm_and_key(tmp_path):
     assert isinstance(result['beats'], list)
     assert isinstance(result['downbeats'], list)
     assert isinstance(result['sections'], list)
+    assert isinstance(result['structure'], list)
     assert isinstance(result['cue_points'], list)
     assert isinstance(result['tempo_changes'], list)
     assert 'segments' in result['chords']
     assert 'progression' in result['chords']
     assert 'beats' in result['beatgrid']
+
+
+def test_derive_song_structure_uses_expected_labels():
+    sections = [
+        {'start_seconds': 0.0, 'end_seconds': 16.0, 'label': 'section_1'},
+        {'start_seconds': 16.0, 'end_seconds': 48.0, 'label': 'section_2'},
+        {'start_seconds': 48.0, 'end_seconds': 80.0, 'label': 'section_3'},
+        {'start_seconds': 80.0, 'end_seconds': 112.0, 'label': 'section_4'},
+        {'start_seconds': 112.0, 'end_seconds': 144.0, 'label': 'section_5'},
+        {'start_seconds': 144.0, 'end_seconds': 176.0, 'label': 'section_6'},
+        {'start_seconds': 176.0, 'end_seconds': 208.0, 'label': 'section_7'},
+        {'start_seconds': 208.0, 'end_seconds': 240.0, 'label': 'section_8'},
+    ]
+
+    structure = _derive_song_structure(sections, duration_seconds=240.0)
+
+    assert [entry['label'] for entry in structure] == [
+        'Intro',
+        'Verse',
+        'Chorus',
+        'Verse',
+        'Chorus',
+        'Bridge',
+        'Breakdown',
+        'Outro',
+    ]
+    assert structure[0]['timestamp'] == '00:00'
+    assert structure[1]['timestamp'] == '00:16'
 
 
 def test_analyze_audio_uses_mixxx_backend_when_available(tmp_path, monkeypatch):

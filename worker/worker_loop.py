@@ -253,6 +253,7 @@ def _task_artifact_paths(
     if isinstance(result_artifacts, dict):
         for artifact_name, key in (
             ('beatgrid_json', 'beatgrid_json'),
+            ('structure_json', 'structure_json'),
             ('waveform_beats_png', 'waveform_beats_png'),
             ('tempo_curve_png', 'tempo_curve_png'),
             ('beatgraph_png', 'beatgraph_png'),
@@ -271,6 +272,7 @@ def _structured_result_paths(task_id: str) -> dict[str, str]:
         'task_json': str(result_dir / 'task.json'),
         'analysis_json': str(result_dir / 'analysis.json'),
         'beatgrid_json': str(result_dir / 'beatgrid.json'),
+        'structure_json': str(result_dir / 'structure.json'),
         'waveform_beats_png': str(result_dir / 'waveform_beats.png'),
         'tempo_curve_png': str(result_dir / 'tempo_curve.png'),
         'beatgraph_png': str(result_dir / 'beatgraph.png'),
@@ -391,6 +393,16 @@ def _write_beat_outputs(result_artifacts: dict[str, str], analysis_payload: dict
             plt.close()
 
 
+def _write_structure_output(result_artifacts: dict[str, str], analysis_payload: dict[str, Any]) -> None:
+    full_mix = analysis_payload.get('full_mix')
+    structure: list[dict[str, Any]] = []
+    if isinstance(full_mix, dict):
+        structure_raw = full_mix.get('structure')
+        if isinstance(structure_raw, list):
+            structure = [entry for entry in structure_raw if isinstance(entry, dict)]
+    Path(result_artifacts['structure_json']).write_text(json.dumps(structure, indent=2))
+
+
 def _write_structured_results(
     result_artifacts: dict[str, str],
     task_payload: dict[str, Any],
@@ -410,6 +422,7 @@ def _write_structured_results(
     task_path.write_text(json.dumps(task_payload, indent=2))
     analysis_path.write_text(json.dumps(analysis_payload, indent=2))
     _write_beat_outputs(result_artifacts, analysis_payload)
+    _write_structure_output(result_artifacts, analysis_payload)
     mt3_payload = mt3_result if isinstance(mt3_result, dict) else {}
     mt3_path.write_text(json.dumps(mt3_payload, indent=2))
     artifacts_path.write_text(
