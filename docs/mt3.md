@@ -81,6 +81,8 @@ Start the unified container:
 
 ```bash
 docker compose up --build -d
+# Older standalone Compose:
+docker-compose up --build -d
 ```
 
 Set:
@@ -163,6 +165,8 @@ MT3 checkpoints must be placed manually in `./models/mt3/checkpoints` on the hos
 4. Restart the container:
    ```bash
    docker compose down && docker compose up --build -d
+   # Older standalone Compose:
+   docker-compose down && docker-compose up --build -d
    ```
 
 If the checkpoint directory is empty or missing, the MT3 service will start but return errors or empty MIDI on transcription requests.

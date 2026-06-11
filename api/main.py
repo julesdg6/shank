@@ -1,4 +1,5 @@
 import json
+import importlib.util
 import logging
 import os
 import subprocess
@@ -49,6 +50,9 @@ _MODEL_SPECS = {
     'htdemucs_ft.yaml': 400,
     'htdemucs_6s.yaml': 530,
 }
+_MODEL_CONFIG_MIN_BYTES = 1024
+_MODEL_WEIGHT_MIN_BYTES = 5 * 1024 * 1024
+_MODEL_WEIGHT_EXTENSIONS = ('.ckpt', '.pt', '.pth', '.bin', '.safetensors')
 
 
 def _get_media_type_quality(accept_header: str, media_type: str) -> float:
@@ -121,13 +125,24 @@ def _load_task(task_id: str) -> dict:
 
 
 def _models_payload(model_dir: Path) -> dict[str, dict[str, Any]]:
+    has_weight_files = any(
+        path.is_file()
+        and path.suffix.lower() in _MODEL_WEIGHT_EXTENSIONS
+        and path.stat().st_size >= _MODEL_WEIGHT_MIN_BYTES
+        for path in model_dir.iterdir()
+    ) if model_dir.is_dir() else False
     payload: dict[str, dict[str, Any]] = {}
     for model_name in _MODEL_SPECS:
         path = model_dir / model_name
         exists = path.is_file()
+        size_bytes = path.stat().st_size if exists else 0
+        looks_like_config_only = exists and path.suffix.lower() in ('.yaml', '.yml') and size_bytes < _MODEL_CONFIG_MIN_BYTES
+        ready = exists and (not looks_like_config_only or has_weight_files)
         payload[model_name] = {
             'exists': exists,
-            'size_bytes': path.stat().st_size if exists else 0,
+            'size_bytes': size_bytes,
+            'ready': ready,
+            'config_only': bool(looks_like_config_only and not has_weight_files),
         }
     return payload
 
@@ -158,8 +173,8 @@ def _snapshot_model_download_status() -> dict[str, Any]:
         state = dict(_MODEL_DOWNLOAD_STATE)
     model_dir = Path(state.get('model_dir') or DEFAULT_SEPARATOR_MODEL_DIR)
     models = _models_payload(model_dir)
-    four_stem_ready = bool(models['htdemucs_ft.yaml']['exists'])
-    six_stem_ready = bool(models['htdemucs_6s.yaml']['exists'])
+    four_stem_ready = bool(models['htdemucs_ft.yaml']['ready'])
+    six_stem_ready = bool(models['htdemucs_6s.yaml']['ready'])
     wants_six_stems = bool(state.get('six_stems')) or six_stem_ready
     estimated_total_mb = 530 if wants_six_stems else 400
     progress = int(state.get('progress_percent') or 0)
@@ -866,6 +881,8 @@ def get_stem_backend_status():
     configured_backend = os.getenv('STEM_BACKEND', 'auto').strip().lower()
     ace_step_url = os.getenv('ACE_STEP_API_URL', '').strip().rstrip('/')
     ace_step_key = os.getenv('ACE_STEP_API_KEY', '').strip()
+    audio_separator_model = os.getenv('AUDIO_SEPARATOR_MODEL', 'htdemucs_ft.yaml').strip() or 'htdemucs_ft.yaml'
+    audio_separator_model_dir = Path(os.getenv('AUDIO_SEPARATOR_MODEL_DIR', '/srv/shank/models/separator'))
     demucs_model = os.getenv('DEMUCS_MODEL', 'htdemucs').strip() or 'htdemucs'
     demucs_device = os.getenv('DEMUCS_DEVICE', 'cpu').strip() or 'cpu'
 
@@ -882,6 +899,13 @@ def get_stem_backend_status():
             log.debug('Ace-Step health check failed: %s', exc)
             ace_step_healthy = False
 
+    audio_separator_available = importlib.util.find_spec('audio_separator') is not None
+    audio_separator_models = _models_payload(audio_separator_model_dir)
+    audio_separator_model_status = audio_separator_models.get(
+        audio_separator_model,
+        {'exists': False, 'size_bytes': 0, 'ready': False, 'config_only': False},
+    )
+    audio_separator_ready = bool(audio_separator_model_status['ready'])
     demucs_available = shutil.which('demucs') is not None
 
     # Determine the effective active backend.
@@ -889,11 +913,15 @@ def get_stem_backend_status():
         active_backend = 'none'
     elif configured_backend == 'acestep':
         active_backend = 'acestep' if (ace_step_url and ace_step_healthy) else 'none'
+    elif configured_backend == 'audio_separator':
+        active_backend = 'audio_separator' if audio_separator_available and audio_separator_ready else 'none'
     elif configured_backend == 'demucs':
         active_backend = 'demucs' if demucs_available else 'none'
     else:  # auto
         if ace_step_url and ace_step_healthy:
             active_backend = 'acestep'
+        elif audio_separator_available:
+            active_backend = 'audio_separator'
         elif demucs_available:
             active_backend = 'demucs'
         else:
@@ -906,6 +934,14 @@ def get_stem_backend_status():
             'configured': bool(ace_step_url),
             'url': ace_step_url or None,
             'healthy': ace_step_healthy,
+        },
+        'audio_separator': {
+            'available': audio_separator_available,
+            'model': audio_separator_model,
+            'model_dir': str(audio_separator_model_dir),
+            'model_exists': bool(audio_separator_model_status['exists']),
+            'model_ready': audio_separator_ready,
+            'config_only': bool(audio_separator_model_status['config_only']),
         },
         'demucs': {
             'available': demucs_available,
