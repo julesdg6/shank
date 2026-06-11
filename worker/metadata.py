@@ -103,6 +103,16 @@ def _apply_lyrics_policy(text: str | None) -> str | None:
     return text
 
 
+def _provider_attribution(plain_lyrics: str | None, synced_lyrics: str | None) -> str | None:
+    if plain_lyrics and synced_lyrics:
+        return 'embedded tags + local sidecar'
+    if plain_lyrics:
+        return 'embedded tags'
+    if synced_lyrics:
+        return 'local sidecar'
+    return None
+
+
 def collect_song_metadata(task: dict[str, Any], source_audio_path: str) -> dict[str, Any]:
     tags = _ffprobe_tags(source_audio_path)
     youtube = task.get('youtube') if isinstance(task.get('youtube'), dict) else {}
@@ -117,7 +127,7 @@ def collect_song_metadata(task: dict[str, Any], source_audio_path: str) -> dict[
     if isinstance(release_date, str) and len(release_date) >= 4 and release_date[:4].isdigit():
         release_year = int(release_date[:4])
     elif isinstance(youtube.get('release_year'), int):
-        release_year = int(youtube['release_year'])
+        release_year = youtube['release_year']
 
     plain_lyrics = _first_tag(tags, 'lyrics', 'unsyncedlyrics', 'unsynchronised_lyrics')
     synced_lyrics = _sidecar_lrc(source_audio_path)
@@ -168,15 +178,7 @@ def collect_song_metadata(task: dict[str, Any], source_audio_path: str) -> dict[
         'plain_lyrics': _apply_lyrics_policy(plain_lyrics),
         'synced_lyrics_lrc': _apply_lyrics_policy(synced_lyrics),
         'provider_url': provider_url,
-        'provider_attribution': (
-            'embedded tags + local sidecar'
-            if plain_lyrics and synced_lyrics
-            else 'embedded tags'
-            if plain_lyrics
-            else 'local sidecar'
-            if synced_lyrics
-            else None
-        ),
+        'provider_attribution': _provider_attribution(plain_lyrics, synced_lyrics),
         'language': _first_tag(tags, 'language'),
         'confidence_score': round(
             min(
