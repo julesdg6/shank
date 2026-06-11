@@ -1177,6 +1177,9 @@
       .filter((value) => Number.isFinite(value) && value >= 0)
       .sort((a, b) => a - b);
 
+    const sections = Array.isArray(analysis?.sections) ? analysis.sections : [];
+    const cuePoints = Array.isArray(analysis?.cue_points) ? analysis.cue_points : [];
+
     const pps = stemPlayer.timelinePixelsPerSecond;
     const currentTime = getTransportTime();
     const cx = W / 2;
@@ -1196,6 +1199,59 @@
     ctx.moveTo(0, RULER_H);
     ctx.lineTo(W, RULER_H);
     ctx.stroke();
+
+    // ── Section markers (background tints) ──────────────────────────────────
+    if (sections.length > 0) {
+      const SECTION_PALETTE = [
+        { fill: 'rgba(251,191,36,0.10)',  border: 'rgba(251,191,36,0.5)',  label: 'rgba(251,191,36,0.8)'  },
+        { fill: 'rgba(52,211,153,0.10)',  border: 'rgba(52,211,153,0.5)',  label: 'rgba(52,211,153,0.8)'  },
+        { fill: 'rgba(248,113,113,0.10)', border: 'rgba(248,113,113,0.5)', label: 'rgba(248,113,113,0.8)' },
+        { fill: 'rgba(96,165,250,0.10)',  border: 'rgba(96,165,250,0.5)',  label: 'rgba(96,165,250,0.8)'  },
+        { fill: 'rgba(167,139,250,0.10)', border: 'rgba(167,139,250,0.5)', label: 'rgba(167,139,250,0.8)' },
+        { fill: 'rgba(251,146,60,0.10)',  border: 'rgba(251,146,60,0.5)',  label: 'rgba(251,146,60,0.8)'  },
+      ];
+      const SECTION_LABEL_PAD = 3;
+      const MIN_SECTION_LABEL_W = 30;
+      sections.forEach((section, idx) => {
+        const tStart = toFiniteNumber(section.start_seconds, NaN);
+        const tEnd = toFiniteNumber(section.end_seconds, NaN);
+        if (!Number.isFinite(tStart) || !Number.isFinite(tEnd) || tEnd <= tStart) return;
+        const xStart = cx + (tStart - currentTime) * pps;
+        const xEnd = cx + (tEnd - currentTime) * pps;
+        if (xEnd < 0 || xStart > W) return;
+        const xClipped = Math.max(0, xStart);
+        const xClippedEnd = Math.min(W, xEnd);
+        const wClipped = xClippedEnd - xClipped;
+        if (wClipped <= 0) return;
+        const palette = SECTION_PALETTE[idx % SECTION_PALETTE.length];
+        // Background tint over the full waveform area
+        ctx.fillStyle = palette.fill;
+        ctx.fillRect(xClipped, RULER_H, wClipped, WAVE_H);
+        // Left edge border line at section start
+        if (xStart >= -MARKER_VIEW_PADDING && xStart <= W + MARKER_VIEW_PADDING) {
+          ctx.strokeStyle = palette.border;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(xStart, RULER_H);
+          ctx.lineTo(xStart, RULER_H + WAVE_H);
+          ctx.stroke();
+        }
+        // Section label at top-left of the region
+        const rawW = xEnd - xStart;
+        if (rawW > MIN_SECTION_LABEL_W) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(xClipped, RULER_H, wClipped, WAVE_H);
+          ctx.clip();
+          ctx.fillStyle = palette.label;
+          ctx.font = 'bold 9px monospace';
+          ctx.textBaseline = 'top';
+          ctx.fillText(section.label || `sec ${idx + 1}`, Math.max(xClipped + SECTION_LABEL_PAD, xStart + SECTION_LABEL_PAD), RULER_H + SECTION_LABEL_PAD);
+          ctx.restore();
+          ctx.textBaseline = 'alphabetic';
+        }
+      });
+    }
 
     // ── Beat and bar markers ─────────────────────────────────────────────────
     if (beatTimes.length > 0 && duration > 0) {
@@ -1383,6 +1439,55 @@
         }
       });
       ctx.textBaseline = 'alphabetic';
+    }
+
+    // ── Cue point markers ────────────────────────────────────────────────────
+    if (cuePoints.length > 0) {
+      const CUE_PALETTE = ['#fbbf24', '#f87171', '#34d399', '#60a5fa', '#a78bfa', '#fb923c'];
+      const CUE_DIAMOND_OFFSET = 4; // px above ruler bottom
+      const CUE_DIAMOND_SIZE = 5;   // half-width/height of diamond
+      const CUE_LABEL_OFFSET = 12;  // px above ruler bottom for label baseline
+      cuePoints.forEach((cue, idx) => {
+        const t = toFiniteNumber(cue.time_seconds, NaN);
+        if (!Number.isFinite(t) || t < 0) return;
+        const x = cx + (t - currentTime) * pps;
+        if (x < -MARKER_VIEW_PADDING || x > W + MARKER_VIEW_PADDING) return;
+        const color = CUE_PALETTE[idx % CUE_PALETTE.length];
+        // Dashed vertical line through waveform area
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = 0.55;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(x, RULER_H);
+        ctx.lineTo(x, RULER_H + WAVE_H);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+        ctx.restore();
+        // Diamond marker at ruler bottom edge
+        ctx.fillStyle = color;
+        const dy = RULER_H - CUE_DIAMOND_OFFSET;
+        ctx.beginPath();
+        ctx.moveTo(x, dy + CUE_DIAMOND_SIZE);
+        ctx.lineTo(x + CUE_DIAMOND_SIZE, dy);
+        ctx.lineTo(x, dy - CUE_DIAMOND_SIZE);
+        ctx.lineTo(x - CUE_DIAMOND_SIZE, dy);
+        ctx.closePath();
+        ctx.fill();
+        // Cue name label in the ruler area above the diamond
+        if (cue.name) {
+          ctx.fillStyle = color;
+          ctx.font = 'bold 9px monospace';
+          ctx.textBaseline = 'bottom';
+          const label = String(cue.name);
+          const lw = ctx.measureText(label).width;
+          const lx = Math.min(W - lw - 2, Math.max(2, x - lw / 2));
+          ctx.fillText(label, lx, RULER_H - CUE_LABEL_OFFSET);
+          ctx.textBaseline = 'alphabetic';
+        }
+      });
     }
 
     // ── Fixed playhead ────────────────────────────────────────────────────────
