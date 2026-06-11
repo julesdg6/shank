@@ -418,9 +418,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-11T01:47:27Z
-- Latest commit: `2e71575`
-- Commit message: Merge pull request #163 from julesdg6/copilot/fix-dockerfile-healthcheck-issues  Align runtime deployment status with actual backend/model readiness and compose usage
+- Last automated update: 2026-06-11T13:08:27Z
+- Latest commit: `a8e3598`
+- Commit message: Merge pull request #165 from julesdg6/copilot/add-page-level-analysis-settings  [WIP] Add page-level analysis settings for stems, MIDI, and reprocess behaviour
 <!-- readme-update:end -->
 
 ## 🥁 Beat Detection & Beat Grid
