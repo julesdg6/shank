@@ -220,6 +220,7 @@ docker build -t shank:local .
 | `POST` | `/tasks/melody` | Upload audio and queue a melody-focused analysis task |
 | `POST` | `/tasks/url` | Submit a YouTube URL for download and analysis |
 | `GET` | `/tasks/{task_id}` | Retrieve the status and results of a task |
+| `POST` | `/tasks/{task_id}/reprocess` | Create a new task reprocessing the same source (see below) |
 | `GET` | `/tasks/{task_id}/chords` | Return chord detection results for a completed task |
 | `GET` | `/tasks/{task_id}/beatgrid` | Return beat grid and beat detection metadata for a completed task |
 | `GET` | `/tasks/{task_id}/artifacts` | List downloadable output files for a completed task |
@@ -234,6 +235,31 @@ docker build -t shank:local .
 | `POST` | `/api/models/download` | Start downloading separator models (`six_stems` optional) |
 | `POST` | `/api/models/cancel` | Cancel an in-progress separator model download |
 | `GET` | `/ui` | Web dashboard (static HTML/JS) |
+
+### Reprocess a task
+
+`POST /tasks/{task_id}/reprocess` creates a new pending task using the same source as the original. The original report is preserved by default.
+
+```bash
+curl -X POST http://localhost:8088/tasks/<task_id>/reprocess \
+     -H 'Content-Type: application/json' \
+     -d '{"mode": "all", "preserve_existing": true}'
+```
+
+Request body fields:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `mode` | string | `"all"` | What to reprocess: `all`, `audio_analysis`, `stems`, `midi`, `metadata`, `ai_prompts` |
+| `preserve_existing` | bool | `true` | Keep the original task/report untouched |
+| `enable_mt3` | bool\|null | null | Override MT3 setting (null = inherit from original) |
+| `stem_backend` | string\|null | null | Override stem backend for this run |
+
+Response:
+
+```json
+{"task_id": "new-task-id", "source_task_id": "original-task-id", "status": "pending"}
+```
 
 ### Example — submit a YouTube URL
 ```bash
