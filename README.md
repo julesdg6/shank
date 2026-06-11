@@ -147,6 +147,8 @@ docker compose up --build -d
 
 The API and Web UI are available at **http://localhost:8088**.
 
+> **Port note:** The container's internal API port is **8080**. Docker Compose maps it to host port **8088** (`"8088:8080"`). The Dockerfile and `docker-compose.yml` healthchecks both probe `http://127.0.0.1:8080` (the internal port). Always use port **8088** when accessing SHANK from your browser or host tools.
+
 ### 4. Open the dashboard
 Navigate to **http://localhost:8088/** in your browser to upload audio files or submit YouTube URLs. The dashboard is also available at **http://localhost:8088/ui**.
 
@@ -174,7 +176,7 @@ Then open **Docker > Add Container** and select the `shank` template.
 ### 2. Configure paths and launch
 
 - Set your data path (template default): `/mnt/user/appdata/shank`
-- Expose port `8088`
+- The template maps container-internal port **8080** to host port **8088** by default. Change the host port value if 8088 is already in use.
 - Save and start the container
 
 ### 3. GPU flags (optional)
@@ -218,6 +220,7 @@ docker build -t shank:local .
 | `POST` | `/tasks/melody` | Upload audio and queue a melody-focused analysis task |
 | `POST` | `/tasks/url` | Submit a YouTube URL for download and analysis |
 | `GET` | `/tasks/{task_id}` | Retrieve the status and results of a task |
+| `POST` | `/tasks/{task_id}/reprocess` | Create a new task reprocessing the same source (see below) |
 | `GET` | `/tasks/{task_id}/chords` | Return chord detection results for a completed task |
 | `GET` | `/tasks/{task_id}/beatgrid` | Return beat grid and beat detection metadata for a completed task |
 | `GET` | `/tasks/{task_id}/artifacts` | List downloadable output files for a completed task |
@@ -228,11 +231,36 @@ docker build -t shank:local .
 | `GET` | `/worker/status` | Return worker liveness and last-heartbeat timestamp |
 | `GET` | `/doctor` | Return consolidated deployment health checks (worker, tooling, models, transcription, disk) |
 | `GET` | `/stem-backend/status` | Report which stem-separation backend is active |
-| `GET` | `/transcription/status` | Report MT3 transcription availability and backend configuration |
+| `GET` | `/mt3/status` | Report MT3 transcription availability and backend configuration |
 | `GET` | `/api/models/status` | Report separator model availability and download progress |
 | `POST` | `/api/models/download` | Start downloading separator models (`six_stems` optional) |
 | `POST` | `/api/models/cancel` | Cancel an in-progress separator model download |
 | `GET` | `/ui` | Web dashboard (static HTML/JS) |
+
+### Reprocess a task
+
+`POST /tasks/{task_id}/reprocess` creates a new pending task using the same source as the original. The original report is preserved by default.
+
+```bash
+curl -X POST http://localhost:8088/tasks/<task_id>/reprocess \
+     -H 'Content-Type: application/json' \
+     -d '{"mode": "all", "preserve_existing": true}'
+```
+
+Request body fields:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `mode` | string | `"all"` | What to reprocess: `all`, `audio_analysis`, `stems`, `midi`, `metadata`, `ai_prompts` |
+| `preserve_existing` | bool | `true` | Keep the original task/report untouched |
+| `enable_mt3` | bool\|null | null | Override MT3 setting (null = inherit from original) |
+| `stem_backend` | string\|null | null | Override stem backend for this run |
+
+Response:
+
+```json
+{"task_id": "new-task-id", "source_task_id": "original-task-id", "status": "pending"}
+```
 
 ### Example — submit a YouTube URL
 ```bash
@@ -377,9 +405,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-10T23:22:35Z
-- Latest commit: `b4bdfda`
-- Commit message: Merge pull request #148 from julesdg6/copilot/feature-mixxx-grade-bpm-detection  feat: add /tasks/{task_id}/beatgrid endpoint and Mixxx BPM detection docs
+- Last automated update: 2026-06-11T01:01:25Z
+- Latest commit: `587a4f9`
+- Commit message: Merge pull request #162 from julesdg6/copilot/feature-reprocess-button-youtube-embed  feat: Reprocess button and YouTube embed/link in song reports
 <!-- readme-update:end -->
 
 ## 🥁 Beat Detection & Beat Grid

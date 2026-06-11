@@ -108,3 +108,76 @@ def test_download_youtube_propagates_download_error(tmp_path):
 
         with pytest.raises(yt_dlp.utils.DownloadError):
             downloader.download_youtube(YOUTUBE_URL, tmp_path, TASK_ID)
+
+
+# ---------------------------------------------------------------------------
+# extract_video_id
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize('url,expected', [
+    ('https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'dQw4w9WgXcQ'),
+    ('https://youtu.be/dQw4w9WgXcQ', 'dQw4w9WgXcQ'),
+    ('https://music.youtube.com/watch?v=dQw4w9WgXcQ', 'dQw4w9WgXcQ'),
+    ('https://www.youtube.com/shorts/dQw4w9WgXcQ', 'dQw4w9WgXcQ'),
+    ('https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PL123', 'dQw4w9WgXcQ'),
+    ('https://example.com/not-youtube', None),
+    ('', None),
+])
+def test_extract_video_id(url, expected):
+    assert downloader.extract_video_id(url) == expected
+
+
+# ---------------------------------------------------------------------------
+# extract_youtube_metadata
+# ---------------------------------------------------------------------------
+
+def test_extract_youtube_metadata_returns_expected_keys():
+    """extract_youtube_metadata must return the documented metadata keys."""
+    fake_info = {
+        'id': 'dQw4w9WgXcQ',
+        'title': 'Never Gonna Give You Up',
+        'channel': 'Rick Astley',
+        'duration': 213,
+        'thumbnail': 'https://img.youtube.com/vi/dQw4w9WgXcQ/0.jpg',
+        'webpage_url': YOUTUBE_URL,
+    }
+    with patch('downloader.yt_dlp.YoutubeDL') as mock_cls:
+        mock_ydl = MagicMock()
+        mock_ydl.extract_info.return_value = fake_info
+        mock_cls.return_value.__enter__ = MagicMock(return_value=mock_ydl)
+        mock_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        meta = downloader.extract_youtube_metadata(YOUTUBE_URL)
+
+    assert meta['video_id'] == 'dQw4w9WgXcQ'
+    assert meta['title'] == 'Never Gonna Give You Up'
+    assert meta['channel'] == 'Rick Astley'
+    assert meta['duration'] == 213
+    assert meta['thumbnail'] == 'https://img.youtube.com/vi/dQw4w9WgXcQ/0.jpg'
+    assert meta['webpage_url'] == YOUTUBE_URL
+
+
+def test_extract_youtube_metadata_falls_back_to_url_for_video_id():
+    """When yt-dlp returns no id, the video ID should be parsed from the URL."""
+    with patch('downloader.yt_dlp.YoutubeDL') as mock_cls:
+        mock_ydl = MagicMock()
+        mock_ydl.extract_info.return_value = {}
+        mock_cls.return_value.__enter__ = MagicMock(return_value=mock_ydl)
+        mock_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        meta = downloader.extract_youtube_metadata(YOUTUBE_URL)
+
+    assert meta['video_id'] == 'dQw4w9WgXcQ'
+
+
+def test_extract_youtube_metadata_calls_extract_info_without_download():
+    """extract_youtube_metadata must NOT trigger a download (download=False)."""
+    with patch('downloader.yt_dlp.YoutubeDL') as mock_cls:
+        mock_ydl = MagicMock()
+        mock_ydl.extract_info.return_value = {}
+        mock_cls.return_value.__enter__ = MagicMock(return_value=mock_ydl)
+        mock_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        downloader.extract_youtube_metadata(YOUTUBE_URL)
+
+        mock_ydl.extract_info.assert_called_once_with(YOUTUBE_URL, download=False)

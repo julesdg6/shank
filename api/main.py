@@ -271,6 +271,13 @@ def _start_model_download(six_stems: bool, model_dir: str | None) -> dict[str, A
             'message': 'A model download is already in progress.',
             **_snapshot_model_download_status(),
         }
+    script_path = Path(__file__).resolve().parents[1] / 'scripts' / 'download_stem_models.py'
+    if not script_path.is_file():
+        raise HTTPException(
+            status_code=500,
+            detail='Stem model download script is missing from the Docker image.',
+        )
+
     with _MODEL_DOWNLOAD_LOCK:
         _MODEL_DOWNLOAD_STATE.update({
             'is_downloading': True,
@@ -288,7 +295,6 @@ def _start_model_download(six_stems: bool, model_dir: str | None) -> dict[str, A
             'process': None,
         })
 
-    script_path = Path(__file__).resolve().parents[1] / 'scripts' / 'download_stem_models.py'
     cmd = ['python3', str(script_path), '--model-dir', str(resolved_model_dir)]
     if six_stems:
         cmd.append('--6stems')
@@ -483,6 +489,91 @@ def list_completed_tasks():
 
     completed_tasks.sort(key=lambda task: task.get('completed_at') or '', reverse=True)
     return {'tasks': completed_tasks}
+
+
+# ---------------------------------------------------------------------------
+# Reprocess task
+# ---------------------------------------------------------------------------
+
+_VALID_REPROCESS_MODES = frozenset({
+    'all',
+    'audio_analysis',
+    'stems',
+    'midi',
+    'metadata',
+    'ai_prompts',
+})
+
+
+class ReprocessRequest(BaseModel):
+    mode: str = 'all'
+    preserve_existing: bool = True
+    enable_mt3: bool | None = None
+    stem_backend: str | None = None
+
+
+@app.post('/tasks/{task_id}/reprocess', status_code=202)
+def reprocess_task(task_id: str, body: ReprocessRequest):
+    """Create a new task that reprocesses the same source as *task_id*.
+
+    The original task is not modified. The new task records ``source_task_id``
+    pointing back to the original so callers can trace the lineage.
+    """
+    if body.mode not in _VALID_REPROCESS_MODES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid mode '{body.mode}'. Valid modes: {sorted(_VALID_REPROCESS_MODES)}",
+        )
+
+    original = _load_task(task_id)
+    task_type = original.get('type')
+    source = original.get('source')
+
+    if not source:
+        raise HTTPException(status_code=400, detail='Original task has no source to reprocess')
+    if task_type not in ('url', 'upload'):
+        raise HTTPException(status_code=400, detail=f"Cannot reprocess task of type '{task_type}'")
+
+    new_task_id = str(uuid.uuid4())
+
+    new_task: dict[str, Any] = {
+        'task_id': new_task_id,
+        'type': task_type,
+        'source': source,
+        'status': 'pending',
+        'created_at': datetime.now(timezone.utc).isoformat(),
+        'source_task_id': task_id,
+        'reprocess_mode': body.mode,
+    }
+
+    # Carry over the original file_path for upload tasks so the worker can
+    # reuse the already-uploaded file without re-uploading.
+    if task_type == 'upload':
+        file_path = original.get('file_path')
+        if file_path:
+            new_task['file_path'] = file_path
+        requested_type = original.get('requested_type')
+        if requested_type:
+            new_task['requested_type'] = requested_type
+
+    # Allow per-reprocess overrides; fall back to the original task's settings.
+    enable_mt3_for_new_task = body.enable_mt3 if body.enable_mt3 is not None else original.get('enable_mt3')
+    if enable_mt3_for_new_task is not None:
+        new_task['enable_mt3'] = enable_mt3_for_new_task
+
+    if body.stem_backend is not None:
+        new_task['stem_backend'] = body.stem_backend
+
+    _write_task(new_task)
+
+    return JSONResponse(
+        status_code=202,
+        content={
+            'task_id': new_task_id,
+            'source_task_id': task_id,
+            'status': 'pending',
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -765,8 +856,6 @@ def get_transcription_status():
         'service_url': service_url or None,
         'available': mt3_enabled and bool(service_url),
     }
-
-
 # ---------------------------------------------------------------------------
 # Stem backend status
 # ---------------------------------------------------------------------------
@@ -833,19 +922,36 @@ def get_mt3_status():
     service_url = os.getenv('MT3_SERVICE_URL', '').strip()
     state = 'available'
     reason = 'ok'
-    reason_detail = 'MT3 is available.'
+    
+    # Map backend names for display
+    backend_display = {
+        'basic_pitch': 'Basic Pitch',
+        'mt3': 'MT3',
+        'omnizart': 'Omnizart',
+        'disabled': 'disabled'
+    }.get(backend, backend)
+    
+    # Generic transcription wording unless backend is specifically MT3
+    if backend == 'mt3':
+        reason_detail = 'MT3 is available.'
+    else:
+        reason_detail = f'MIDI transcription is available (backend: {backend_display}).'
+    
     if not enabled:
         state = 'unavailable'
-        reason = 'mt3_disabled'
-        reason_detail = 'MT3 is disabled by configuration (MT3_ENABLED=false).'
+        reason = 'transcription_disabled'
+        reason_detail = 'MIDI transcription is disabled by configuration (MT3_ENABLED=false).'
     elif backend == 'disabled':
         state = 'unavailable'
         reason = 'backend_disabled'
-        reason_detail = 'Transcription backend is disabled.'
+        reason_detail = 'MIDI transcription backend is disabled.'
     elif not service_url:
         state = 'unavailable'
         reason = 'service_unconfigured'
-        reason_detail = 'MT3 service URL is not configured.'
+        if backend == 'mt3':
+            reason_detail = 'MT3 service URL is not configured.'
+        else:
+            reason_detail = f'MIDI transcription service URL is not configured (backend: {backend_display}).'
     available = state == 'available'
 
     return {
@@ -855,6 +961,7 @@ def get_mt3_status():
         'reason_detail': reason_detail,
         'enabled': enabled,
         'backend': backend,
+        'backend_display': backend_display,
         'service_url': service_url or None,
         'message': reason_detail,
     }

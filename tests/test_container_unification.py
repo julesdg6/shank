@@ -83,6 +83,25 @@ def test_dockerfile_healthcheck_includes_worker_status():
     assert '/worker/status' in text
 
 
+def test_dockerfile_healthcheck_uses_internal_port():
+    """Healthcheck must probe the internal container port (8080), not the host port (8088)."""
+    dockerfile = Path(__file__).resolve().parents[1] / 'Dockerfile'
+    text = dockerfile.read_text()
+
+    assert 'http://127.0.0.1:8080/' in text or '127.0.0.1:8080' in text
+    assert '127.0.0.1:8088' not in text
+
+
+def test_unraid_template_maps_container_port_8080():
+    """Unraid template Target must be container port 8080 (not host port 8088)."""
+    template = Path(__file__).resolve().parents[1] / 'unraid' / 'shank.xml'
+    text = template.read_text()
+
+    # Target="8080" is the container-internal port; host port 8088 is the value
+    assert 'Target="8080"' in text
+    assert 'Target="8088"' not in text
+
+
 def test_worker_dockerfile_installs_audio_processing_tools():
     dockerfile = Path(__file__).resolve().parents[1] / 'worker' / 'Dockerfile'
     text = dockerfile.read_text()

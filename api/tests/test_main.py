@@ -52,6 +52,7 @@ def test_root_dashboard_shows_container_stem_download_command(client):
 
     assert response.status_code == 200
     assert 'docker compose exec shank python3 scripts/download_stem_models.py' in response.text
+    assert 'docker logs shank' in response.text
 
 
 def test_root_keeps_json_for_non_html_accept_headers(client):
@@ -770,7 +771,7 @@ def test_mt3_status_reports_disabled_when_mt3_off(client, monkeypatch):
     data = response.json()
     assert data['available'] is False
     assert data['state'] == 'unavailable'
-    assert data['reason'] == 'mt3_disabled'
+    assert data['reason'] == 'transcription_disabled'
     assert 'disabled' in data['reason_detail']
 
 
@@ -863,6 +864,22 @@ def test_models_download_endpoint_forwards_six_stems(client, monkeypatch):
 def test_models_download_endpoint_rejects_custom_model_dir(client):
     response = client.post('/api/models/download?model_dir=models/separator')
     assert response.status_code == 400
+
+
+def test_models_download_returns_500_when_script_missing(client, monkeypatch):
+    original_is_file = main_module.Path.is_file
+
+    def _missing_script(self: main_module.Path) -> bool:
+        if 'download_stem_models' in str(self):
+            return False
+        return original_is_file(self)
+
+    monkeypatch.setattr(main_module.Path, 'is_file', _missing_script)
+    response = client.post('/api/models/download')
+    assert response.status_code == 500
+    assert 'missing' in response.json()['detail'].lower()
+    # State must not have been mutated — no download was started.
+    assert not main_module._MODEL_DOWNLOAD_STATE.get('is_downloading')
 
 
 def test_models_cancel_returns_no_active_download(client):
@@ -1060,25 +1077,6 @@ def test_get_task_beatgrid_returns_404_for_unknown_task(client):
 
 
 # ---------------------------------------------------------------------------
-# GET /transcription/status
-# ---------------------------------------------------------------------------
-
-def test_transcription_status_reports_mt3_availability(client, monkeypatch):
-    monkeypatch.setenv('MT3_ENABLED', 'true')
-    monkeypatch.setenv('TRANSCRIPTION_BACKEND', 'mt3')
-    monkeypatch.setenv('MT3_SERVICE_URL', 'http://mt3:8090')
-    importlib.reload(main_module)
-
-    response = client.get('/transcription/status')
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload['backend'] == 'mt3'
-    assert payload['mt3_enabled'] is True
-    assert payload['service_configured'] is True
-    assert payload['available'] is True
-
-
-# ---------------------------------------------------------------------------
 # GET /worker/status
 # ---------------------------------------------------------------------------
 
@@ -1178,3 +1176,117 @@ def test_doctor_status_reports_missing_binaries(monkeypatch):
     assert data['ffmpeg']['path'] is None
     assert data['yt_dlp']['available'] is False
     assert data['yt_dlp']['path'] is None
+
+# POST /tasks/{task_id}/reprocess
+# ---------------------------------------------------------------------------
+
+def test_reprocess_url_task_creates_new_pending_task(client, tmp_path):
+    """Reprocessing a URL task creates a new pending task with source_task_id."""
+    original_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{original_id}.json').write_text(json.dumps({
+        'task_id': original_id,
+        'type': 'url',
+        'source': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+        'status': 'done',
+    }))
+
+    response = client.post(f'/tasks/{original_id}/reprocess', json={'mode': 'all'})
+    assert response.status_code == 202
+    data = response.json()
+    assert data['source_task_id'] == original_id
+    assert data['status'] == 'pending'
+    new_id = data['task_id']
+
+    # Verify the new task file was created correctly.
+    new_task = json.loads((tasks_dir / f'{new_id}.json').read_text())
+    assert new_task['task_id'] == new_id
+    assert new_task['source_task_id'] == original_id
+    assert new_task['type'] == 'url'
+    assert new_task['source'] == 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+    assert new_task['status'] == 'pending'
+    assert new_task['reprocess_mode'] == 'all'
+
+
+def test_reprocess_upload_task_carries_file_path(client, tmp_path):
+    """Reprocessing an upload task should carry the existing file_path forward."""
+    original_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    file_path = str(tmp_path / 'uploads' / f'{original_id}.mp3')
+    (tasks_dir / f'{original_id}.json').write_text(json.dumps({
+        'task_id': original_id,
+        'type': 'upload',
+        'source': 'song.mp3',
+        'file_path': file_path,
+        'status': 'done',
+    }))
+
+    response = client.post(f'/tasks/{original_id}/reprocess', json={'mode': 'audio_analysis'})
+    assert response.status_code == 202
+    new_id = response.json()['task_id']
+    new_task = json.loads((tasks_dir / f'{new_id}.json').read_text())
+    assert new_task['file_path'] == file_path
+    assert new_task['reprocess_mode'] == 'audio_analysis'
+
+
+def test_reprocess_not_found_returns_404(client):
+    """Reprocessing a non-existent task should return 404."""
+    missing = str(uuid.uuid4())
+    response = client.post(f'/tasks/{missing}/reprocess', json={})
+    assert response.status_code == 404
+
+
+def test_reprocess_invalid_mode_returns_400(client, tmp_path):
+    """An unrecognised reprocess mode should return 400."""
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'type': 'url',
+        'source': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+        'status': 'done',
+    }))
+
+    response = client.post(f'/tasks/{task_id}/reprocess', json={'mode': 'nonexistent_mode'})
+    assert response.status_code == 400
+
+
+def test_reprocess_with_enable_mt3_override(client, tmp_path):
+    """Providing enable_mt3 in the reprocess request should override the original."""
+    original_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{original_id}.json').write_text(json.dumps({
+        'task_id': original_id,
+        'type': 'url',
+        'source': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+        'status': 'done',
+        'enable_mt3': False,
+    }))
+
+    response = client.post(f'/tasks/{original_id}/reprocess', json={'mode': 'all', 'enable_mt3': True})
+    assert response.status_code == 202
+    new_id = response.json()['task_id']
+    new_task = json.loads((tasks_dir / f'{new_id}.json').read_text())
+    assert new_task['enable_mt3'] is True
+
+
+def test_reprocess_all_valid_modes(client, tmp_path):
+    """All documented reprocess modes should be accepted."""
+    valid_modes = ['all', 'audio_analysis', 'stems', 'midi', 'metadata', 'ai_prompts']
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+
+    for mode in valid_modes:
+        task_id = str(uuid.uuid4())
+        (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+            'task_id': task_id,
+            'type': 'url',
+            'source': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+            'status': 'done',
+        }))
+        response = client.post(f'/tasks/{task_id}/reprocess', json={'mode': mode})
+        assert response.status_code == 202, f"Expected 202 for mode={mode!r}"

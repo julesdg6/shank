@@ -487,7 +487,7 @@
         <div class="alert" id="upload-alert"></div>
         <div style="margin-top:0.75rem">
           <label style="display:flex;align-items:center;gap:0.45rem;font-size:0.9rem;color:var(--text)">
-            <span>🎵 Use Analysis Options below to configure MT3.</span>
+            <span>🎵 Use Analysis Options below to configure MIDI transcription.</span>
           </label>
         </div>
         <button class="btn btn-primary" id="upload-btn" style="margin-top:1rem;width:100%" disabled>
@@ -516,13 +516,13 @@
       <div class="card">
         <h2><span class="icon">🎛️</span> Analysis Options</h2>
         <div class="input-group">
-          <label for="mt3-toggle" style="font-size:0.84rem;color:var(--text-muted)">MT3 Transcription</label>
+          <label for="mt3-toggle" style="font-size:0.84rem;color:var(--text-muted)">MIDI Transcription</label>
           <select id="mt3-toggle" class="select-control">
             <option value="auto">🎚️ Auto (default)</option>
-            <option value="true">🎤 Enable MT3</option>
-            <option value="false">🚫 Disable MT3</option>
+            <option value="true">🎤 Enable</option>
+            <option value="false">🚫 Disable</option>
           </select>
-          <div class="settings-note" id="mt3-status-note">Checking MT3 availability…</div>
+          <div class="settings-note" id="mt3-status-note">Checking transcription availability…</div>
         </div>
       </div>
 
@@ -607,7 +607,7 @@
             <small>Or use external terminal:</small>
             <div style="display:flex;flex-direction:column;gap:0.2rem">
               <code>docker compose exec shank python3 scripts/download_stem_models.py</code>
-              <code>docker logs &lt;CONTAINER_ID&gt;</code>
+              <code>docker logs shank</code>
             </div>
           </div>
         </div>
@@ -633,6 +633,21 @@
       </div>
     </div>
     <div class="alert" id="detail-alert"></div>
+    <!-- YouTube source panel — shown only for YouTube-origin tasks -->
+    <div id="youtube-panel" class="panel" style="display:none;margin-bottom:1rem">
+      <h4 style="margin-bottom:0.5rem">🎬 Source</h4>
+      <div id="youtube-meta" style="margin-bottom:0.75rem;font-size:0.9rem"></div>
+      <div id="youtube-embed-wrap" style="position:relative;padding-bottom:56.25%;height:0;overflow:hidden;border-radius:8px;background:#000">
+        <iframe id="youtube-iframe"
+          style="position:absolute;top:0;left:0;width:100%;height:100%;border:0"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowfullscreen
+          title="YouTube video player"></iframe>
+      </div>
+      <div style="margin-top:0.6rem">
+        <a id="youtube-link" class="btn btn-ghost btn-sm" href="#" target="_blank" rel="noopener noreferrer">Open on YouTube ↗</a>
+      </div>
+    </div>
     <ul class="detail-list" id="detail-list"></ul>
     <div id="stem-workbench" style="display:none">
       <div class="panel" style="margin-bottom:1rem">
@@ -695,8 +710,37 @@
     </div>
     <h3 style="font-size:0.95rem;margin-bottom:0.5rem">Full Task JSON</h3>
     <pre id="detail-pre"></pre>
+    <!-- Reprocess button -->
+    <div style="margin-top:1.5rem;display:flex;justify-content:flex-end">
+      <button class="btn btn-primary" id="reprocess-btn">🔄 Reprocess</button>
+    </div>
   </div>
 </main>
+
+<!-- ── Reprocess Modal ── -->
+<div id="reprocess-modal" style="display:none;position:fixed;inset:0;z-index:200;background:rgba(0,0,0,0.55);align-items:center;justify-content:center">
+  <div class="modal-box" style="max-width:420px;width:100%">
+    <button class="modal-close" id="reprocess-modal-close">✕</button>
+    <h3>Reprocess Song</h3>
+    <p style="font-size:0.88rem;color:var(--text-muted);margin-bottom:1rem">
+      A new analysis task will be created using the same source. The existing report is preserved.
+    </p>
+    <label style="display:block;margin-bottom:0.4rem;font-size:0.88rem;font-weight:600">What to reprocess</label>
+    <select id="reprocess-mode" style="width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:0.4rem;margin-bottom:1rem">
+      <option value="all">Everything</option>
+      <option value="audio_analysis">Audio analysis only</option>
+      <option value="stems">Stems only</option>
+      <option value="midi">MIDI transcription only</option>
+      <option value="metadata">Metadata / lyrics / credits only</option>
+      <option value="ai_prompts">AI prompts only</option>
+    </select>
+    <div id="reprocess-alert" class="alert" style="margin-bottom:0.75rem"></div>
+    <div style="display:flex;gap:0.5rem;justify-content:flex-end">
+      <button class="btn btn-ghost btn-sm" id="reprocess-cancel">Cancel</button>
+      <button class="btn btn-primary btn-sm" id="reprocess-confirm">Start Reprocess</button>
+    </div>
+  </div>
+</div>
 
 <!-- ── Result Modal ── -->
 <div id="result-modal">
@@ -1177,6 +1221,9 @@
       .filter((value) => Number.isFinite(value) && value >= 0)
       .sort((a, b) => a - b);
 
+    const sections = Array.isArray(analysis?.sections) ? analysis.sections : [];
+    const cuePoints = Array.isArray(analysis?.cue_points) ? analysis.cue_points : [];
+
     const pps = stemPlayer.timelinePixelsPerSecond;
     const currentTime = getTransportTime();
     const cx = W / 2;
@@ -1196,6 +1243,59 @@
     ctx.moveTo(0, RULER_H);
     ctx.lineTo(W, RULER_H);
     ctx.stroke();
+
+    // ── Section markers (background tints) ──────────────────────────────────
+    if (sections.length > 0) {
+      const SECTION_PALETTE = [
+        { fill: 'rgba(251,191,36,0.10)',  border: 'rgba(251,191,36,0.5)',  label: 'rgba(251,191,36,0.8)'  },
+        { fill: 'rgba(52,211,153,0.10)',  border: 'rgba(52,211,153,0.5)',  label: 'rgba(52,211,153,0.8)'  },
+        { fill: 'rgba(248,113,113,0.10)', border: 'rgba(248,113,113,0.5)', label: 'rgba(248,113,113,0.8)' },
+        { fill: 'rgba(96,165,250,0.10)',  border: 'rgba(96,165,250,0.5)',  label: 'rgba(96,165,250,0.8)'  },
+        { fill: 'rgba(167,139,250,0.10)', border: 'rgba(167,139,250,0.5)', label: 'rgba(167,139,250,0.8)' },
+        { fill: 'rgba(251,146,60,0.10)',  border: 'rgba(251,146,60,0.5)',  label: 'rgba(251,146,60,0.8)'  },
+      ];
+      const SECTION_LABEL_PAD = 3;
+      const MIN_SECTION_LABEL_W = 30;
+      sections.forEach((section, idx) => {
+        const tStart = toFiniteNumber(section.start_seconds, NaN);
+        const tEnd = toFiniteNumber(section.end_seconds, NaN);
+        if (!Number.isFinite(tStart) || !Number.isFinite(tEnd) || tEnd <= tStart) return;
+        const xStart = cx + (tStart - currentTime) * pps;
+        const xEnd = cx + (tEnd - currentTime) * pps;
+        if (xEnd < 0 || xStart > W) return;
+        const xClipped = Math.max(0, xStart);
+        const xClippedEnd = Math.min(W, xEnd);
+        const wClipped = xClippedEnd - xClipped;
+        if (wClipped <= 0) return;
+        const palette = SECTION_PALETTE[idx % SECTION_PALETTE.length];
+        // Background tint over the full waveform area
+        ctx.fillStyle = palette.fill;
+        ctx.fillRect(xClipped, RULER_H, wClipped, WAVE_H);
+        // Left edge border line at section start
+        if (xStart >= -MARKER_VIEW_PADDING && xStart <= W + MARKER_VIEW_PADDING) {
+          ctx.strokeStyle = palette.border;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(xStart, RULER_H);
+          ctx.lineTo(xStart, RULER_H + WAVE_H);
+          ctx.stroke();
+        }
+        // Section label at top-left of the region
+        const rawW = xEnd - xStart;
+        if (rawW > MIN_SECTION_LABEL_W) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(xClipped, RULER_H, wClipped, WAVE_H);
+          ctx.clip();
+          ctx.fillStyle = palette.label;
+          ctx.font = 'bold 9px monospace';
+          ctx.textBaseline = 'top';
+          ctx.fillText(section.label || `sec ${idx + 1}`, Math.max(xClipped + SECTION_LABEL_PAD, xStart + SECTION_LABEL_PAD), RULER_H + SECTION_LABEL_PAD);
+          ctx.restore();
+          ctx.textBaseline = 'alphabetic';
+        }
+      });
+    }
 
     // ── Beat and bar markers ─────────────────────────────────────────────────
     if (beatTimes.length > 0 && duration > 0) {
@@ -1383,6 +1483,55 @@
         }
       });
       ctx.textBaseline = 'alphabetic';
+    }
+
+    // ── Cue point markers ────────────────────────────────────────────────────
+    if (cuePoints.length > 0) {
+      const CUE_PALETTE = ['#fbbf24', '#f87171', '#34d399', '#60a5fa', '#a78bfa', '#fb923c'];
+      const CUE_DIAMOND_OFFSET = 4; // px above ruler bottom
+      const CUE_DIAMOND_SIZE = 5;   // half-width/height of diamond
+      const CUE_LABEL_OFFSET = 12;  // px above ruler bottom for label baseline
+      cuePoints.forEach((cue, idx) => {
+        const t = toFiniteNumber(cue.time_seconds, NaN);
+        if (!Number.isFinite(t) || t < 0) return;
+        const x = cx + (t - currentTime) * pps;
+        if (x < -MARKER_VIEW_PADDING || x > W + MARKER_VIEW_PADDING) return;
+        const color = CUE_PALETTE[idx % CUE_PALETTE.length];
+        // Dashed vertical line through waveform area
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = 0.55;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(x, RULER_H);
+        ctx.lineTo(x, RULER_H + WAVE_H);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+        ctx.restore();
+        // Diamond marker at ruler bottom edge
+        ctx.fillStyle = color;
+        const dy = RULER_H - CUE_DIAMOND_OFFSET;
+        ctx.beginPath();
+        ctx.moveTo(x, dy + CUE_DIAMOND_SIZE);
+        ctx.lineTo(x + CUE_DIAMOND_SIZE, dy);
+        ctx.lineTo(x, dy - CUE_DIAMOND_SIZE);
+        ctx.lineTo(x - CUE_DIAMOND_SIZE, dy);
+        ctx.closePath();
+        ctx.fill();
+        // Cue name label in the ruler area above the diamond
+        if (cue.name) {
+          ctx.fillStyle = color;
+          ctx.font = 'bold 9px monospace';
+          ctx.textBaseline = 'bottom';
+          const label = String(cue.name);
+          const lw = ctx.measureText(label).width;
+          const lx = Math.min(W - lw - 2, Math.max(2, x - lw / 2));
+          ctx.fillText(label, lx, RULER_H - CUE_LABEL_OFFSET);
+          ctx.textBaseline = 'alphabetic';
+        }
+      });
     }
 
     // ── Fixed playhead ────────────────────────────────────────────────────────
@@ -1794,17 +1943,36 @@
           })
           .filter(Boolean)
           .join('; ') || '—';
+        
+        // Determine if we should use MT3-specific labels or generic labels
+        const backend = mt3.backend || 'unknown';
+        const isMt3Backend = backend.toLowerCase() === 'mt3';
+        
+        // Map backend names to user-friendly display names
+        const backendDisplayMap = {
+          'basic_pitch': 'Basic Pitch',
+          'mt3': 'MT3',
+          'omnizart': 'Omnizart',
+          'disabled': 'disabled',
+          'unknown': 'unknown'
+        };
+        const backendDisplay = backendDisplayMap[backend] || backend;
+        
+        const statusLabel = isMt3Backend ? 'MT3 Status' : 'MIDI Transcription Status';
+        const modelLabel = isMt3Backend ? 'MT3 Model' : 'MIDI Transcription Model';
+        const backendLabel = isMt3Backend ? '' : ` (${escapeHtml(backendDisplay)})`;
+        
         list.innerHTML += [
-          item('MT3 Status', escapeHtml(mt3.status || '—')),
-          item('MT3 Model', escapeHtml(mt3.model || '—')),
-          item('MT3 Full Mix MIDI', mt3.full_mix && mt3.full_mix.midi_path ? mt3MidiLink('full_mix', 'download') : '—'),
-          item('MT3 Full Mix Notes', mt3.full_mix && mt3.full_mix.notes_path ? mt3NotesLink('full_mix', 'view') : '—'),
-          item('MT3 Full Mix Stats', mt3TrackStats(mt3.full_mix)),
-          item('MT3 Stem MIDIs', stemMidiLinks),
-          item('MT3 Stem Notes', stemNotesLinks),
-          item('MT3 Stem Stats', stemNoteStats),
-          item('MT3 Warnings', Array.isArray(mt3.warnings) && mt3.warnings.length ? escapeHtml(mt3.warnings.join('; ')) : '—'),
-          item('MT3 Errors', Array.isArray(mt3.errors) && mt3.errors.length ? escapeHtml(mt3.errors.join('; ')) : '—'),
+          item(statusLabel, escapeHtml(mt3.status || '—') + backendLabel),
+          item(modelLabel, escapeHtml(mt3.model || '—')),
+          item('Full Mix MIDI', mt3.full_mix && mt3.full_mix.midi_path ? mt3MidiLink('full_mix', 'download') : '—'),
+          item('Full Mix Notes', mt3.full_mix && mt3.full_mix.notes_path ? mt3NotesLink('full_mix', 'view') : '—'),
+          item('Full Mix Stats', mt3TrackStats(mt3.full_mix)),
+          item('Stem MIDIs', stemMidiLinks),
+          item('Stem Notes', stemNotesLinks),
+          item('Stem Stats', stemNoteStats),
+          item('Warnings', Array.isArray(mt3.warnings) && mt3.warnings.length ? escapeHtml(mt3.warnings.join('; ')) : '—'),
+          item('Errors', Array.isArray(mt3.errors) && mt3.errors.length ? escapeHtml(mt3.errors.join('; ')) : '—'),
         ].join('');
       }
       pre.textContent = JSON.stringify(data, null, 2);
@@ -1812,10 +1980,103 @@
       renderArtifactDownloads(data);
       renderBeatGraphPreviews(data);
       await drawMidiPianoRoll(data);
+      renderYouTubePanel(data);
     } catch (_) {
       showAlert(alert, '❌ Failed to load task details.', 'error');
     }
   }
+
+  // ── YouTube source panel ─────────────────────────────────────────────────
+  function extractYouTubeVideoId(url) {
+    if (!url || typeof url !== 'string') return null;
+    const m = url.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/)|youtu\.be\/|music\.youtube\.com\/watch\?v=)([A-Za-z0-9_-]{11})/);
+    return m ? m[1] : null;
+  }
+
+  function renderYouTubePanel(data) {
+    const panel = document.getElementById('youtube-panel');
+    const metaDiv = document.getElementById('youtube-meta');
+    const iframe = document.getElementById('youtube-iframe');
+    const link = document.getElementById('youtube-link');
+    if (!panel || !metaDiv || !iframe || !link) return;
+
+    // Determine video ID: prefer stored metadata, fall back to parsing source URL.
+    const yt = data.youtube && typeof data.youtube === 'object' ? data.youtube : null;
+    const videoId = (yt && yt.video_id) || extractYouTubeVideoId(data.source || '');
+
+    if (!videoId) {
+      panel.style.display = 'none';
+      iframe.src = '';
+      return;
+    }
+
+    panel.style.display = '';
+
+    // Safely build embed URL from video ID only (never raw user input).
+    const safeId = encodeURIComponent(videoId);
+    iframe.src = `https://www.youtube.com/embed/${safeId}`;
+
+    const sourceUrl = (yt && yt.webpage_url) || data.source || `https://www.youtube.com/watch?v=${safeId}`;
+    link.href = sourceUrl;
+
+    const parts = [];
+    if (yt && yt.title) parts.push(`<strong>${escapeHtml(yt.title)}</strong>`);
+    if (yt && yt.channel) parts.push(`<span style="color:var(--text-muted)">${escapeHtml(yt.channel)}</span>`);
+    metaDiv.innerHTML = parts.join('<br>') || `<span style="color:var(--text-muted)">${escapeHtml(sourceUrl)}</span>`;
+  }
+
+  // ── Reprocess button & modal ─────────────────────────────────────────────
+  (function () {
+    const modal = document.getElementById('reprocess-modal');
+    const openBtn = document.getElementById('reprocess-btn');
+    const closeBtn = document.getElementById('reprocess-modal-close');
+    const cancelBtn = document.getElementById('reprocess-cancel');
+    const confirmBtn = document.getElementById('reprocess-confirm');
+    const modeSelect = document.getElementById('reprocess-mode');
+    const reprocessAlert = document.getElementById('reprocess-alert');
+
+    if (!modal || !openBtn) return;
+
+    function openModal() {
+      if (reprocessAlert) reprocessAlert.innerHTML = '';
+      modal.style.display = 'flex';
+    }
+    function closeModal() {
+      modal.style.display = 'none';
+    }
+
+    openBtn.addEventListener('click', openModal);
+    closeBtn.addEventListener('click', closeModal);
+    cancelBtn.addEventListener('click', closeModal);
+    modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
+
+    confirmBtn.addEventListener('click', async () => {
+      const taskId = new URLSearchParams(window.location.search).get('task_id');
+      if (!taskId) return;
+      const mode = modeSelect ? modeSelect.value : 'all';
+      confirmBtn.disabled = true;
+      if (reprocessAlert) reprocessAlert.innerHTML = '';
+      try {
+        const res = await fetch(`${API}/tasks/${encodeURIComponent(taskId)}/reprocess`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode, preserve_existing: true }),
+        });
+        const result = await res.json();
+        if (!res.ok) {
+          const msg = result?.detail || 'Failed to create reprocess task';
+          if (reprocessAlert) reprocessAlert.innerHTML = `<div class="alert alert-error">❌ ${escapeHtml(String(msg))}</div>`;
+          confirmBtn.disabled = false;
+          return;
+        }
+        closeModal();
+        window.location.href = `/ui/?task_id=${encodeURIComponent(result.task_id)}`;
+      } catch (err) {
+        if (reprocessAlert) reprocessAlert.innerHTML = `<div class="alert alert-error">❌ ${escapeHtml(String(err))}</div>`;
+        confirmBtn.disabled = false;
+      }
+    });
+  }());
 
   // ── File Upload ──────────────────────────────────────────────────────────
   const dropzone  = document.getElementById('dropzone');
@@ -1840,18 +2101,21 @@
     if (!mt3Toggle || !mt3StatusNote) return;
     try {
       const res = await fetch(`${API}/mt3/status`, { cache: 'no-store' });
-      if (!res.ok) throw new Error('Unable to fetch MT3 status');
+      if (!res.ok) throw new Error('Unable to fetch transcription status');
       const data = await res.json();
       mt3Available = Boolean(data?.available);
       mt3Toggle.disabled = !mt3Available;
       if (!mt3Available) mt3Toggle.value = 'auto';
+      
+      // Use backend_display for user-friendly backend name
+      const backendDisplay = data?.backend_display || data?.backend || 'unknown';
       mt3StatusNote.textContent = data?.reason_detail
-        || `MT3 is ${mt3Available ? 'available' : 'unavailable'} (${data?.backend || 'mt3'}).`;
+        || `MIDI transcription is ${mt3Available ? 'available' : 'unavailable'} (${backendDisplay}).`;
     } catch (_) {
       mt3Available = false;
       mt3Toggle.disabled = true;
       mt3Toggle.value = 'auto';
-      mt3StatusNote.textContent = 'Could not verify MT3 status.';
+      mt3StatusNote.textContent = 'Could not verify MIDI transcription status.';
     }
   }
 
@@ -2123,30 +2387,6 @@
   }
   checkStemBackendStatus();
   setInterval(checkStemBackendStatus, 60000);
-
-  // ── MT3 Availability ───────────────────────────────────────────────────────
-  async function checkTranscriptionStatus() {
-    if (!uploadMt3Toggle || !uploadMt3Help) return;
-    try {
-      const res = await fetch(`${API}/transcription/status`, { cache: 'no-store' });
-      if (!res.ok) throw new Error('status unavailable');
-      const data = await res.json();
-      if (data.available) {
-        uploadMt3Toggle.disabled = false;
-        uploadMt3Help.textContent = `MT3 ready (${data.backend || 'unknown'} backend)`;
-      } else {
-        uploadMt3Toggle.checked = false;
-        uploadMt3Toggle.disabled = true;
-        uploadMt3Help.textContent = 'MT3 unavailable: enable MT3 service/configuration to use transcription.';
-      }
-    } catch (_) {
-      uploadMt3Toggle.checked = false;
-      uploadMt3Toggle.disabled = true;
-      uploadMt3Help.textContent = 'MT3 status unavailable.';
-    }
-  }
-  checkTranscriptionStatus();
-  setInterval(checkTranscriptionStatus, 60000);
 
   // ── Worker Status ─────────────────────────────────────────────────────────
   async function checkWorkerStatus() {

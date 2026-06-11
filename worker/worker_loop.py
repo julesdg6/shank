@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 
 from analyze import analyze_audio
-from downloader import download_youtube
+from downloader import download_youtube, extract_youtube_metadata
 from mt3_client import transcribe_with_service
 from stems import (
     _is_audio_separator_available,
@@ -536,7 +536,15 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
 
             try:
                 downloaded_path = download_youtube(url, UPLOADS_DIR, task_id)
-                _update_task(task_file, {'file_path': str(downloaded_path)})
+                task_updates: dict[str, Any] = {'file_path': str(downloaded_path)}
+                # Capture YouTube metadata and store it alongside the task.
+                try:
+                    yt_meta = extract_youtube_metadata(url)
+                    task_updates['youtube'] = yt_meta
+                    task_updates['source_type'] = 'youtube'
+                except Exception as meta_exc:
+                    log.warning('Task %s: could not fetch YouTube metadata: %s', task_id, meta_exc)
+                _update_task(task_file, task_updates)
                 _record_task_progress(task_file, 25, 'Download complete')
                 log.info('Task %s downloaded → %s', task_id, downloaded_path)
             except Exception as exc:
