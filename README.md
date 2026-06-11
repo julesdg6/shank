@@ -143,11 +143,17 @@ Requires `audio-separator` to be installed (`pip install audio-separator[cpu]`).
 ### 3. Start the service
 ```bash
 docker compose up --build -d
+# For older standalone Compose (for example docker-compose 1.29.x):
+docker-compose up --build -d
 ```
 
 The API and Web UI are available at **http://localhost:8088**.
 
 > **Port note:** The container's internal API port is **8080**. Docker Compose maps it to host port **8088** (`"8088:8080"`). The Dockerfile and `docker-compose.yml` healthchecks both probe `http://127.0.0.1:8080` (the internal port). Always use port **8088** when accessing SHANK from your browser or host tools.
+>
+> **Applying `.env` changes:** if environment changes are not picked up, recreate the container:
+> `docker compose up -d --force-recreate`  
+> `docker-compose up -d --force-recreate`
 
 ### 4. Open the dashboard
 Navigate to **http://localhost:8088/** in your browser to upload audio files or submit YouTube URLs. The dashboard is also available at **http://localhost:8088/ui**.
@@ -155,6 +161,7 @@ Navigate to **http://localhost:8088/** in your browser to upload audio files or 
 ### 5. Stop the service
 ```bash
 docker compose down
+# or: docker-compose down
 ```
 
 ## 🖥️ Unraid 7+ setup
@@ -368,6 +375,8 @@ Environment variables (set in `.env` or `docker-compose.yml`):
 | `MT3_CACHE_DIR` | `/srv/shank/cache/mt3` | Mount path for MT3 runtime cache |
 | `MT3_OUTPUT_PATH` | `/srv/shank/data/mt3` | Persisted output directory for generated MT3 MIDI and note JSON files |
 | `MT3_DEVICE` | `auto` | MT3 device hint (`auto`, `cpu`, or `gpu`) |
+
+Use `ACE_STEP_API_URL` and `ACE_STEP_API_KEY` (with underscore). Legacy names such as `ACESTEP_BASE_URL` and `ACESTEP_ENABLED` are not used by the current `docker-compose.yml`.
 
 ## 🗺 Roadmap & Implementation Plan
 

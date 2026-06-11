@@ -680,9 +680,12 @@ def test_stem_backend_status_returns_expected_shape(client, monkeypatch):
     assert 'configured_backend' in data
     assert 'active_backend' in data
     assert 'acestep' in data
+    assert 'audio_separator' in data
     assert 'demucs' in data
     assert isinstance(data['acestep']['configured'], bool)
     assert isinstance(data['acestep']['healthy'], bool)
+    assert isinstance(data['audio_separator']['available'], bool)
+    assert isinstance(data['audio_separator']['model_ready'], bool)
     assert isinstance(data['demucs']['available'], bool)
 
 
@@ -696,7 +699,10 @@ def test_stem_backend_status_active_none_when_no_backend_configured(client, monk
     importlib.reload(main_module)
     from fastapi.testclient import TestClient
     from unittest.mock import patch
-    with patch.object(shutil, 'which', return_value=None):
+    with (
+        patch.object(shutil, 'which', return_value=None),
+        patch.object(main_module.importlib.util, 'find_spec', return_value=None),
+    ):
         c = TestClient(main_module.app)
         response = c.get('/stem-backend/status')
 
@@ -735,6 +741,30 @@ def test_stem_backend_status_prefers_healthy_ace_step(client, monkeypatch):
     assert request.get_header('Authorization') == 'Bearer secret-token'
 
 
+def test_stem_backend_status_audio_separator_active_when_available_and_ready(client, monkeypatch, tmp_path):
+    model_dir = tmp_path / 'models' / 'separator'
+    model_dir.mkdir(parents=True, exist_ok=True)
+    (model_dir / 'htdemucs_ft.yaml').write_text('version: 1\n')
+    (model_dir / 'htdemucs_ft.ckpt').write_bytes(b'\0' * (main_module._MODEL_WEIGHT_MIN_BYTES + 1))
+    monkeypatch.setenv('AUDIO_SEPARATOR_MODEL_DIR', str(model_dir))
+    monkeypatch.setenv('STEM_BACKEND', 'audio_separator')
+    monkeypatch.delenv('ACE_STEP_API_URL', raising=False)
+
+    import api.main as reloaded_main  # noqa: PLC0415
+    importlib.reload(reloaded_main)
+    with patch.object(reloaded_main.importlib.util, 'find_spec', return_value=object()):
+        c = TestClient(reloaded_main.app)
+        response = c.get('/stem-backend/status')
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data['active_backend'] == 'audio_separator'
+    assert data['audio_separator']['available'] is True
+    assert data['audio_separator']['model_exists'] is True
+    assert data['audio_separator']['model_ready'] is True
+    assert data['audio_separator']['config_only'] is False
+
+
 # ---------------------------------------------------------------------------
 # GET /mt3/status
 # ---------------------------------------------------------------------------
@@ -743,9 +773,9 @@ def test_mt3_status_reports_available(client, monkeypatch):
     monkeypatch.setenv('MT3_ENABLED', 'true')
     monkeypatch.setenv('MT3_SERVICE_URL', 'http://127.0.0.1:8090')
     monkeypatch.setenv('TRANSCRIPTION_BACKEND', 'mt3')
-    import api.main as main_module  # noqa: PLC0415
-    importlib.reload(main_module)
-    c = TestClient(main_module.app)
+    import api.main as reloaded_main  # noqa: PLC0415
+    importlib.reload(reloaded_main)
+    c = TestClient(reloaded_main.app)
 
     response = c.get('/mt3/status')
     assert response.status_code == 200
@@ -762,9 +792,9 @@ def test_mt3_status_reports_disabled_when_mt3_off(client, monkeypatch):
     monkeypatch.setenv('MT3_ENABLED', 'false')
     monkeypatch.setenv('MT3_SERVICE_URL', 'http://127.0.0.1:8090')
     monkeypatch.setenv('TRANSCRIPTION_BACKEND', 'mt3')
-    import api.main as main_module  # noqa: PLC0415
-    importlib.reload(main_module)
-    c = TestClient(main_module.app)
+    import api.main as reloaded_main  # noqa: PLC0415
+    importlib.reload(reloaded_main)
+    c = TestClient(reloaded_main.app)
 
     response = c.get('/mt3/status')
     assert response.status_code == 200
@@ -831,11 +861,12 @@ def test_models_status_reports_missing_by_default(client, monkeypatch, tmp_path)
 def test_models_status_reports_ready_when_model_exists(client, monkeypatch, tmp_path):
     model_dir = tmp_path / 'models' / 'separator'
     model_dir.mkdir(parents=True, exist_ok=True)
-    (model_dir / 'htdemucs_ft.yaml').write_text('stub-model')
+    (model_dir / 'htdemucs_ft.yaml').write_text('version: 1\n')
+    (model_dir / 'htdemucs_ft.ckpt').write_bytes(b'\0' * (main_module._MODEL_WEIGHT_MIN_BYTES + 1))
     monkeypatch.setenv('AUDIO_SEPARATOR_MODEL_DIR', str(model_dir))
-    import api.main as main_module  # noqa: PLC0415
-    importlib.reload(main_module)
-    c = TestClient(main_module.app)
+    import api.main as reloaded_main  # noqa: PLC0415
+    importlib.reload(reloaded_main)
+    c = TestClient(reloaded_main.app)
 
     response = c.get('/api/models/status')
     assert response.status_code == 200
@@ -843,6 +874,27 @@ def test_models_status_reports_ready_when_model_exists(client, monkeypatch, tmp_
     assert data['models_ready'] is True
     assert data['progress_percent'] == 100
     assert data['models']['htdemucs_ft.yaml']['exists'] is True
+    assert data['models']['htdemucs_ft.yaml']['ready'] is True
+    assert data['models']['htdemucs_ft.yaml']['config_only'] is False
+
+
+def test_models_status_reports_config_only_when_yaml_exists_without_weights(client, monkeypatch, tmp_path):
+    model_dir = tmp_path / 'models' / 'separator'
+    model_dir.mkdir(parents=True, exist_ok=True)
+    # Keep this file exactly one byte below the config-only threshold.
+    (model_dir / 'htdemucs_ft.yaml').write_text('x' * (main_module._MODEL_CONFIG_MIN_BYTES - 1))
+    monkeypatch.setenv('AUDIO_SEPARATOR_MODEL_DIR', str(model_dir))
+    import api.main as reloaded_main  # noqa: PLC0415
+    importlib.reload(reloaded_main)
+    c = TestClient(reloaded_main.app)
+
+    response = c.get('/api/models/status')
+    assert response.status_code == 200
+    data = response.json()
+    assert data['models_ready'] is False
+    assert data['models']['htdemucs_ft.yaml']['exists'] is True
+    assert data['models']['htdemucs_ft.yaml']['ready'] is False
+    assert data['models']['htdemucs_ft.yaml']['config_only'] is True
 
 
 def test_models_download_endpoint_forwards_six_stems(client, monkeypatch):

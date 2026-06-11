@@ -2277,10 +2277,11 @@
   function renderModelFiles(data) {
     if (!modelsFilesList) return;
     const entries = Object.entries(data?.models || {});
-    const visibleEntries = entries.filter(([, details]) => details?.exists);
+    const visibleEntries = entries.filter(([, details]) => details?.exists || details?.config_only);
     modelsFilesList.innerHTML = visibleEntries.map(([name, details]) => {
       const mb = Number(details?.size_bytes || 0) / (1024 * 1024);
-      return `<li>${escapeHtml(name)} (${mb > 0 ? `${mb.toFixed(1)} MB` : 'size unknown'})</li>`;
+      const readiness = details?.ready ? 'ready' : (details?.config_only ? 'config only' : 'not ready');
+      return `<li>${escapeHtml(name)} (${mb > 0 ? `${mb.toFixed(1)} MB` : 'size unknown'} · ${escapeHtml(readiness)})</li>`;
     }).join('');
   }
 
@@ -2377,7 +2378,11 @@
         label.textContent = 'Stems: none';
       } else {
         dot.className = 'status-dot';
-        const backendNames = { acestep: 'Ace-Step', demucs: `Demucs (${data.demucs?.model || ''})` };
+        const backendNames = {
+          acestep: 'Ace-Step',
+          audio_separator: `audio-separator (${data.audio_separator?.model || ''})`,
+          demucs: `Demucs (${data.demucs?.model || ''})`,
+        };
         label.textContent = `Stems: ${backendNames[active] || active}`;
       }
     } catch (_) {
