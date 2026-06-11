@@ -771,7 +771,7 @@ def test_mt3_status_reports_disabled_when_mt3_off(client, monkeypatch):
     data = response.json()
     assert data['available'] is False
     assert data['state'] == 'unavailable'
-    assert data['reason'] == 'mt3_disabled'
+    assert data['reason'] == 'transcription_disabled'
     assert 'disabled' in data['reason_detail']
 
 

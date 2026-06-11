@@ -487,7 +487,7 @@
         <div class="alert" id="upload-alert"></div>
         <div style="margin-top:0.75rem">
           <label style="display:flex;align-items:center;gap:0.45rem;font-size:0.9rem;color:var(--text)">
-            <span>🎵 Use Analysis Options below to configure MT3.</span>
+            <span>🎵 Use Analysis Options below to configure MIDI transcription.</span>
           </label>
         </div>
         <button class="btn btn-primary" id="upload-btn" style="margin-top:1rem;width:100%" disabled>
@@ -516,13 +516,13 @@
       <div class="card">
         <h2><span class="icon">🎛️</span> Analysis Options</h2>
         <div class="input-group">
-          <label for="mt3-toggle" style="font-size:0.84rem;color:var(--text-muted)">MT3 Transcription</label>
+          <label for="mt3-toggle" style="font-size:0.84rem;color:var(--text-muted)">MIDI Transcription</label>
           <select id="mt3-toggle" class="select-control">
             <option value="auto">🎚️ Auto (default)</option>
-            <option value="true">🎤 Enable MT3</option>
-            <option value="false">🚫 Disable MT3</option>
+            <option value="true">🎤 Enable</option>
+            <option value="false">🚫 Disable</option>
           </select>
-          <div class="settings-note" id="mt3-status-note">Checking MT3 availability…</div>
+          <div class="settings-note" id="mt3-status-note">Checking transcription availability…</div>
         </div>
       </div>
 
@@ -1794,17 +1794,36 @@
           })
           .filter(Boolean)
           .join('; ') || '—';
+        
+        // Determine if we should use MT3-specific labels or generic labels
+        const backend = mt3.backend || 'unknown';
+        const isMt3Backend = backend.toLowerCase() === 'mt3';
+        
+        // Map backend names to user-friendly display names
+        const backendDisplayMap = {
+          'basic_pitch': 'Basic Pitch',
+          'mt3': 'MT3',
+          'omnizart': 'Omnizart',
+          'disabled': 'disabled',
+          'unknown': 'unknown'
+        };
+        const backendDisplay = backendDisplayMap[backend] || backend;
+        
+        const statusLabel = isMt3Backend ? 'MT3 Status' : 'MIDI Transcription Status';
+        const modelLabel = isMt3Backend ? 'MT3 Model' : 'MIDI Transcription Model';
+        const backendLabel = isMt3Backend ? '' : ` (${escapeHtml(backendDisplay)})`;
+        
         list.innerHTML += [
-          item('MT3 Status', escapeHtml(mt3.status || '—')),
-          item('MT3 Model', escapeHtml(mt3.model || '—')),
-          item('MT3 Full Mix MIDI', mt3.full_mix && mt3.full_mix.midi_path ? mt3MidiLink('full_mix', 'download') : '—'),
-          item('MT3 Full Mix Notes', mt3.full_mix && mt3.full_mix.notes_path ? mt3NotesLink('full_mix', 'view') : '—'),
-          item('MT3 Full Mix Stats', mt3TrackStats(mt3.full_mix)),
-          item('MT3 Stem MIDIs', stemMidiLinks),
-          item('MT3 Stem Notes', stemNotesLinks),
-          item('MT3 Stem Stats', stemNoteStats),
-          item('MT3 Warnings', Array.isArray(mt3.warnings) && mt3.warnings.length ? escapeHtml(mt3.warnings.join('; ')) : '—'),
-          item('MT3 Errors', Array.isArray(mt3.errors) && mt3.errors.length ? escapeHtml(mt3.errors.join('; ')) : '—'),
+          item(statusLabel, escapeHtml(mt3.status || '—') + backendLabel),
+          item(modelLabel, escapeHtml(mt3.model || '—')),
+          item('Full Mix MIDI', mt3.full_mix && mt3.full_mix.midi_path ? mt3MidiLink('full_mix', 'download') : '—'),
+          item('Full Mix Notes', mt3.full_mix && mt3.full_mix.notes_path ? mt3NotesLink('full_mix', 'view') : '—'),
+          item('Full Mix Stats', mt3TrackStats(mt3.full_mix)),
+          item('Stem MIDIs', stemMidiLinks),
+          item('Stem Notes', stemNotesLinks),
+          item('Stem Stats', stemNoteStats),
+          item('Warnings', Array.isArray(mt3.warnings) && mt3.warnings.length ? escapeHtml(mt3.warnings.join('; ')) : '—'),
+          item('Errors', Array.isArray(mt3.errors) && mt3.errors.length ? escapeHtml(mt3.errors.join('; ')) : '—'),
         ].join('');
       }
       pre.textContent = JSON.stringify(data, null, 2);
@@ -1840,18 +1859,21 @@
     if (!mt3Toggle || !mt3StatusNote) return;
     try {
       const res = await fetch(`${API}/mt3/status`, { cache: 'no-store' });
-      if (!res.ok) throw new Error('Unable to fetch MT3 status');
+      if (!res.ok) throw new Error('Unable to fetch transcription status');
       const data = await res.json();
       mt3Available = Boolean(data?.available);
       mt3Toggle.disabled = !mt3Available;
       if (!mt3Available) mt3Toggle.value = 'auto';
+      
+      // Use backend_display for user-friendly backend name
+      const backendDisplay = data?.backend_display || data?.backend || 'unknown';
       mt3StatusNote.textContent = data?.reason_detail
-        || `MT3 is ${mt3Available ? 'available' : 'unavailable'} (${data?.backend || 'mt3'}).`;
+        || `MIDI transcription is ${mt3Available ? 'available' : 'unavailable'} (${backendDisplay}).`;
     } catch (_) {
       mt3Available = false;
       mt3Toggle.disabled = true;
       mt3Toggle.value = 'auto';
-      mt3StatusNote.textContent = 'Could not verify MT3 status.';
+      mt3StatusNote.textContent = 'Could not verify MIDI transcription status.';
     }
   }
 
