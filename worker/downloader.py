@@ -49,10 +49,13 @@ def _rewrite_blocked_youtube_error(exc: yt_dlp.utils.DownloadError) -> yt_dlp.ut
     """Return a clearer error when YouTube blocks unauthenticated yt-dlp requests."""
     message = str(exc)
     lowered = message.lower()
-    if (
-        "sign in to confirm you're not a bot" not in lowered
-        and '--cookies-from-browser or --cookies for the authentication' not in lowered
-    ):
+    bot_check_markers = (
+        "not a bot",
+        'cookies-from-browser',
+        '--cookies',
+        'for the authentication',
+    )
+    if not any(marker in lowered for marker in bot_check_markers):
         return exc
 
     return yt_dlp.utils.DownloadError(
