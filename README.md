@@ -420,9 +420,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-11T15:46:53Z
-- Latest commit: `ff86855`
-- Commit message: Merge pull request #168 from julesdg6/copilot/feature-drag-and-drop-loops  Add bar-snapped loop exports + DAW drag/drop clip delivery from song detail
+- Last automated update: 2026-06-12T09:38:42Z
+- Latest commit: `b3b4ed3`
+- Commit message: Merge pull request #170 from julesdg6/copilot/fix-audio-separator-stem-separation  Fix audio-separator 0.44.2 stem backend initialization (remove deprecated `use_cpu`)
 <!-- readme-update:end -->
 
 ## 🥁 Beat Detection & Beat Grid
