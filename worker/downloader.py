@@ -33,7 +33,7 @@ def _resolve_cookies_file() -> Path | None:
     if cookies_file.is_file():
         return cookies_file
 
-    log.warning('Configured %s does not exist or is not a regular file: %s', _YTDLP_COOKIES_FILE_ENV, configured_path)
+    log.warning('Configured YTDLP_COOKIES_FILE does not exist or is not a regular file: %s', configured_path)
     return None
 
 
@@ -49,6 +49,8 @@ def _rewrite_blocked_youtube_error(exc: yt_dlp.utils.DownloadError) -> yt_dlp.ut
     """Return a clearer error when YouTube blocks unauthenticated yt-dlp requests."""
     message = str(exc)
     lowered = message.lower()
+    # Markers based on observed yt-dlp YouTube bot-check/authentication failures.
+    # Keep this broad enough to remain useful if exact wording changes slightly.
     bot_check_markers = (
         "not a bot",
         'cookies-from-browser',
@@ -61,7 +63,8 @@ def _rewrite_blocked_youtube_error(exc: yt_dlp.utils.DownloadError) -> yt_dlp.ut
     return yt_dlp.utils.DownloadError(
         'YouTube blocked this request. Add a valid cookies export for yt-dlp and set '
         f'{_YTDLP_COOKIES_FILE_ENV} (for Docker: mount ./config:/srv/shank/config and set '
-        'YTDLP_COOKIES_FILE=/srv/shank/config/youtube-cookies.txt).'
+        'YTDLP_COOKIES_FILE=/srv/shank/config/youtube-cookies.txt; for non-Docker installs '
+        'set YTDLP_COOKIES_FILE to the absolute path of your exported cookies file).'
     )
 
 
