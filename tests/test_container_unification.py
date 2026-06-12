@@ -18,6 +18,7 @@ def test_compose_uses_single_unified_service():
     assert '- "8088:8080"' in text
     assert '- DATA_DIR=/srv/shank/data' in text
     assert '- POLL_INTERVAL=10' in text
+    assert '- YTDLP_COOKIES_FILE=${YTDLP_COOKIES_FILE:-}' in text
     assert '- MT3_ENABLED=${MT3_ENABLED:-false}' in text
     assert expected_service_url in text
     assert expected_model in text
@@ -27,6 +28,7 @@ def test_compose_uses_single_unified_service():
     assert expected_cache_dir in text
     assert expected_output_path in text
     assert '- ./data:/srv/shank/data' in text
+    assert '- ./config:/srv/shank/config' in text
     assert '- ./cache/mt3:/srv/shank/cache/mt3' in text
     assert '- ./models/mt3/checkpoints:/srv/shank/models/mt3/checkpoints:ro' in text
     assert 'healthcheck:' in text
@@ -118,5 +120,6 @@ def test_env_example_documents_mt3_paths():
     assert f'MT3_CHECKPOINT_ROOT={mt3_config.DEFAULT_MT3_CHECKPOINT_ROOT}' in text
     assert f'MT3_CACHE_DIR={mt3_config.DEFAULT_MT3_CACHE_DIR}' in text
     assert f'MT3_OUTPUT_PATH={mt3_config.DEFAULT_MT3_OUTPUT_PATH}' in text
+    assert 'YTDLP_COOKIES_FILE=' in text
     assert '# Optional: Download stem separation models after container starts' in text
     assert '# python3 scripts/download_stem_models.py' in text

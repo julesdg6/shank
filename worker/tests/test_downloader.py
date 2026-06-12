@@ -77,6 +77,45 @@ def test_download_youtube_noplaylist_option(tmp_path):
     assert captured_opts[0].get('noplaylist') is True
 
 
+def test_download_youtube_uses_configured_cookies_file(tmp_path, monkeypatch):
+    """A valid YTDLP_COOKIES_FILE must be forwarded as cookiefile option."""
+    captured_opts: list[dict] = []
+    cookies_file = tmp_path / 'youtube-cookies.txt'
+    cookies_file.write_text('# Netscape HTTP Cookie File')
+    monkeypatch.setenv('YTDLP_COOKIES_FILE', str(cookies_file))
+
+    def fake_init(opts):
+        captured_opts.append(opts)
+        m = MagicMock()
+        m.__enter__ = MagicMock(return_value=MagicMock())
+        m.__exit__ = MagicMock(return_value=False)
+        return m
+
+    with patch('downloader.yt_dlp.YoutubeDL', side_effect=fake_init):
+        downloader.download_youtube(YOUTUBE_URL, tmp_path, TASK_ID)
+
+    assert captured_opts[0].get('cookiefile') == str(cookies_file)
+
+
+def test_download_youtube_ignores_missing_configured_cookies_file(tmp_path, monkeypatch):
+    """A missing YTDLP_COOKIES_FILE must not add cookiefile option."""
+    captured_opts: list[dict] = []
+    missing = tmp_path / 'missing-cookies.txt'
+    monkeypatch.setenv('YTDLP_COOKIES_FILE', str(missing))
+
+    def fake_init(opts):
+        captured_opts.append(opts)
+        m = MagicMock()
+        m.__enter__ = MagicMock(return_value=MagicMock())
+        m.__exit__ = MagicMock(return_value=False)
+        return m
+
+    with patch('downloader.yt_dlp.YoutubeDL', side_effect=fake_init):
+        downloader.download_youtube(YOUTUBE_URL, tmp_path, TASK_ID)
+
+    assert 'cookiefile' not in captured_opts[0]
+
+
 def test_download_youtube_rejects_non_uuid_task_id(tmp_path):
     """A task_id that is not a valid UUID must raise ValueError (path traversal guard)."""
     with pytest.raises(ValueError):
@@ -107,6 +146,22 @@ def test_download_youtube_propagates_download_error(tmp_path):
         mock_ydl_cls.return_value.__exit__ = MagicMock(return_value=False)
 
         with pytest.raises(yt_dlp.utils.DownloadError):
+            downloader.download_youtube(YOUTUBE_URL, tmp_path, TASK_ID)
+
+
+def test_download_youtube_rewrites_bot_check_error_with_cookie_guidance(tmp_path):
+    """YouTube bot-check errors should include actionable cookies guidance."""
+    bot_check_message = (
+        "ERROR: [youtube] abc: Sign in to confirm you're not a bot. "
+        'Use --cookies-from-browser or --cookies for the authentication.'
+    )
+    with patch('downloader.yt_dlp.YoutubeDL') as mock_ydl_cls:
+        mock_ydl = MagicMock()
+        mock_ydl.download.side_effect = yt_dlp.utils.DownloadError(bot_check_message)
+        mock_ydl_cls.return_value.__enter__ = MagicMock(return_value=mock_ydl)
+        mock_ydl_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        with pytest.raises(yt_dlp.utils.DownloadError, match='YTDLP_COOKIES_FILE'):
             downloader.download_youtube(YOUTUBE_URL, tmp_path, TASK_ID)
 
 
@@ -181,3 +236,25 @@ def test_extract_youtube_metadata_calls_extract_info_without_download():
         downloader.extract_youtube_metadata(YOUTUBE_URL)
 
         mock_ydl.extract_info.assert_called_once_with(YOUTUBE_URL, download=False)
+
+
+def test_extract_youtube_metadata_uses_configured_cookies_file(tmp_path, monkeypatch):
+    """Metadata extraction should also respect YTDLP_COOKIES_FILE when present."""
+    cookies_file = tmp_path / 'youtube-cookies.txt'
+    cookies_file.write_text('# Netscape HTTP Cookie File')
+    monkeypatch.setenv('YTDLP_COOKIES_FILE', str(cookies_file))
+    captured_opts: list[dict] = []
+
+    def fake_init(opts):
+        captured_opts.append(opts)
+        m = MagicMock()
+        inner = MagicMock()
+        inner.extract_info.return_value = {}
+        m.__enter__ = MagicMock(return_value=inner)
+        m.__exit__ = MagicMock(return_value=False)
+        return m
+
+    with patch('downloader.yt_dlp.YoutubeDL', side_effect=fake_init):
+        downloader.extract_youtube_metadata(YOUTUBE_URL)
+
+    assert captured_opts[0].get('cookiefile') == str(cookies_file)
