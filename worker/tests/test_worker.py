@@ -1239,6 +1239,7 @@ def test_separate_stems_with_audio_separator_uses_supported_separator_kwargs(tmp
     assert 'use_cpu' not in kwargs
     assert kwargs['model_file_dir'] == str(model_dir)
     assert kwargs['output_dir'] == str(tmp_path / 'stems' / 'task-1')
+    assert kwargs['use_autocast'] is (device == 'cuda')
     fake_separator.load_model.assert_called_once_with(model_filename='htdemucs_ft.yaml')
     assert result == {
         'tracks': {
