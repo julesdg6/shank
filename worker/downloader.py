@@ -33,7 +33,7 @@ def _resolve_cookies_file() -> Path | None:
     if cookies_file.is_file():
         return cookies_file
 
-    log.warning('Configured %s does not exist or is not a file: %s', _YTDLP_COOKIES_FILE_ENV, configured_path)
+    log.warning('Configured %s does not exist or is not a regular file: %s', _YTDLP_COOKIES_FILE_ENV, configured_path)
     return None
 
 
