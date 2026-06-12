@@ -324,16 +324,18 @@ def separate_stems_with_audio_separator(
         or _DEFAULT_AUDIO_SEPARATOR_MODEL_DIR
     )
     audio_separator_device = (device or os.getenv('AUDIO_SEPARATOR_DEVICE', 'cpu')).strip().lower() or 'cpu'
+    if audio_separator_device not in ('cpu', 'cuda'):
+        log.warning('Unsupported audio-separator device %r; defaulting to cpu', audio_separator_device)
+        audio_separator_device = 'cpu'
 
     out_dir = stems_cache_dir / task_id
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    use_cpu = audio_separator_device != 'cuda'
     separator = Separator(
         model_file_dir=audio_separator_model_dir,
         output_dir=str(out_dir),
         output_format='wav',
-        use_cpu=use_cpu,
+        use_autocast=audio_separator_device == 'cuda',
     )
     separator.load_model(model_filename=audio_separator_model)
     output_files = separator.separate(src_audio_path)
