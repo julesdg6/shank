@@ -1214,6 +1214,53 @@ def test_parse_audio_separator_stem_name_falls_back_to_stem():
 
 
 # ---------------------------------------------------------------------------
+# separate_stems_with_audio_separator
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+def test_separate_stems_with_audio_separator_uses_supported_separator_kwargs(tmp_path, monkeypatch, device):
+    """separate_stems_with_audio_separator should construct Separator without deprecated kwargs."""
+    monkeypatch.setenv('DATA_DIR', str(tmp_path))
+    model_dir = tmp_path / 'models' / 'separator'
+    model_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv('AUDIO_SEPARATOR_MODEL_DIR', str(model_dir))
+    monkeypatch.setenv('AUDIO_SEPARATOR_MODEL', 'htdemucs_ft.yaml')
+
+    fake_separator = MagicMock()
+    fake_separator.separate.return_value = [
+        str(tmp_path / 'stems' / 'task-1' / 'song_(Vocals)_htdemucs_ft.wav'),
+        str(tmp_path / 'stems' / 'task-1' / 'song_(Drums)_htdemucs_ft.wav'),
+    ]
+
+    with patch('audio_separator.separator.Separator', return_value=fake_separator) as mock_separator_cls:
+        result = stems.separate_stems_with_audio_separator('/tmp/input.wav', 'task-1', device=device)
+
+    kwargs = mock_separator_cls.call_args.kwargs
+    assert 'use_cpu' not in kwargs
+    assert kwargs['model_file_dir'] == str(model_dir)
+    assert kwargs['output_dir'] == str(tmp_path / 'stems' / 'task-1')
+    fake_separator.load_model.assert_called_once_with(model_filename='htdemucs_ft.yaml')
+    assert result == {
+        'tracks': {
+            'vocals': str(tmp_path / 'stems' / 'task-1' / 'song_(Vocals)_htdemucs_ft.wav'),
+            'drums': str(tmp_path / 'stems' / 'task-1' / 'song_(Drums)_htdemucs_ft.wav'),
+        },
+    }
+
+
+def test_audio_separator_separator_constructor_smoke(tmp_path):
+    """Smoke-test the audio-separator constructor args used by SHANK."""
+    separator_module = pytest.importorskip('audio_separator.separator')
+    separator = separator_module.Separator(
+        model_file_dir=str(tmp_path / 'models' / 'separator'),
+        output_dir=str(tmp_path / 'stems' / 'task-1'),
+        output_format='wav',
+        info_only=True,
+    )
+    assert separator is not None
+
+
+# ---------------------------------------------------------------------------
 # audio_separator backend – strict mode
 # ---------------------------------------------------------------------------
 
