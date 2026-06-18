@@ -475,7 +475,16 @@ def _write_structured_results(
     credits_path.write_text(json.dumps(credits_payload, indent=2))
     song_metadata_path.write_text(json.dumps(metadata_payload, indent=2))
     artifacts_path.write_text(
-        json.dumps(_task_artifact_paths(normalized_path, stem_tracks, mt3_payload, result_artifacts, midi_stems_payload), indent=2),
+        json.dumps(
+            _task_artifact_paths(
+                normalized_path,
+                stem_tracks,
+                mt3_payload,
+                result_artifacts=result_artifacts,
+                midi_stems_result=midi_stems_payload,
+            ),
+            indent=2,
+        ),
     )
 
 
@@ -676,7 +685,7 @@ def run_stem_midi_extraction(
     except ValueError as exc:
         result['status'] = 'failed'
         result['errors'].append(f'unsupported transcription backend: {exc}')
-        result['error'] = result['errors'][0]
+        result['error'] = '; '.join(str(e) for e in result['errors'])
         return result
 
     output_dir = RESULTS_DIR / task_id / 'midi'
