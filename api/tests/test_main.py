@@ -1314,6 +1314,158 @@ def test_get_task_beatgrid_returns_404_for_unknown_task(client):
 
 
 # ---------------------------------------------------------------------------
+# GET /tasks/{task_id}/cue-points  &  export endpoints
+# ---------------------------------------------------------------------------
+
+_SAMPLE_CUE_POINTS = [
+    {'name': 'Intro', 'time_seconds': 0.5, 'hot_cue': 0, 'color': '#28E614'},
+    {'name': 'Verse', 'time_seconds': 16.0, 'hot_cue': 1, 'color': '#F8821A'},
+    {'name': 'Chorus', 'time_seconds': 48.0, 'hot_cue': 2, 'color': '#C02626'},
+    {'name': 'Breakdown', 'time_seconds': 96.0, 'hot_cue': 3, 'color': '#1F9BFA'},
+    {'name': 'Outro', 'time_seconds': 220.0, 'hot_cue': 4, 'color': '#FAC000'},
+]
+
+
+def _make_cue_task(tmp_path, task_id: str, cue_points=None):
+    """Write a minimal task JSON file containing cue point data."""
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'title': 'Test Track',
+        'artist': 'Test Artist',
+        'analysis': {
+            'full_mix': {
+                'bpm': 128.0,
+                'key': 'A minor',
+                'duration_seconds': 240.0,
+                'cue_points': cue_points if cue_points is not None else _SAMPLE_CUE_POINTS,
+            },
+        },
+    }))
+
+
+def test_get_task_cue_points_returns_cue_data(client, tmp_path):
+    """GET /tasks/{task_id}/cue-points must return the hot cue list."""
+    task_id = str(uuid.uuid4())
+    _make_cue_task(tmp_path, task_id)
+
+    response = client.get(f'/tasks/{task_id}/cue-points')
+    assert response.status_code == 200
+    data = response.json()
+    assert 'cue_points' in data
+    cues = data['cue_points']
+    assert isinstance(cues, list)
+    assert len(cues) == len(_SAMPLE_CUE_POINTS)
+    first = cues[0]
+    assert first['name'] == 'Intro'
+    assert first['time_seconds'] == 0.5
+    assert first['hot_cue'] == 0
+    assert first['color'].startswith('#')
+
+
+def test_get_task_cue_points_returns_404_when_no_cue_points(client, tmp_path):
+    """GET /tasks/{task_id}/cue-points must return 404 when no cue data is stored."""
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'bpm': 128.0,
+    }))
+    response = client.get(f'/tasks/{task_id}/cue-points')
+    assert response.status_code == 404
+
+
+def test_get_task_cue_points_returns_404_for_unknown_task(client):
+    """GET /tasks/{task_id}/cue-points must return 404 for a nonexistent task."""
+    response = client.get(f'/tasks/{uuid.uuid4()}/cue-points')
+    assert response.status_code == 404
+
+
+def test_export_cue_points_rekordbox_returns_xml(client, tmp_path):
+    """Rekordbox export must return XML with POSITION_MARK elements."""
+    task_id = str(uuid.uuid4())
+    _make_cue_task(tmp_path, task_id)
+
+    response = client.get(f'/tasks/{task_id}/cue-points/export/rekordbox')
+    assert response.status_code == 200
+    assert 'xml' in response.headers.get('content-type', '')
+    body = response.text
+    assert 'DJ_PLAYLISTS' in body
+    assert 'POSITION_MARK' in body
+    assert 'Intro' in body
+    assert 'Verse' in body
+    assert 'Chorus' in body
+    assert f'attachment; filename="{task_id}_cue_points_rekordbox.xml"' in response.headers.get('content-disposition', '')
+
+
+def test_export_cue_points_traktor_returns_nml(client, tmp_path):
+    """Traktor export must return NML XML with CUE_V2 elements in milliseconds."""
+    task_id = str(uuid.uuid4())
+    _make_cue_task(tmp_path, task_id)
+
+    response = client.get(f'/tasks/{task_id}/cue-points/export/traktor')
+    assert response.status_code == 200
+    assert 'xml' in response.headers.get('content-type', '')
+    body = response.text
+    assert 'NML' in body
+    assert 'CUE_V2' in body
+    # Intro at 0.5 s → 500 ms
+    assert '500.000000' in body
+    assert 'Intro' in body
+    assert f'attachment; filename="{task_id}_cue_points_traktor.nml"' in response.headers.get('content-disposition', '')
+
+
+def test_export_cue_points_mixxx_returns_xml(client, tmp_path):
+    """Mixxx export must return XML with Cue elements in sample positions."""
+    task_id = str(uuid.uuid4())
+    _make_cue_task(tmp_path, task_id)
+
+    response = client.get(f'/tasks/{task_id}/cue-points/export/mixxx')
+    assert response.status_code == 200
+    assert 'xml' in response.headers.get('content-type', '')
+    body = response.text
+    assert 'Mixxx-Library' in body
+    assert '<Cue' in body
+    assert 'Intro' in body
+    # Intro at 0.5 s × 44100 = 22050 samples
+    assert '22050' in body
+    assert f'attachment; filename="{task_id}_cue_points_mixxx.xml"' in response.headers.get('content-disposition', '')
+
+
+def test_export_cue_points_returns_404_when_no_cue_data(client, tmp_path):
+    """Export endpoints must return 404 when no cue points are available."""
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+    }))
+    for endpoint in ('rekordbox', 'traktor', 'mixxx'):
+        response = client.get(f'/tasks/{task_id}/cue-points/export/{endpoint}')
+        assert response.status_code == 404, f'Expected 404 for {endpoint}'
+
+
+def test_rekordbox_xml_contains_correct_rgb_values(client, tmp_path):
+    """Rekordbox POSITION_MARK must carry split RGB components for the cue colour."""
+    task_id = str(uuid.uuid4())
+    # Single green cue (#28E614 → R=40, G=230, B=20)
+    _make_cue_task(tmp_path, task_id, cue_points=[
+        {'name': 'Intro', 'time_seconds': 1.0, 'hot_cue': 0, 'color': '#28E614'},
+    ])
+    response = client.get(f'/tasks/{task_id}/cue-points/export/rekordbox')
+    assert response.status_code == 200
+    body = response.text
+    assert 'Red="40"' in body
+    assert 'Green="230"' in body
+    assert 'Blue="20"' in body
+
+
+# ---------------------------------------------------------------------------
 # GET /worker/status
 # ---------------------------------------------------------------------------
 
