@@ -757,7 +757,7 @@ def _cue_points_traktor_nml(
     becomes a CUE_V2 element with ``TYPE="0"`` (standard cue).
     """
     root = ET.Element('NML', VERSION='19')
-    head = ET.SubElement(root, 'HEAD', COMPANY='www.native-instruments.com', PROGRAM='Traktor')  # noqa: F841
+    ET.SubElement(root, 'HEAD', COMPANY='www.native-instruments.com', PROGRAM='Traktor')
 
     collection = ET.SubElement(root, 'COLLECTION', ENTRIES='1')
     entry = ET.SubElement(
@@ -769,11 +769,15 @@ def _cue_points_traktor_nml(
 
     if file_location:
         from pathlib import PurePosixPath
+        # Traktor LOCATION splits the path into DIR (parent with Traktor's /: prefix)
+        # and FILE (basename).  Strip any file:// scheme prefix first.
         p = PurePosixPath(file_location.lstrip('file:///').lstrip('/'))
+        parent_parts = str(p.parent).strip('/')
+        dir_str = f'/:{("/" + parent_parts + "/") if parent_parts else "/"}'
         ET.SubElement(
             entry,
             'LOCATION',
-            DIR=f'/:/{"/".join(str(p.parent).split("/"))}/'.replace('//', '/'),
+            DIR=dir_str,
             FILE=p.name,
             VOLUME='',
             VOLUMEID='',
