@@ -1204,6 +1204,76 @@ def test_get_task_chords_returns_empty_when_disabled_backend(client, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# GET /tasks/{task_id}/harmonic
+# ---------------------------------------------------------------------------
+
+def test_get_task_harmonic_returns_analysis(client, tmp_path):
+    """GET /tasks/{task_id}/harmonic must return the harmonic dict from the task."""
+    task_id = str(uuid.uuid4())
+    harmonic_data = {
+        'key': 'C major',
+        'key_changes': [
+            {'time_seconds': 0.0, 'timestamp': '00:00', 'key': 'C major', 'confidence': 1.0},
+        ],
+        'segments': [
+            {
+                'symbol': 'C',
+                'root': 'C',
+                'quality': 'major',
+                'confidence': 0.85,
+                'start_seconds': 0.0,
+                'end_seconds': 4.0,
+                'roman_numeral': 'I',
+                'is_borrowed': False,
+            },
+            {
+                'symbol': 'Am',
+                'root': 'A',
+                'quality': 'minor',
+                'confidence': 0.78,
+                'start_seconds': 4.0,
+                'end_seconds': 8.0,
+                'roman_numeral': 'vi',
+                'is_borrowed': False,
+            },
+        ],
+        'borrowed_chords': [],
+    }
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'harmonic': harmonic_data,
+    }))
+
+    response = client.get(f'/tasks/{task_id}/harmonic')
+    assert response.status_code == 200
+    assert response.json() == harmonic_data
+
+
+def test_get_task_harmonic_returns_404_when_absent(client, tmp_path):
+    """GET /tasks/{task_id}/harmonic must return 404 when the task has no harmonic data."""
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'bpm': 120.0,
+    }))
+
+    response = client.get(f'/tasks/{task_id}/harmonic')
+    assert response.status_code == 404
+
+
+def test_get_task_harmonic_returns_404_for_unknown_task(client):
+    """GET /tasks/{task_id}/harmonic must return 404 for a nonexistent task."""
+    response = client.get(f'/tasks/{uuid.uuid4()}/harmonic')
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # GET /tasks/{task_id}/beatgrid
 # ---------------------------------------------------------------------------
 

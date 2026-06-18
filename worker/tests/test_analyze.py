@@ -11,7 +11,14 @@ import numpy as np
 import pytest
 
 # conftest.py adds the worker directory to sys.path, so we can import directly.
-from analyze import _derive_song_structure, _detect_chords, analyze_audio
+from analyze import (
+    _chord_to_roman_numeral,
+    _derive_song_structure,
+    _detect_chords,
+    _harmonic_analysis,
+    _is_borrowed_chord,
+    analyze_audio,
+)
 import worker_loop
 
 # ---------------------------------------------------------------------------
@@ -380,6 +387,157 @@ def test_analyze_audio_chord_backend_madmom_falls_back_to_librosa(tmp_path, monk
         ]:
             if mod is not None:
                 sys.modules[mod_name] = mod
+
+
+# ---------------------------------------------------------------------------
+# Tests for harmonic analysis helpers
+# ---------------------------------------------------------------------------
+
+def test_chord_to_roman_numeral_major_key_diatonic():
+    """Diatonic chords in C major should map to the correct Roman numerals."""
+    assert _chord_to_roman_numeral('C', 'major', 'C major') == 'I'
+    assert _chord_to_roman_numeral('D', 'minor', 'C major') == 'ii'
+    assert _chord_to_roman_numeral('E', 'minor', 'C major') == 'iii'
+    assert _chord_to_roman_numeral('F', 'major', 'C major') == 'IV'
+    assert _chord_to_roman_numeral('G', 'major', 'C major') == 'V'
+    assert _chord_to_roman_numeral('A', 'minor', 'C major') == 'vi'
+    assert _chord_to_roman_numeral('B', 'minor', 'C major') == 'vii'
+
+
+def test_chord_to_roman_numeral_minor_key_diatonic():
+    """Diatonic chords in A minor should map to correct Roman numerals."""
+    assert _chord_to_roman_numeral('A', 'minor', 'A minor') == 'i'
+    assert _chord_to_roman_numeral('C', 'major', 'A minor') == 'III'
+    assert _chord_to_roman_numeral('D', 'minor', 'A minor') == 'iv'
+    assert _chord_to_roman_numeral('E', 'minor', 'A minor') == 'v'
+    assert _chord_to_roman_numeral('F', 'major', 'A minor') == 'VI'
+    assert _chord_to_roman_numeral('G', 'major', 'A minor') == 'VII'
+
+
+def test_chord_to_roman_numeral_flat_degree():
+    """A chord one semitone below a scale degree should get a flat prefix."""
+    # Bb major in C major is bVII (one semitone below B)
+    result = _chord_to_roman_numeral('B-', 'major', 'C major')
+    assert result == 'bVII', f'Expected bVII, got {result!r}'
+
+
+def test_chord_to_roman_numeral_non_c_tonic():
+    """Roman numeral should be relative to the actual tonic, not always C."""
+    # I in G major is G major
+    assert _chord_to_roman_numeral('G', 'major', 'G major') == 'I'
+    # IV in G major is C major
+    assert _chord_to_roman_numeral('C', 'major', 'G major') == 'IV'
+    # V in G major is D major
+    assert _chord_to_roman_numeral('D', 'major', 'G major') == 'V'
+
+
+def test_is_borrowed_chord_diatonic_not_borrowed():
+    """Diatonic chords must not be flagged as borrowed."""
+    assert not _is_borrowed_chord('C', 'major', 'C major')   # I
+    assert not _is_borrowed_chord('A', 'minor', 'C major')   # vi
+    assert not _is_borrowed_chord('A', 'minor', 'A minor')   # i
+    assert not _is_borrowed_chord('C', 'major', 'A minor')   # III
+
+
+def test_is_borrowed_chord_parallel_mode_borrowed():
+    """Chords from the parallel mode should be flagged as borrowed."""
+    # bVII (Bb major) in C major - borrowed from C minor
+    assert _is_borrowed_chord('B-', 'major', 'C major')
+    # iv (Fm) in C major - borrowed from C minor
+    assert _is_borrowed_chord('F', 'minor', 'C major')
+    # bVI (Ab major) in C major - borrowed from C minor
+    assert _is_borrowed_chord('A-', 'major', 'C major')
+
+
+def test_is_borrowed_chord_unrelated_not_borrowed():
+    """Chords not in either parallel mode should not be flagged as borrowed."""
+    # F# major has no place as a borrowed chord in C major
+    assert not _is_borrowed_chord('F#', 'major', 'C major')
+
+
+def test_harmonic_analysis_structure(tmp_path):
+    """_harmonic_analysis should return the expected top-level keys."""
+    wav = _write_chord_wav(tmp_path / 'c_major.wav', frequencies=(261.63, 329.63, 392.0))
+    y, sr = librosa.load(str(wav), mono=True)
+    chords = _detect_chords(y, sr)
+    result = _harmonic_analysis(chords, 'C major', y, sr, 4.0)
+
+    assert isinstance(result, dict)
+    assert 'key' in result
+    assert 'key_changes' in result
+    assert 'segments' in result
+    assert 'borrowed_chords' in result
+    assert result['key'] == 'C major'
+    assert isinstance(result['key_changes'], list)
+    assert isinstance(result['segments'], list)
+    assert isinstance(result['borrowed_chords'], list)
+
+
+def test_harmonic_analysis_segments_have_roman_numeral(tmp_path):
+    """Enriched segments should all carry a roman_numeral and is_borrowed field."""
+    wav = _write_chord_wav(tmp_path / 'c_major.wav', frequencies=(261.63, 329.63, 392.0))
+    y, sr = librosa.load(str(wav), mono=True)
+    chords = _detect_chords(y, sr)
+    result = _harmonic_analysis(chords, 'C major', y, sr, 4.0)
+
+    for seg in result['segments']:
+        assert 'roman_numeral' in seg, f'Missing roman_numeral in {seg!r}'
+        assert 'is_borrowed' in seg, f'Missing is_borrowed in {seg!r}'
+        assert isinstance(seg['roman_numeral'], str)
+        assert isinstance(seg['is_borrowed'], bool)
+
+
+def test_harmonic_analysis_c_major_chord_gets_I(tmp_path):
+    """A C-major triad in C major should receive the Roman numeral 'I'."""
+    wav = _write_chord_wav(tmp_path / 'c_major.wav', frequencies=(261.63, 329.63, 392.0))
+    y, sr = librosa.load(str(wav), mono=True)
+    chords = _detect_chords(y, sr)
+    result = _harmonic_analysis(chords, 'C major', y, sr, 4.0)
+
+    assert result['segments'], 'Expected at least one segment'
+    first = result['segments'][0]
+    assert first['root'] == 'C'
+    assert first['roman_numeral'] == 'I'
+    assert not first['is_borrowed']
+
+
+def test_harmonic_analysis_key_changes_starts_at_zero(tmp_path):
+    """key_changes must always include an entry at time 0."""
+    wav = _write_chord_wav(tmp_path / 'c_major.wav', frequencies=(261.63, 329.63, 392.0))
+    y, sr = librosa.load(str(wav), mono=True)
+    chords = _detect_chords(y, sr)
+    result = _harmonic_analysis(chords, 'C major', y, sr, 4.0)
+
+    assert result['key_changes'], 'key_changes must not be empty'
+    assert result['key_changes'][0]['time_seconds'] == 0.0
+    assert result['key_changes'][0]['key'] == 'C major'
+
+
+def test_harmonic_analysis_empty_chords(tmp_path):
+    """_harmonic_analysis should handle empty chords without errors."""
+    wav = _write_chord_wav(tmp_path / 'silence.wav', frequencies=())
+    y, sr = librosa.load(str(wav), mono=True)
+    chords = {'segments': [], 'progression': []}
+    result = _harmonic_analysis(chords, 'C major', y, sr, 4.0)
+
+    assert result['segments'] == []
+    assert result['borrowed_chords'] == []
+    assert isinstance(result['key_changes'], list)
+
+
+def test_analyze_audio_includes_harmonic(tmp_path):
+    """analyze_audio should return a 'harmonic' key in its result dict."""
+    wav = _write_chord_wav(tmp_path / 'c_major.wav', frequencies=(261.63, 329.63, 392.0))
+    result = analyze_audio(str(wav))
+
+    assert 'harmonic' in result
+    harmonic = result['harmonic']
+    assert isinstance(harmonic, dict)
+    assert 'key' in harmonic
+    assert 'key_changes' in harmonic
+    assert 'segments' in harmonic
+    assert 'borrowed_chords' in harmonic
+    assert harmonic['key'] == result['key']
 
 
 # ---------------------------------------------------------------------------
