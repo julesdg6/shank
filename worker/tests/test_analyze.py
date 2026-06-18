@@ -394,13 +394,19 @@ def test_analyze_audio_chord_backend_madmom_falls_back_to_librosa(tmp_path, monk
 # ---------------------------------------------------------------------------
 
 def test_chord_to_roman_numeral_major_key_diatonic():
-    """Diatonic chords in C major should map to the correct Roman numerals."""
+    """Diatonic chords in C major should map to the correct Roman numerals.
+
+    Note: Roman numeral case reflects the chord quality passed in (major →
+    uppercase, minor → lowercase). The function does not assert whether a
+    chord is diatonic – that is the job of ``_is_borrowed_chord``.
+    """
     assert _chord_to_roman_numeral('C', 'major', 'C major') == 'I'
     assert _chord_to_roman_numeral('D', 'minor', 'C major') == 'ii'
     assert _chord_to_roman_numeral('E', 'minor', 'C major') == 'iii'
     assert _chord_to_roman_numeral('F', 'major', 'C major') == 'IV'
     assert _chord_to_roman_numeral('G', 'major', 'C major') == 'V'
     assert _chord_to_roman_numeral('A', 'minor', 'C major') == 'vi'
+    # vii° in C major is on scale degree 7 (B); quality='minor' → lowercase 'vii'
     assert _chord_to_roman_numeral('B', 'minor', 'C major') == 'vii'
 
 
@@ -447,6 +453,16 @@ def test_is_borrowed_chord_parallel_mode_borrowed():
     assert _is_borrowed_chord('F', 'minor', 'C major')
     # bVI (Ab major) in C major - borrowed from C minor
     assert _is_borrowed_chord('A-', 'major', 'C major')
+
+
+def test_is_borrowed_chord_harmonic_minor_V_not_borrowed():
+    """V major (dominant) in a minor key must not be flagged as borrowed.
+
+    E major is the harmonic-minor dominant (V) in A minor – it is standard
+    common-practice usage via the raised 7th and should never appear in the
+    borrowed_chords list.
+    """
+    assert not _is_borrowed_chord('E', 'major', 'A minor')
 
 
 def test_is_borrowed_chord_unrelated_not_borrowed():

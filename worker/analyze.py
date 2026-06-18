@@ -75,6 +75,10 @@ _MINOR_DIATONIC_QUALITIES: dict[int, str] = {
 
 _ROMAN_NUMERAL_NAMES = ('I', 'II', 'III', 'IV', 'V', 'VI', 'VII')
 
+# V major is the dominant in harmonic minor (raised 7th) and is standard practice
+# in minor-key music; it should *not* be flagged as borrowed from the parallel major.
+_MINOR_HARMONIC_ACCEPTED: dict[int, str] = {7: 'major'}
+
 # Minimum number of seconds per window when detecting local key changes
 _KEY_CHANGE_WINDOW_SECONDS = 10.0
 # Minimum correlation-margin difference to consider a local key genuinely different
@@ -154,6 +158,10 @@ def _is_borrowed_chord(root: str, quality: str, key: str) -> bool:
 
     A chord is considered borrowed when it is *not* diatonic in the current key
     but *is* diatonic (with the same quality) in the parallel major/minor key.
+
+    The harmonic-minor V major chord (dominant) in minor keys is *not* flagged
+    as borrowed even though it is absent from the natural-minor diatonic table,
+    because it is standard common-practice usage (raised 7th / leading tone).
     """
     parts = key.split()
     key_root, key_mode = parts[0], (parts[1] if len(parts) > 1 else 'major')
@@ -161,6 +169,10 @@ def _is_borrowed_chord(root: str, quality: str, key: str) -> bool:
     tonic_idx = _pitch_class_index(key_root)
     chord_idx = _pitch_class_index(root)
     interval = (chord_idx - tonic_idx) % 12
+
+    # Harmonic-minor exception: V major is idiomatic in minor keys.
+    if key_mode == 'minor' and _MINOR_HARMONIC_ACCEPTED.get(interval) == quality:
+        return False
 
     diatonic = _MAJOR_DIATONIC_QUALITIES if key_mode == 'major' else _MINOR_DIATONIC_QUALITIES
     # Diatonic: not borrowed.
