@@ -120,6 +120,10 @@ AUDIO_SEPARATOR_DEVICE=cuda
 git clone https://github.com/julesdg6/shank.git
 cd shank
 cp .env.example .env   # edit as needed
+
+# Optional: if YouTube starts requiring auth cookies for yt-dlp
+# 1) export cookies to ./config/youtube-cookies.txt (Netscape format)
+# 2) set YTDLP_COOKIES_FILE=/srv/shank/config/youtube-cookies.txt in .env
 ```
 
 ### 2. (Optional) Pre-download stem separation models

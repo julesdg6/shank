@@ -1,5 +1,6 @@
 """YouTube audio downloader using yt-dlp."""
 import logging
+import os
 import re
 import uuid
 from pathlib import Path
@@ -18,6 +19,53 @@ _YOUTUBE_ID_RE = re.compile(
     r'(?:youtube\.com/(?:watch\?v=|shorts/)|youtu\.be/|music\.youtube\.com/watch\?v=)'
     r'([A-Za-z0-9_-]{11})'
 )
+
+_YTDLP_COOKIES_FILE_ENV = 'YTDLP_COOKIES_FILE'
+
+
+def _resolve_cookies_file() -> Path | None:
+    """Return configured yt-dlp cookies file if configured and present."""
+    configured_path = os.getenv(_YTDLP_COOKIES_FILE_ENV, '').strip()
+    if not configured_path:
+        return None
+
+    cookies_file = Path(configured_path)
+    if cookies_file.is_file():
+        return cookies_file
+
+    log.warning('Configured YTDLP_COOKIES_FILE does not exist or is not a regular file: %s', configured_path)
+    return None
+
+
+def _apply_yt_dlp_cookies(ydl_opts: dict[str, Any]) -> None:
+    """Set yt-dlp cookiefile option when a configured file is available."""
+    cookies_file = _resolve_cookies_file()
+    if cookies_file is None:
+        return
+    ydl_opts['cookiefile'] = str(cookies_file)
+
+
+def _rewrite_blocked_youtube_error(exc: yt_dlp.utils.DownloadError) -> yt_dlp.utils.DownloadError:
+    """Return a clearer error when YouTube blocks unauthenticated yt-dlp requests."""
+    message = str(exc)
+    lowered = message.lower()
+    # Markers based on observed yt-dlp YouTube bot-check/authentication failures.
+    # Keep this broad enough to remain useful if exact wording changes slightly.
+    bot_check_markers = (
+        "not a bot",
+        'cookies-from-browser',
+        '--cookies',
+        'for the authentication',
+    )
+    if not any(marker in lowered for marker in bot_check_markers):
+        return exc
+
+    return yt_dlp.utils.DownloadError(
+        'YouTube blocked this request. Add a valid cookies export for yt-dlp and set '
+        f'{_YTDLP_COOKIES_FILE_ENV} (for Docker: mount ./config:/srv/shank/config and set '
+        'YTDLP_COOKIES_FILE=/srv/shank/config/youtube-cookies.txt; for non-Docker installs '
+        'set YTDLP_COOKIES_FILE to the absolute path of your exported cookies file).'
+    )
 
 
 def extract_video_id(url: str) -> str | None:
@@ -40,6 +88,7 @@ def extract_youtube_metadata(url: str) -> dict[str, Any]:
         'no_warnings': True,
         'skip_download': True,
     }
+    _apply_yt_dlp_cookies(ydl_opts)
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False) or {}
 
@@ -92,9 +141,13 @@ def download_youtube(url: str, output_dir: Path, task_id: str) -> Path:
         'quiet': True,
         'no_warnings': True,
     }
+    _apply_yt_dlp_cookies(ydl_opts)
 
     log.info('Downloading audio from %s → %s/%s.mp3', url, output_dir, canonical_task_id)
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
+        try:
+            ydl.download([url])
+        except yt_dlp.utils.DownloadError as exc:
+            raise _rewrite_blocked_youtube_error(exc) from exc
 
     return output_dir / f'{canonical_task_id}.mp3'
