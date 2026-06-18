@@ -995,6 +995,40 @@ def test_mt3_status_reports_service_unconfigured_reason(client, monkeypatch):
     assert 'not configured' in data['reason_detail']
 
 
+def test_mt3_status_basic_pitch_available_without_service_url(client, monkeypatch):
+    """basic_pitch runs in-process and must be available even without MT3_SERVICE_URL."""
+    monkeypatch.setenv('MT3_ENABLED', 'true')
+    monkeypatch.delenv('MT3_SERVICE_URL', raising=False)
+    monkeypatch.setenv('TRANSCRIPTION_BACKEND', 'basic_pitch')
+    import api.main as main_module  # noqa: PLC0415
+    importlib.reload(main_module)
+    c = TestClient(main_module.app)
+
+    response = c.get('/mt3/status')
+    assert response.status_code == 200
+    data = response.json()
+    assert data['available'] is True
+    assert data['state'] == 'available'
+    assert data['backend'] == 'basic_pitch'
+    assert data['backend_display'] == 'Basic Pitch'
+    assert 'Basic Pitch' in data['reason_detail']
+
+
+def test_mt3_status_basic_pitch_shows_backend_display(client, monkeypatch):
+    """backend_display must be returned and use friendly name for basic_pitch."""
+    monkeypatch.setenv('MT3_ENABLED', 'true')
+    monkeypatch.delenv('MT3_SERVICE_URL', raising=False)
+    monkeypatch.setenv('TRANSCRIPTION_BACKEND', 'basic_pitch')
+    import api.main as main_module  # noqa: PLC0415
+    importlib.reload(main_module)
+    c = TestClient(main_module.app)
+
+    response = c.get('/mt3/status')
+    data = response.json()
+    assert data['backend_display'] == 'Basic Pitch'
+    assert 'MT3' not in data['reason_detail']
+
+
 def test_analysis_settings_returns_defaults_and_availability(client, monkeypatch, tmp_path):
     model_dir = tmp_path / 'models' / 'separator'
     model_dir.mkdir(parents=True, exist_ok=True)

@@ -1495,33 +1495,33 @@ def download_task_artifact(task_id: str, artifact_name: str):
 
 @app.get('/tasks/{task_id}/mt3/midi/{track_name}')
 def download_mt3_midi(task_id: str, track_name: str):
-    """Download an MT3 MIDI artifact for full mix or a specific stem."""
+    """Download a MIDI transcription artifact for full mix or a specific stem."""
     task = _load_task(task_id)
     track = _mt3_track(task, track_name)
     midi_path = track.get('midi_path') if isinstance(track, dict) else None
     if not isinstance(midi_path, str) or not midi_path:
-        raise HTTPException(status_code=404, detail='MT3 MIDI not found')
+        raise HTTPException(status_code=404, detail='MIDI not found')
     resolved = _resolve_data_path(midi_path)
     if resolved is None:
-        raise HTTPException(status_code=404, detail='MT3 MIDI not found')
+        raise HTTPException(status_code=404, detail='MIDI not found')
     return FileResponse(path=resolved, media_type='audio/midi', filename=resolved.name)
 
 
 @app.get('/tasks/{task_id}/mt3/notes/{track_name}')
 def get_mt3_notes(task_id: str, track_name: str):
-    """Return note metadata JSON for full mix or a specific stem."""
+    """Return MIDI note metadata JSON for full mix or a specific stem."""
     task = _load_task(task_id)
     track = _mt3_track(task, track_name)
     notes_path = track.get('notes_path') if isinstance(track, dict) else None
     if not isinstance(notes_path, str) or not notes_path:
-        raise HTTPException(status_code=404, detail='MT3 note metadata not found')
+        raise HTTPException(status_code=404, detail='MIDI note metadata not found')
     resolved = _resolve_data_path(notes_path)
     if resolved is None:
-        raise HTTPException(status_code=404, detail='MT3 note metadata not found')
+        raise HTTPException(status_code=404, detail='MIDI note metadata not found')
     try:
         return json.loads(resolved.read_text())
     except (OSError, json.JSONDecodeError):
-        raise HTTPException(status_code=500, detail='MT3 note metadata is unreadable')
+        raise HTTPException(status_code=500, detail='MIDI note metadata is unreadable')
 
 
 @app.get('/tasks/{task_id}/chords')
@@ -1711,16 +1711,18 @@ def get_analysis_settings():
 
 @app.get('/transcription/status')
 def get_transcription_status():
-    """Return MT3 transcription availability and current backend configuration."""
+    """Return MIDI transcription availability and current backend configuration."""
     backend = os.getenv('TRANSCRIPTION_BACKEND', 'basic_pitch').strip() or 'basic_pitch'
     mt3_enabled = os.getenv('MT3_ENABLED', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
     service_url = os.getenv('MT3_SERVICE_URL', '').strip().rstrip('/')
+    # MT3 requires a service URL; other backends (e.g. basic_pitch) run in-process
+    service_required = backend == 'mt3'
     return {
         'backend': backend,
         'mt3_enabled': mt3_enabled,
         'service_configured': bool(service_url),
         'service_url': service_url or None,
-        'available': mt3_enabled and bool(service_url),
+        'available': mt3_enabled and (not service_required or bool(service_url)),
     }
 # ---------------------------------------------------------------------------
 # Stem backend status
@@ -1832,13 +1834,11 @@ def get_mt3_status():
         state = 'unavailable'
         reason = 'backend_disabled'
         reason_detail = 'MIDI transcription backend is disabled.'
-    elif not service_url:
+    elif backend == 'mt3' and not service_url:
+        # MT3 requires a remote service; other backends (e.g. basic_pitch) run in-process
         state = 'unavailable'
         reason = 'service_unconfigured'
-        if backend == 'mt3':
-            reason_detail = 'MT3 service URL is not configured.'
-        else:
-            reason_detail = f'MIDI transcription service URL is not configured (backend: {backend_display}).'
+        reason_detail = 'MT3 service URL is not configured.'
     available = state == 'available'
 
     return {
