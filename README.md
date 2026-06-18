@@ -424,9 +424,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-18T22:33:11Z
-- Latest commit: `28f48bf`
-- Commit message: Merge pull request #172 from julesdg6/copilot/fix-youtube-downloads-with-cookies  Add optional yt-dlp cookies support and actionable YouTube bot-check errors
+- Last automated update: 2026-06-18T23:59:14Z
+- Latest commit: `f4cbd64`
+- Commit message: Merge pull request #175 from julesdg6/copilot/fix-ui-labels-for-transcription  fix: generic MIDI Transcription wording for non-MT3 backends
 <!-- readme-update:end -->
 
 ## 🥁 Beat Detection & Beat Grid
