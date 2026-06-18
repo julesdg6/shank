@@ -235,6 +235,9 @@ docker build -t shank:local .
 | `POST` | `/tasks/{task_id}/reprocess` | Requeue an existing task using current or original analysis settings |
 | `GET` | `/tasks/{task_id}/chords` | Return chord detection results for a completed task |
 | `GET` | `/tasks/{task_id}/beatgrid` | Return beat grid and beat detection metadata for a completed task |
+| `GET` | `/tasks/{task_id}/fingerprint` | Return the audio DNA fingerprint (BPM, key, chords, energy) for a completed task |
+| `GET` | `/tasks/{task_id}/similar` | Find completed tasks with similar audio fingerprints, ranked by similarity |
+| `GET` | `/tasks/fingerprints` | Return audio fingerprints for all completed tasks |
 | `GET` | `/tasks/{task_id}/artifacts` | List downloadable output files for a completed task |
 | `GET` | `/tasks/{task_id}/artifacts/{artifact_name}` | Download a named artifact file (e.g. normalised WAV, stem) |
 | `GET` | `/tasks/completed` | List all completed (`done`) tasks |

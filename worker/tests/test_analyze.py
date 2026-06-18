@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 # conftest.py adds the worker directory to sys.path, so we can import directly.
-from analyze import _derive_song_structure, _detect_chords, analyze_audio
+from analyze import _derive_song_structure, _detect_chords, analyze_audio, build_fingerprint, compare_fingerprints
 import worker_loop
 
 # ---------------------------------------------------------------------------
@@ -380,6 +380,136 @@ def test_analyze_audio_chord_backend_madmom_falls_back_to_librosa(tmp_path, monk
         ]:
             if mod is not None:
                 sys.modules[mod_name] = mod
+
+
+# ---------------------------------------------------------------------------
+# Tests for build_fingerprint and compare_fingerprints
+# ---------------------------------------------------------------------------
+
+
+def test_build_fingerprint_returns_expected_keys(tmp_path):
+    """build_fingerprint must return the required keys from an analysis dict."""
+    wav = _write_sine_wav(tmp_path / 'test.wav')
+    analysis = analyze_audio(str(wav))
+    fp = build_fingerprint(analysis)
+
+    assert isinstance(fp, dict)
+    assert 'bpm' in fp
+    assert 'key' in fp
+    assert 'chord_progression' in fp
+    assert 'energy_profile' in fp
+    assert 'spectral_centroid' in fp
+
+
+def test_build_fingerprint_bpm_matches_analysis(tmp_path):
+    """Fingerprint BPM must equal the bpm from analyze_audio."""
+    wav = _write_rhythmic_wav(tmp_path / 'test.wav')
+    analysis = analyze_audio(str(wav))
+    fp = build_fingerprint(analysis)
+
+    assert fp['bpm'] == analysis['bpm']
+
+
+def test_build_fingerprint_energy_profile_length():
+    """Energy profile must always have the expected number of bins."""
+    from analyze import _FINGERPRINT_ENERGY_BINS  # noqa: PLC0415
+    analysis = {
+        'bpm': 120.0,
+        'key': 'C major',
+        'energy_over_time': [float(i) / 128 for i in range(128)],
+        'chords': {'progression': ['C', 'Am', 'F', 'G']},
+        'frequency_histogram': [1.0] * 64,
+    }
+    fp = build_fingerprint(analysis)
+    assert len(fp['energy_profile']) == _FINGERPRINT_ENERGY_BINS
+
+
+def test_build_fingerprint_chord_progression_is_deduped():
+    """Repeated chord tokens should appear only once in the fingerprint progression."""
+    analysis = {
+        'bpm': 120.0,
+        'key': 'C major',
+        'energy_over_time': [],
+        'chords': {'progression': ['C', 'Am', 'C', 'F', 'Am']},
+        'frequency_histogram': [],
+    }
+    fp = build_fingerprint(analysis)
+    assert fp['chord_progression'] == ['C', 'Am', 'F']
+
+
+def test_build_fingerprint_handles_missing_fields():
+    """build_fingerprint must not raise when optional analysis fields are absent."""
+    fp = build_fingerprint({'bpm': 128.0})
+    assert fp['bpm'] == 128.0
+    assert fp['key'] == ''
+    assert fp['chord_progression'] == []
+
+
+def test_compare_fingerprints_identical():
+    """Comparing a fingerprint with itself should yield 100% similarity."""
+    fp = {
+        'bpm': 128.0,
+        'key': 'A minor',
+        'chord_progression': ['Am', 'F', 'C', 'G'],
+        'energy_profile': [0.1] * 16,
+        'spectral_centroid': 5.0,
+    }
+    result = compare_fingerprints(fp, fp)
+    assert result['similarity'] == 100
+    assert 'Same BPM range' in result['reasons']
+    assert 'Same key' in result['reasons']
+
+
+def test_compare_fingerprints_different_bpm():
+    """Large BPM difference should lower the similarity score."""
+    fp_a = {'bpm': 128.0, 'key': 'C major', 'chord_progression': [], 'energy_profile': []}
+    fp_b = {'bpm': 80.0, 'key': 'C major', 'chord_progression': [], 'energy_profile': []}
+    result = compare_fingerprints(fp_a, fp_b)
+    assert result['similarity'] < 100
+    assert 'Same BPM range' not in result['reasons']
+
+
+def test_compare_fingerprints_same_key():
+    """Exact key match must add the 'Same key' reason."""
+    fp_a = {'bpm': 120.0, 'key': 'G major', 'chord_progression': [], 'energy_profile': []}
+    fp_b = {'bpm': 120.0, 'key': 'G major', 'chord_progression': [], 'energy_profile': []}
+    result = compare_fingerprints(fp_a, fp_b)
+    assert 'Same key' in result['reasons']
+    assert result['details']['key_match'] is True
+
+
+def test_compare_fingerprints_same_tonic_different_mode():
+    """Same root in major vs minor mode should produce a partial key match."""
+    fp_a = {'bpm': 120.0, 'key': 'A major', 'chord_progression': [], 'energy_profile': []}
+    fp_b = {'bpm': 120.0, 'key': 'A minor', 'chord_progression': [], 'energy_profile': []}
+    result = compare_fingerprints(fp_a, fp_b)
+    assert 'Same tonic, different mode' in result['reasons']
+
+
+def test_compare_fingerprints_similar_chords():
+    """Sufficient chord overlap should add a 'Similar chord progression' reason."""
+    fp_a = {'bpm': 120.0, 'key': 'C major', 'chord_progression': ['C', 'G', 'Am', 'F'], 'energy_profile': []}
+    fp_b = {'bpm': 120.0, 'key': 'C major', 'chord_progression': ['C', 'G', 'Am', 'Em'], 'energy_profile': []}
+    result = compare_fingerprints(fp_a, fp_b)
+    assert result['details']['chord_similarity'] > 0.0
+
+
+def test_compare_fingerprints_energy_similarity():
+    """Cosine similarity of matching energy profiles should appear in details."""
+    profile = [0.1, 0.2, 0.15, 0.3] * 4
+    fp_a = {'bpm': 120.0, 'key': '', 'chord_progression': [], 'energy_profile': profile}
+    fp_b = {'bpm': 120.0, 'key': '', 'chord_progression': [], 'energy_profile': profile}
+    result = compare_fingerprints(fp_a, fp_b)
+    assert result['details']['energy_similarity'] == 1.0
+    assert 'Similar energy curve' in result['reasons']
+
+
+def test_compare_fingerprints_returns_integer_similarity():
+    """Similarity value must be an integer between 0 and 100."""
+    fp = {'bpm': 130.0, 'key': 'D minor', 'chord_progression': ['Dm'], 'energy_profile': [0.05] * 16}
+    result = compare_fingerprints(fp, fp)
+    assert isinstance(result['similarity'], int)
+    assert 0 <= result['similarity'] <= 100
 
 
 # ---------------------------------------------------------------------------

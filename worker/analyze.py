@@ -584,6 +584,160 @@ def _derive_cue_points(downbeats: list[float], beats: list[float], duration_seco
     return list(unique.values())
 
 
+_FINGERPRINT_ENERGY_BINS = 16
+_BPM_SIMILARITY_THRESHOLD = 0.95  # ~5% tolerance
+_CHORD_SIMILARITY_THRESHOLD = 0.5
+_ENERGY_SIMILARITY_THRESHOLD = 0.8
+
+
+def build_fingerprint(analysis: dict) -> dict:
+    """Build a compact fingerprint dict from an ``analyze_audio`` result.
+
+    The fingerprint captures the key musical characteristics needed for
+    similarity comparison: BPM, musical key, chord progression, and energy
+    profile.
+
+    Parameters
+    ----------
+    analysis:
+        The dict returned by :func:`analyze_audio`.
+
+    Returns
+    -------
+    dict with keys ``bpm``, ``key``, ``chord_progression``,
+    ``energy_profile``, and ``spectral_centroid``.
+    """
+    bpm = float(analysis.get('bpm') or 0.0)
+    key = str(analysis.get('key') or '').strip()
+
+    # Coarsen energy curve to a smaller, fixed number of bins for fast comparison.
+    energy_over_time: list = analysis.get('energy_over_time') or []
+    if energy_over_time:
+        arr = np.array(energy_over_time, dtype=float)
+        chunks = np.array_split(arr, _FINGERPRINT_ENERGY_BINS)
+        energy_profile = [round(float(chunk.mean()), 6) for chunk in chunks]
+    else:
+        energy_profile = [0.0] * _FINGERPRINT_ENERGY_BINS
+
+    # Chord progression: de-duplicated ordered list of chord symbol strings.
+    chords: dict = analysis.get('chords') or {}
+    raw_progression: list = chords.get('progression') or []
+    progression: list[str] = []
+    seen: set[str] = set()
+    for chord in raw_progression:
+        token = str(chord).strip()
+        if token and token not in seen:
+            progression.append(token)
+            seen.add(token)
+
+    # Spectral centroid proxy derived from the frequency histogram.
+    freq_hist: list = analysis.get('frequency_histogram') or []
+    if freq_hist:
+        arr_f = np.array(freq_hist, dtype=float)
+        total = float(arr_f.sum())
+        spectral_centroid = (
+            float(np.dot(arr_f, np.arange(len(arr_f))) / total) if total > 0 else 0.0
+        )
+    else:
+        spectral_centroid = 0.0
+
+    return {
+        'bpm': round(bpm, 2),
+        'key': key,
+        'chord_progression': progression,
+        'energy_profile': energy_profile,
+        'spectral_centroid': round(spectral_centroid, 3),
+    }
+
+
+def compare_fingerprints(fp_a: dict, fp_b: dict) -> dict:
+    """Compare two fingerprints and return a similarity report.
+
+    Parameters
+    ----------
+    fp_a, fp_b:
+        Fingerprint dicts produced by :func:`build_fingerprint`.
+
+    Returns
+    -------
+    dict with:
+        ``similarity``  – integer 0–100 percentage.
+        ``reasons``     – list of human-readable reason strings.
+        ``details``     – per-dimension raw similarity scores.
+    """
+    reasons: list[str] = []
+    details: dict = {}
+    score = 0.0
+    total_weight = 0.0
+
+    # 1. BPM similarity (weight 0.25) – ratio of lower/higher BPM.
+    bpm_a = float(fp_a.get('bpm') or 0.0)
+    bpm_b = float(fp_b.get('bpm') or 0.0)
+    if bpm_a > 0 and bpm_b > 0:
+        bpm_ratio = min(bpm_a, bpm_b) / max(bpm_a, bpm_b)
+        if bpm_ratio >= _BPM_SIMILARITY_THRESHOLD:
+            reasons.append('Same BPM range')
+        details['bpm_similarity'] = round(bpm_ratio, 3)
+        score += bpm_ratio * 0.25
+        total_weight += 0.25
+
+    # 2. Key match (weight 0.25) – exact = 1.0, same tonic different mode = 0.5.
+    key_a = str(fp_a.get('key') or '').strip()
+    key_b = str(fp_b.get('key') or '').strip()
+    if key_a and key_b:
+        if key_a == key_b:
+            key_score = 1.0
+            reasons.append('Same key')
+        else:
+            tonic_a = key_a.split()[0] if key_a else ''
+            tonic_b = key_b.split()[0] if key_b else ''
+            key_score = 0.5 if (tonic_a and tonic_a == tonic_b) else 0.0
+            if key_score > 0:
+                reasons.append('Same tonic, different mode')
+        details['key_match'] = key_score > 0.0
+        score += key_score * 0.25
+        total_weight += 0.25
+
+    # 3. Chord progression similarity (weight 0.25) – Jaccard index over chord sets.
+    prog_a = set(str(c) for c in (fp_a.get('chord_progression') or []) if str(c).strip())
+    prog_b = set(str(c) for c in (fp_b.get('chord_progression') or []) if str(c).strip())
+    if prog_a and prog_b:
+        union = len(prog_a | prog_b)
+        chord_score = len(prog_a & prog_b) / union if union > 0 else 0.0
+        if chord_score >= _CHORD_SIMILARITY_THRESHOLD:
+            reasons.append('Similar chord progression')
+        details['chord_similarity'] = round(chord_score, 3)
+        score += chord_score * 0.25
+        total_weight += 0.25
+
+    # 4. Energy curve similarity (weight 0.25) – cosine similarity.
+    energy_a_raw = fp_a.get('energy_profile') or []
+    energy_b_raw = fp_b.get('energy_profile') or []
+    energy_a = [float(v) for v in energy_a_raw if isinstance(v, (int, float))]
+    energy_b = [float(v) for v in energy_b_raw if isinstance(v, (int, float))]
+    if energy_a and energy_b:
+        min_len = min(len(energy_a), len(energy_b))
+        arr_a = np.array(energy_a[:min_len])
+        arr_b = np.array(energy_b[:min_len])
+        norm_a = float(np.linalg.norm(arr_a))
+        norm_b = float(np.linalg.norm(arr_b))
+        energy_score = float(np.dot(arr_a, arr_b) / (norm_a * norm_b)) if (norm_a > 0 and norm_b > 0) else 0.0
+        energy_score = _clamp(energy_score, 0.0, 1.0)
+        if energy_score >= _ENERGY_SIMILARITY_THRESHOLD:
+            reasons.append('Similar energy curve')
+        details['energy_similarity'] = round(energy_score, 3)
+        score += energy_score * 0.25
+        total_weight += 0.25
+
+    similarity_pct = int(round((score / total_weight) * 100)) if total_weight > 0 else 0
+
+    return {
+        'similarity': similarity_pct,
+        'reasons': reasons,
+        'details': details,
+    }
+
+
 def analyze_audio(file_path: str) -> dict:
     """Load audio from *file_path* and return BPM and key analysis results.
 

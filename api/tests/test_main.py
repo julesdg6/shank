@@ -1568,3 +1568,192 @@ def test_reprocess_all_valid_modes(client, tmp_path):
         }))
         response = client.post(f'/tasks/{task_id}/reprocess', json={'mode': mode})
         assert response.status_code == 202, f"Expected 202 for mode={mode!r}"
+
+
+# ---------------------------------------------------------------------------
+# GET /tasks/{task_id}/fingerprint, GET /tasks/fingerprints, GET /tasks/{task_id}/similar
+# ---------------------------------------------------------------------------
+
+def _make_fingerprint_task(tmp_path, task_id, bpm=120.0, key='C major',
+                            chord_progression=None, energy_profile=None,
+                            status='done'):
+    """Helper: write a task file plus a fingerprint.json in results dir."""
+    if chord_progression is None:
+        chord_progression = ['C', 'Am', 'F', 'G']
+    if energy_profile is None:
+        energy_profile = [0.1] * 16
+
+    results_dir = tmp_path / 'results' / task_id
+    results_dir.mkdir(parents=True, exist_ok=True)
+    fp_path = results_dir / 'fingerprint.json'
+    fp_path.write_text(json.dumps({
+        'bpm': bpm,
+        'key': key,
+        'chord_progression': chord_progression,
+        'energy_profile': energy_profile,
+        'spectral_centroid': 5.0,
+    }))
+
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': status,
+        'bpm': bpm,
+        'key': key,
+        'results': {
+            'dir': str(results_dir),
+            'fingerprint_json': str(fp_path),
+        },
+    }))
+    return fp_path
+
+
+def test_get_task_fingerprint_returns_fingerprint(client, tmp_path):
+    task_id = str(uuid.uuid4())
+    _make_fingerprint_task(tmp_path, task_id, bpm=128.0, key='A minor')
+    response = client.get(f'/tasks/{task_id}/fingerprint')
+    assert response.status_code == 200
+    data = response.json()
+    assert data['bpm'] == 128.0
+    assert data['key'] == 'A minor'
+    assert 'chord_progression' in data
+    assert 'energy_profile' in data
+
+
+def test_get_task_fingerprint_returns_404_when_no_fingerprint(client, tmp_path):
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'bpm': 120.0,
+    }))
+    response = client.get(f'/tasks/{task_id}/fingerprint')
+    assert response.status_code == 404
+
+
+def test_list_task_fingerprints_returns_completed_only(client, tmp_path):
+    done_id = str(uuid.uuid4())
+    pending_id = str(uuid.uuid4())
+    _make_fingerprint_task(tmp_path, done_id, bpm=130.0, key='D minor')
+    _make_fingerprint_task(tmp_path, pending_id, bpm=100.0, key='G major', status='pending')
+
+    response = client.get('/tasks/fingerprints')
+    assert response.status_code == 200
+    data = response.json()
+    assert 'fingerprints' in data
+    ids = {fp['task_id'] for fp in data['fingerprints']}
+    assert done_id in ids
+    assert pending_id not in ids
+
+
+def test_list_task_fingerprints_includes_task_id(client, tmp_path):
+    task_id = str(uuid.uuid4())
+    _make_fingerprint_task(tmp_path, task_id)
+    response = client.get('/tasks/fingerprints')
+    assert response.status_code == 200
+    fps = response.json()['fingerprints']
+    assert any(fp['task_id'] == task_id for fp in fps)
+
+
+def test_get_similar_tasks_returns_matches(client, tmp_path):
+    target_id = str(uuid.uuid4())
+    similar_id = str(uuid.uuid4())
+    _make_fingerprint_task(tmp_path, target_id, bpm=128.0, key='A minor',
+                           chord_progression=['Am', 'F', 'C', 'G'],
+                           energy_profile=[0.1] * 16)
+    _make_fingerprint_task(tmp_path, similar_id, bpm=128.0, key='A minor',
+                           chord_progression=['Am', 'F', 'C', 'G'],
+                           energy_profile=[0.1] * 16)
+
+    response = client.get(f'/tasks/{target_id}/similar')
+    assert response.status_code == 200
+    data = response.json()
+    assert data['task_id'] == target_id
+    assert 'matches' in data
+    assert len(data['matches']) == 1
+    assert data['matches'][0]['task_id'] == similar_id
+    assert data['matches'][0]['similarity'] == 100
+
+
+def test_get_similar_tasks_excludes_self(client, tmp_path):
+    task_id = str(uuid.uuid4())
+    _make_fingerprint_task(tmp_path, task_id)
+    response = client.get(f'/tasks/{task_id}/similar')
+    assert response.status_code == 200
+    ids = [m['task_id'] for m in response.json()['matches']]
+    assert task_id not in ids
+
+
+def test_get_similar_tasks_returns_404_when_no_fingerprint(client, tmp_path):
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'bpm': 120.0,
+    }))
+    response = client.get(f'/tasks/{task_id}/similar')
+    assert response.status_code == 404
+
+
+def test_get_similar_tasks_sorted_by_similarity(client, tmp_path):
+    target_id = str(uuid.uuid4())
+    high_id = str(uuid.uuid4())
+    low_id = str(uuid.uuid4())
+    _make_fingerprint_task(tmp_path, target_id, bpm=128.0, key='A minor',
+                           chord_progression=['Am', 'F', 'C', 'G'],
+                           energy_profile=[0.1] * 16)
+    # High similarity: same key, BPM, chords
+    _make_fingerprint_task(tmp_path, high_id, bpm=128.0, key='A minor',
+                           chord_progression=['Am', 'F', 'C', 'G'],
+                           energy_profile=[0.1] * 16)
+    # Low similarity: different BPM, key, chords
+    _make_fingerprint_task(tmp_path, low_id, bpm=72.0, key='B major',
+                           chord_progression=['B', 'E', 'F#'],
+                           energy_profile=[0.9] * 16)
+
+    response = client.get(f'/tasks/{target_id}/similar')
+    assert response.status_code == 200
+    matches = response.json()['matches']
+    assert matches[0]['task_id'] == high_id
+    assert matches[0]['similarity'] > matches[1]['similarity']
+
+
+def test_get_similar_tasks_limit_parameter(client, tmp_path):
+    target_id = str(uuid.uuid4())
+    _make_fingerprint_task(tmp_path, target_id)
+    for _ in range(5):
+        other_id = str(uuid.uuid4())
+        _make_fingerprint_task(tmp_path, other_id)
+
+    response = client.get(f'/tasks/{target_id}/similar?limit=2')
+    assert response.status_code == 200
+    assert len(response.json()['matches']) <= 2
+
+
+def test_get_similar_tasks_invalid_limit(client, tmp_path):
+    task_id = str(uuid.uuid4())
+    _make_fingerprint_task(tmp_path, task_id)
+    response = client.get(f'/tasks/{task_id}/similar?limit=0')
+    assert response.status_code == 400
+
+
+def test_similar_tasks_response_includes_reasons_and_details(client, tmp_path):
+    target_id = str(uuid.uuid4())
+    other_id = str(uuid.uuid4())
+    _make_fingerprint_task(tmp_path, target_id, bpm=128.0, key='C major',
+                           chord_progression=['C', 'G'], energy_profile=[0.2] * 16)
+    _make_fingerprint_task(tmp_path, other_id, bpm=128.0, key='C major',
+                           chord_progression=['C', 'G'], energy_profile=[0.2] * 16)
+
+    response = client.get(f'/tasks/{target_id}/similar')
+    assert response.status_code == 200
+    match = response.json()['matches'][0]
+    assert 'reasons' in match
+    assert 'details' in match
+    assert isinstance(match['reasons'], list)
+    assert isinstance(match['details'], dict)
