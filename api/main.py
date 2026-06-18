@@ -1276,7 +1276,7 @@ def list_task_fingerprints():
       vectors using cosine similarity or nearest-neighbour algorithms.
     """
     _ensure_dirs()
-    result: dict[str, Any] = {}
+    fingerprints: dict[str, Any] = {}
     for task_file in TASKS_DIR.glob('*.json'):
         try:
             task = json.loads(task_file.read_text())
@@ -1301,8 +1301,8 @@ def list_task_fingerprints():
         except (OSError, json.JSONDecodeError):
             continue
         if isinstance(fingerprint, dict) and fingerprint:
-            result[task_id] = fingerprint
-    return {'fingerprints': result}
+            fingerprints[task_id] = fingerprint
+    return {'fingerprints': fingerprints}
 
 
 # ---------------------------------------------------------------------------
