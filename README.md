@@ -424,9 +424,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-12T09:38:42Z
-- Latest commit: `b3b4ed3`
-- Commit message: Merge pull request #170 from julesdg6/copilot/fix-audio-separator-stem-separation  Fix audio-separator 0.44.2 stem backend initialization (remove deprecated `use_cpu`)
+- Last automated update: 2026-06-18T22:33:11Z
+- Latest commit: `28f48bf`
+- Commit message: Merge pull request #172 from julesdg6/copilot/fix-youtube-downloads-with-cookies  Add optional yt-dlp cookies support and actionable YouTube bot-check errors
 <!-- readme-update:end -->
 
 ## 🥁 Beat Detection & Beat Grid
