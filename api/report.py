@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import html
 import io
+import os
 from datetime import datetime, timezone
 from typing import Any
 
@@ -120,7 +121,6 @@ def _derive_title(task: dict[str, Any]) -> str:
     source = task.get('source')
     if isinstance(source, str) and source:
         # Strip common path prefixes so only the filename remains.
-        import os
         return os.path.splitext(os.path.basename(source))[0]
     return task.get('task_id') or 'SHANK Analysis'
 
@@ -491,6 +491,10 @@ def build_report_html(task: dict[str, Any]) -> str:
 # PDF report (requires matplotlib)
 # ---------------------------------------------------------------------------
 
+# Minimum fraction of track duration a chord segment needs to span before its
+# label is rendered on the chord timeline bar.
+_MIN_CHORD_LABEL_WIDTH_RATIO = 0.04
+
 def build_report_pdf(task: dict[str, Any]) -> bytes:
     """Return a PDF report as raw bytes.
 
@@ -516,7 +520,9 @@ def build_report_pdf(task: dict[str, Any]) -> bytes:
     key_str = summary['key'] or 'N/A'
     dur_str = _fmt_seconds(summary['duration_seconds'])
     lufs_str = f"{summary['lufs']:.1f} LUFS" if isinstance(summary['lufs'], (int, float)) else 'N/A'
-    duration = summary.get('duration_seconds') or 1.0
+    duration = summary.get('duration_seconds')
+    if not duration:
+        duration = 1.0
 
     buf = io.BytesIO()
 
@@ -673,7 +679,7 @@ def build_report_pdf(task: dict[str, Any]) -> bytes:
                 color = palette[seen[sym]]
                 ax_chords.barh(0, end - start, left=start, height=0.6,
                                color=color, alpha=0.85)
-                if (end - start) > duration * 0.04:
+                if (end - start) > duration * _MIN_CHORD_LABEL_WIDTH_RATIO:
                     ax_chords.text((start + end) / 2, 0, sym, ha='center',
                                    va='center', fontsize=6, color='white')
             ax_chords.set_xlim(0, duration)
