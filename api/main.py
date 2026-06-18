@@ -715,7 +715,7 @@ def _cue_points_rekordbox_xml(
         'Label': '',
         'Mix': '',
     }
-    track = ET.SubElement(collection, 'TRACK', **track_attrs)
+    track = ET.SubElement(collection, 'TRACK', track_attrs)
 
     for cue in cue_points:
         hot_cue = cue.get('hot_cue')
