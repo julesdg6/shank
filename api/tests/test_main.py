@@ -1568,3 +1568,151 @@ def test_reprocess_all_valid_modes(client, tmp_path):
         }))
         response = client.post(f'/tasks/{task_id}/reprocess', json={'mode': mode})
         assert response.status_code == 202, f"Expected 202 for mode={mode!r}"
+
+
+# ---------------------------------------------------------------------------
+# Fingerprint endpoints
+# ---------------------------------------------------------------------------
+
+def test_get_task_fingerprint_returns_data(client, tmp_path):
+    """GET /tasks/{task_id}/fingerprint must return the fingerprint JSON."""
+    task_id = str(uuid.uuid4())
+    results_dir = tmp_path / 'results' / task_id
+    results_dir.mkdir(parents=True, exist_ok=True)
+    fingerprint_json = results_dir / 'fingerprint.json'
+    fingerprint_data = {
+        'version': '1',
+        'bpm': 120.0,
+        'bpm_normalized': 0.6,
+        'key': 'C major',
+        'key_index': 0,
+        'chord_profile': {'C_major': 0.6, 'G_major': 0.4},
+        'energy_profile': [0.5] * 32,
+        'spectral_profile': [0.5] * 8,
+        'duration_seconds': 180.0,
+        'fingerprint_hash': 'abc123',
+    }
+    fingerprint_json.write_text(json.dumps(fingerprint_data))
+
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'results': {
+            'dir': str(results_dir),
+            'fingerprint_json': str(fingerprint_json),
+        },
+    }))
+
+    response = client.get(f'/tasks/{task_id}/fingerprint')
+    assert response.status_code == 200
+    data = response.json()
+    assert data['version'] == '1'
+    assert data['bpm'] == 120.0
+    assert data['key'] == 'C major'
+    assert data['key_index'] == 0
+    assert len(data['energy_profile']) == 32
+    assert len(data['spectral_profile']) == 8
+
+
+def test_get_task_fingerprint_404_when_not_available(client, tmp_path):
+    """GET /tasks/{task_id}/fingerprint returns 404 when no fingerprint exists."""
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+    }))
+
+    response = client.get(f'/tasks/{task_id}/fingerprint')
+    assert response.status_code == 404
+
+
+def test_list_task_fingerprints_returns_all_completed(client, tmp_path):
+    """GET /tasks/fingerprints must return fingerprints for all completed tasks."""
+    task_id_a = str(uuid.uuid4())
+    task_id_b = str(uuid.uuid4())
+    task_id_pending = str(uuid.uuid4())
+
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+
+    for task_id in (task_id_a, task_id_b):
+        results_dir = tmp_path / 'results' / task_id
+        results_dir.mkdir(parents=True, exist_ok=True)
+        fp_path = results_dir / 'fingerprint.json'
+        fp_path.write_text(json.dumps({
+            'version': '1',
+            'bpm': 120.0,
+            'bpm_normalized': 0.6,
+            'key': 'C major',
+            'key_index': 0,
+            'chord_profile': {},
+            'energy_profile': [0.0] * 32,
+            'spectral_profile': [0.0] * 8,
+            'duration_seconds': 60.0,
+            'fingerprint_hash': f'hash_{task_id}',
+        }))
+        (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+            'task_id': task_id,
+            'status': 'done',
+            'results': {
+                'dir': str(results_dir),
+                'fingerprint_json': str(fp_path),
+            },
+        }))
+
+    (tasks_dir / f'{task_id_pending}.json').write_text(json.dumps({
+        'task_id': task_id_pending,
+        'status': 'pending',
+    }))
+
+    response = client.get('/tasks/fingerprints')
+    assert response.status_code == 200
+    data = response.json()
+    assert 'fingerprints' in data
+    assert task_id_a in data['fingerprints']
+    assert task_id_b in data['fingerprints']
+    assert task_id_pending not in data['fingerprints']
+    assert data['fingerprints'][task_id_a]['version'] == '1'
+
+
+def test_list_task_fingerprints_omits_tasks_without_fingerprint(client, tmp_path):
+    """GET /tasks/fingerprints must omit tasks that have no fingerprint file."""
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+    }))
+
+    response = client.get('/tasks/fingerprints')
+    assert response.status_code == 200
+    assert task_id not in response.json()['fingerprints']
+
+
+def test_fingerprint_included_in_task_artifacts(client, tmp_path):
+    """fingerprint_json must appear in the list_task_artifacts response."""
+    task_id = str(uuid.uuid4())
+    results_dir = tmp_path / 'results' / task_id
+    results_dir.mkdir(parents=True, exist_ok=True)
+    fp_file = results_dir / 'fingerprint.json'
+    fp_file.write_text(json.dumps({'version': '1', 'bpm': 120.0}))
+
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'results': {
+            'dir': str(results_dir),
+            'fingerprint_json': str(fp_file),
+        },
+    }))
+
+    response = client.get(f'/tasks/{task_id}/artifacts')
+    assert response.status_code == 200
+    assert 'fingerprint_json' in response.json()['artifacts']
