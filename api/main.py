@@ -1593,13 +1593,23 @@ def get_task_beatgrid(task_id: str):
 # Fingerprint & similar-song finder
 # ---------------------------------------------------------------------------
 
+# These threshold constants mirror _BPM_SIMILARITY_THRESHOLD,
+# _CHORD_SIMILARITY_THRESHOLD, and _ENERGY_SIMILARITY_THRESHOLD in
+# worker/analyze.py.  The API and worker run in separate containers so the
+# values are intentionally kept in sync manually rather than via a shared
+# import.
 _FP_BPM_THRESHOLD = 0.95
 _FP_CHORD_THRESHOLD = 0.5
 _FP_ENERGY_THRESHOLD = 0.8
 
 
 def _fp_cosine_similarity(a: list[float], b: list[float]) -> float:
-    """Return cosine similarity between two equal-length float lists."""
+    """Return cosine similarity between two equal-length float lists.
+
+    This is a dependency-free equivalent of the numpy-based implementation
+    used by ``compare_fingerprints`` in ``worker/analyze.py``; the API
+    container does not depend on numpy.
+    """
     n = min(len(a), len(b))
     if n == 0:
         return 0.0
@@ -1610,7 +1620,11 @@ def _fp_cosine_similarity(a: list[float], b: list[float]) -> float:
 
 
 def _compare_fingerprints(fp_a: dict[str, Any], fp_b: dict[str, Any]) -> dict[str, Any]:
-    """Compare two fingerprint dicts; return similarity score (0–100) and reasons."""
+    """Compare two fingerprint dicts; return similarity score (0–100) and reasons.
+
+    Mirrors ``compare_fingerprints`` in ``worker/analyze.py`` using pure Python
+    instead of numpy (the API container has no numpy dependency).
+    """
     reasons: list[str] = []
     details: dict[str, Any] = {}
     score = 0.0
