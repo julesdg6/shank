@@ -2173,6 +2173,29 @@
           item('Errors', Array.isArray(mt3.errors) && mt3.errors.length ? escapeHtml(mt3.errors.join('; ')) : '—'),
         ].join('');
       }
+      const midiStemsData = data.midi_stems && typeof data.midi_stems === 'object' ? data.midi_stems : null;
+      if (midiStemsData) {
+        const midiStemsObj = midiStemsData.stems && typeof midiStemsData.stems === 'object' ? midiStemsData.stems : {};
+        const midiStemRoles = ['drums', 'bass', 'melody', 'chords'];
+        const midiStemLinks = midiStemRoles
+          .filter(role => midiStemsObj[role] && typeof midiStemsObj[role] === 'object' && midiStemsObj[role].midi_path)
+          .map(role => `<a href="/tasks/${encodeURIComponent(data.task_id)}/midi-stems/${encodeURIComponent(role)}" download="${escapeHtml(role)}.mid">${escapeHtml(role)}.mid</a>`)
+          .join(', ') || '—';
+        const midiStemNotes = Object.entries(midiStemsObj)
+          .map(([role, info]) => {
+            if (!info || typeof info !== 'object') return null;
+            const count = info.note_count;
+            return typeof count === 'number' ? `${escapeHtml(role)}: ${count} notes` : null;
+          })
+          .filter(Boolean)
+          .join('; ') || '—';
+        const midiStemsBackend = midiStemsData.backend || '—';
+        list.innerHTML += [
+          item('MIDI Stems Status', escapeHtml(midiStemsData.status || '—') + (midiStemsBackend !== '—' ? ` (${escapeHtml(midiStemsBackend)})` : '')),
+          item('MIDI Stems Downloads', midiStemLinks),
+          item('MIDI Stems Note Counts', midiStemNotes),
+        ].join('');
+      }
       pre.textContent = JSON.stringify(data, null, 2);
       await initStemWorkbench(data);
       renderArtifactDownloads(data);

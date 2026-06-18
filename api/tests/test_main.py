@@ -1568,3 +1568,134 @@ def test_reprocess_all_valid_modes(client, tmp_path):
         }))
         response = client.post(f'/tasks/{task_id}/reprocess', json={'mode': mode})
         assert response.status_code == 202, f"Expected 202 for mode={mode!r}"
+
+
+# ---------------------------------------------------------------------------
+# MIDI stem extraction endpoints
+# ---------------------------------------------------------------------------
+
+def _midi_bytes() -> bytes:
+    return b'MThd\x00\x00\x00\x06\x00\x00\x00\x01\x01\xe0MTrk\x00\x00\x00\x04\x00\xff/\x00'
+
+
+def test_list_midi_stems_returns_available_roles(client, tmp_path):
+    """GET /tasks/{id}/midi-stems should return roles for stems with accessible MIDI files."""
+    task_id = str(uuid.uuid4())
+    midi_dir = tmp_path / 'results' / task_id / 'midi'
+    midi_dir.mkdir(parents=True, exist_ok=True)
+    drums_mid = midi_dir / 'drums.mid'
+    bass_mid = midi_dir / 'bass.mid'
+    drums_mid.write_bytes(_midi_bytes())
+    bass_mid.write_bytes(_midi_bytes())
+
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'midi_stems': {
+            'enabled': True,
+            'backend': 'basic_pitch',
+            'status': 'completed',
+            'stems': {
+                'drums': {'stem': 'drums', 'role': 'drums', 'midi_path': str(drums_mid), 'note_count': 10},
+                'bass': {'stem': 'bass', 'role': 'bass', 'midi_path': str(bass_mid), 'note_count': 8},
+            },
+            'output_paths': [],
+            'warnings': [],
+            'errors': [],
+        },
+    }))
+
+    response = client.get(f'/tasks/{task_id}/midi-stems')
+    assert response.status_code == 200
+    data = response.json()
+    assert set(data['roles']) == {'drums', 'bass'}
+    assert data['status'] == 'completed'
+    assert data['backend'] == 'basic_pitch'
+
+
+def test_list_midi_stems_returns_empty_when_no_midi_stems(client, tmp_path):
+    """GET /tasks/{id}/midi-stems should return empty roles when no midi_stems key."""
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+    }))
+
+    response = client.get(f'/tasks/{task_id}/midi-stems')
+    assert response.status_code == 200
+    data = response.json()
+    assert data['roles'] == []
+    assert data['status'] == 'unavailable'
+
+
+def test_download_midi_stem_serves_file(client, tmp_path):
+    """GET /tasks/{id}/midi-stems/{role} should serve the MIDI file."""
+    task_id = str(uuid.uuid4())
+    midi_dir = tmp_path / 'results' / task_id / 'midi'
+    midi_dir.mkdir(parents=True, exist_ok=True)
+    melody_mid = midi_dir / 'melody.mid'
+    melody_mid.write_bytes(_midi_bytes())
+
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'midi_stems': {
+            'status': 'completed',
+            'stems': {
+                'melody': {'stem': 'vocals', 'role': 'melody', 'midi_path': str(melody_mid), 'note_count': 5},
+            },
+        },
+    }))
+
+    response = client.get(f'/tasks/{task_id}/midi-stems/melody')
+    assert response.status_code == 200
+    assert response.content == _midi_bytes()
+    assert response.headers.get('content-disposition', '').find('melody.mid') >= 0
+
+
+def test_download_midi_stem_returns_404_for_unknown_role(client, tmp_path):
+    """GET /tasks/{id}/midi-stems/{role} should return 404 for an unrecognised role."""
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'midi_stems': {'status': 'completed', 'stems': {}},
+    }))
+
+    response = client.get(f'/tasks/{task_id}/midi-stems/unknown')
+    assert response.status_code == 404
+
+
+def test_midi_stems_included_in_task_artifacts(client, tmp_path):
+    """MIDI stem files should appear in the artifacts listing."""
+    task_id = str(uuid.uuid4())
+    midi_dir = tmp_path / 'results' / task_id / 'midi'
+    midi_dir.mkdir(parents=True, exist_ok=True)
+    chords_mid = midi_dir / 'chords.mid'
+    chords_mid.write_bytes(_midi_bytes())
+
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'midi_stems': {
+            'status': 'completed',
+            'stems': {
+                'chords': {'stem': 'other', 'role': 'chords', 'midi_path': str(chords_mid), 'note_count': 3},
+            },
+        },
+    }))
+
+    response = client.get(f'/tasks/{task_id}/artifacts')
+    assert response.status_code == 200
+    artifacts = response.json()['artifacts']
+    assert 'midi_stem_chords' in artifacts
