@@ -1698,6 +1698,57 @@ def _task_artifacts(task: dict) -> dict[str, Path]:
     return artifacts
 
 
+@app.get('/tasks/{task_id}/report')
+def get_task_report(task_id: str, format: str = 'json', request: Request = None):  # type: ignore[assignment]
+    """Return a complete song-breakdown report for a completed task.
+
+    Supported formats (via ``?format=`` query parameter or ``Accept`` header):
+
+    * ``json``  – structured JSON (default)
+    * ``html``  – self-contained HTML page with inline SVG charts
+    * ``pdf``   – multi-page PDF (requires matplotlib)
+
+    The ``Accept`` header is checked when no ``format`` parameter is supplied:
+    ``text/html`` → HTML, ``application/pdf`` → PDF, everything else → JSON.
+    """
+    from api.report import build_report_json, build_report_html, build_report_pdf
+
+    task = _load_task(task_id)
+
+    # Resolve format from query param or Accept header.
+    fmt = format.lower().strip()
+    if fmt == 'json' and request is not None:
+        accept = request.headers.get('accept', '')
+        if _get_media_type_quality(accept, 'text/html') > _get_media_type_quality(accept, 'application/json'):
+            fmt = 'html'
+        elif _get_media_type_quality(accept, 'application/pdf') > _get_media_type_quality(accept, 'application/json'):
+            fmt = 'pdf'
+
+    if fmt == 'html':
+        html_content = build_report_html(task)
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(content=html_content)
+
+    if fmt == 'pdf':
+        try:
+            pdf_bytes = build_report_pdf(task)
+        except ImportError as exc:
+            raise HTTPException(
+                status_code=501,
+                detail=f'PDF generation requires matplotlib: {exc}',
+            )
+        from fastapi.responses import Response
+        safe_task_id = _validated_task_id(task_id)
+        return Response(
+            content=pdf_bytes,
+            media_type='application/pdf',
+            headers={'Content-Disposition': f'attachment; filename="shank-report-{safe_task_id}.pdf"'},
+        )
+
+    # Default: JSON
+    return build_report_json(task)
+
+
 @app.get('/tasks/{task_id}/artifacts')
 def list_task_artifacts(task_id: str):
     task = _load_task(task_id)

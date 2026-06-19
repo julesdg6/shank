@@ -1754,3 +1754,212 @@ def test_reprocess_all_valid_modes(client, tmp_path):
         }))
         response = client.post(f'/tasks/{task_id}/reprocess', json={'mode': mode})
         assert response.status_code == 202, f"Expected 202 for mode={mode!r}"
+
+
+# ---------------------------------------------------------------------------
+# GET /tasks/{task_id}/report
+# ---------------------------------------------------------------------------
+
+def _make_completed_task(tmp_path: Path, task_id: str) -> dict:
+    """Write and return a minimal completed task with full analysis data."""
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    task = {
+        'task_id': task_id,
+        'status': 'done',
+        'source': 'mysong.mp3',
+        'bpm': 128.0,
+        'key': 'C major',
+        'duration_seconds': 180.0,
+        'analysis': {
+            'full_mix': {
+                'bpm': 128.0,
+                'key': 'C major',
+                'duration_seconds': 180.0,
+                'lufs': -14.0,
+                'waveform': [0.1, 0.2, 0.3, 0.2, 0.1],
+                'energy_over_time': [0.01, 0.04, 0.09, 0.04, 0.01],
+                'loudness_curve': [0.5, 0.6, 0.7, 0.6, 0.5],
+                'structure': [
+                    {'label': 'Intro', 'start_seconds': 0.0, 'end_seconds': 30.0, 'timestamp': '0:00'},
+                    {'label': 'Verse', 'start_seconds': 30.0, 'end_seconds': 90.0, 'timestamp': '0:30'},
+                    {'label': 'Outro', 'start_seconds': 90.0, 'end_seconds': 180.0, 'timestamp': '1:30'},
+                ],
+                'sections': [
+                    {'label': 'A', 'start_seconds': 0.0, 'end_seconds': 60.0},
+                    {'label': 'B', 'start_seconds': 60.0, 'end_seconds': 180.0},
+                ],
+                'cue_points': [
+                    {'name': 'intro', 'time_seconds': 0.0},
+                    {'name': 'first_downbeat', 'time_seconds': 0.47},
+                    {'name': 'outro', 'time_seconds': 150.0},
+                ],
+                'chords': {
+                    'segments': [
+                        {'symbol': 'C', 'start_seconds': 0.0, 'end_seconds': 4.0, 'confidence': 0.9},
+                        {'symbol': 'Am', 'start_seconds': 4.0, 'end_seconds': 8.0, 'confidence': 0.85},
+                    ],
+                    'progression': ['C', 'Am', 'F', 'G'],
+                },
+                'beatgrid': {'bpm': 128.0, 'first_beat_seconds': 0.0, 'beats': []},
+            },
+            'stems': {
+                'vocals': {'bpm': 128.0, 'key': 'C major', 'duration_seconds': 180.0, 'lufs': -18.0},
+                'drums': {'bpm': 128.0, 'key': None, 'duration_seconds': 180.0, 'lufs': -12.0},
+            },
+        },
+        'stems': {
+            'vocals': '/srv/shank/data/stems/vocals.wav',
+            'drums': '/srv/shank/data/stems/drums.wav',
+        },
+        'mt3': {
+            'status': 'completed',
+            'full_mix': {
+                'midi_path': '/srv/shank/data/mt3/full_mix.mid',
+                'notes': [{'pitch': 60, 'onset': 0.0, 'offset': 0.5}],
+            },
+            'stems': {},
+        },
+    }
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps(task))
+    return task
+
+
+def test_report_json_returns_structured_payload(client, tmp_path):
+    """GET /tasks/{task_id}/report returns a JSON report with all expected fields."""
+    task_id = str(uuid.uuid4())
+    _make_completed_task(tmp_path, task_id)
+
+    response = client.get(f'/tasks/{task_id}/report?format=json')
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data['report_version'] == '1.0'
+    assert data['task_id'] == task_id
+    assert 'generated_at' in data
+    assert data['title'] == 'mysong'
+    assert data['summary']['bpm'] == 128.0
+    assert data['summary']['key'] == 'C major'
+    assert data['summary']['duration_seconds'] == 180.0
+    assert data['summary']['lufs'] == -14.0
+    assert len(data['structure']) == 3
+    assert data['structure'][0]['label'] == 'Intro'
+    assert len(data['sections']) == 2
+    assert len(data['cue_points']) == 3
+    assert len(data['chords']['segments']) == 2
+    assert data['chords']['progression'] == ['C', 'Am', 'F', 'G']
+    assert len(data['waveform']) == 5
+    assert len(data['energy']) == 5
+    assert len(data['loudness']) == 5
+    assert 'vocals' in data['stems']
+    assert 'drums' in data['stems']
+    assert data['stems']['vocals']['bpm'] == 128.0
+    assert 'full_mix' in data['midi']
+    assert data['midi']['full_mix']['note_count'] == 1
+
+
+def test_report_json_is_default_format(client, tmp_path):
+    """GET /tasks/{task_id}/report without format param defaults to JSON."""
+    task_id = str(uuid.uuid4())
+    _make_completed_task(tmp_path, task_id)
+
+    response = client.get(f'/tasks/{task_id}/report')
+    assert response.status_code == 200
+    assert response.headers['content-type'].startswith('application/json')
+    data = response.json()
+    assert 'report_version' in data
+
+
+def test_report_html_returns_self_contained_page(client, tmp_path):
+    """GET /tasks/{task_id}/report?format=html returns a complete HTML page."""
+    task_id = str(uuid.uuid4())
+    _make_completed_task(tmp_path, task_id)
+
+    response = client.get(f'/tasks/{task_id}/report?format=html')
+    assert response.status_code == 200
+    assert response.headers['content-type'].startswith('text/html')
+    body = response.text
+    assert '<!DOCTYPE html>' in body
+    assert 'SHANK Report' in body
+    assert '128.00' in body
+    assert 'C major' in body
+    assert 'Intro' in body
+    assert 'Verse' in body
+    assert 'Outro' in body
+    assert '<svg' in body
+
+
+def test_report_html_served_by_accept_header(client, tmp_path):
+    """Accept: text/html should trigger HTML format even without ?format=."""
+    task_id = str(uuid.uuid4())
+    _make_completed_task(tmp_path, task_id)
+
+    response = client.get(
+        f'/tasks/{task_id}/report',
+        headers={'accept': 'text/html,application/xhtml+xml'},
+    )
+    assert response.status_code == 200
+    assert response.headers['content-type'].startswith('text/html')
+    assert '<!DOCTYPE html>' in response.text
+
+
+def test_report_pdf_returns_pdf_bytes(client, tmp_path):
+    """GET /tasks/{task_id}/report?format=pdf returns a PDF file."""
+    task_id = str(uuid.uuid4())
+    _make_completed_task(tmp_path, task_id)
+
+    response = client.get(f'/tasks/{task_id}/report?format=pdf')
+    assert response.status_code == 200
+    assert response.headers['content-type'] == 'application/pdf'
+    assert response.content[:4] == b'%PDF'
+    assert 'attachment' in response.headers.get('content-disposition', '')
+
+
+def test_report_returns_404_for_unknown_task(client):
+    """Report endpoint returns 404 when the task does not exist."""
+    missing = str(uuid.uuid4())
+    response = client.get(f'/tasks/{missing}/report')
+    assert response.status_code == 404
+
+
+def test_report_returns_404_for_invalid_task_id(client):
+    """Report endpoint returns 404 for non-UUID task IDs."""
+    response = client.get('/tasks/not-a-uuid/report')
+    assert response.status_code == 404
+
+
+def test_report_json_minimal_task_no_analysis(client, tmp_path):
+    """Report should work for a task with no analysis data (e.g. pending task)."""
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'pending',
+        'source': 'song.mp3',
+    }))
+
+    response = client.get(f'/tasks/{task_id}/report?format=json')
+    assert response.status_code == 200
+    data = response.json()
+    assert data['report_version'] == '1.0'
+    assert data['summary']['bpm'] is None
+    assert data['structure'] == []
+    assert data['chords']['segments'] == []
+
+
+def test_report_html_minimal_task_renders_placeholders(client, tmp_path):
+    """HTML report for a task with no data should still render without crashing."""
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'pending',
+        'source': 'empty.mp3',
+    }))
+
+    response = client.get(f'/tasks/{task_id}/report?format=html')
+    assert response.status_code == 200
+    assert '<!DOCTYPE html>' in response.text
+    assert 'No data' in response.text or 'No chord data' in response.text

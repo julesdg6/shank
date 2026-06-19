@@ -235,6 +235,7 @@ docker build -t shank:local .
 | `POST` | `/tasks/{task_id}/reprocess` | Requeue an existing task using current or original analysis settings |
 | `GET` | `/tasks/{task_id}/chords` | Return chord detection results for a completed task |
 | `GET` | `/tasks/{task_id}/beatgrid` | Return beat grid and beat detection metadata for a completed task |
+| `GET` | `/tasks/{task_id}/report` | Generate a complete song-breakdown report (`?format=json\|html\|pdf`) |
 | `GET` | `/tasks/{task_id}/artifacts` | List downloadable output files for a completed task |
 | `GET` | `/tasks/{task_id}/artifacts/{artifact_name}` | Download a named artifact file (e.g. normalised WAV, stem) |
 | `GET` | `/tasks/completed` | List all completed (`done`) tasks |
@@ -249,6 +250,32 @@ docker build -t shank:local .
 | `POST` | `/api/models/download` | Start downloading separator models (`six_stems` optional) |
 | `POST` | `/api/models/cancel` | Cancel an in-progress separator model download |
 | `GET` | `/ui` | Web dashboard (static HTML/JS) |
+
+### Analysis Report
+
+`GET /tasks/{task_id}/report` generates a complete song-breakdown report for a finished task.
+
+The format is controlled via the `?format=` query parameter **or** the `Accept` header:
+
+| Format | Query param | Accept header |
+|--------|-------------|---------------|
+| JSON (default) | `?format=json` | `application/json` |
+| HTML (self-contained) | `?format=html` | `text/html` |
+| PDF (multi-page) | `?format=pdf` | `application/pdf` |
+
+```bash
+# JSON
+curl http://localhost:8088/tasks/<task_id>/report
+
+# Self-contained HTML page
+curl http://localhost:8088/tasks/<task_id>/report?format=html -o report.html
+
+# PDF (requires matplotlib in the API container)
+curl http://localhost:8088/tasks/<task_id>/report?format=pdf -o report.pdf
+```
+
+The report covers: BPM · Key · Chords · Song structure · Sections · Cue points ·
+Waveform · Energy · Loudness · MIDI / transcription · Stems.
 
 ### Reprocess a task
 
