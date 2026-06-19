@@ -30,6 +30,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
 from mt3_config import DEFAULT_MT3_MODEL, DEFAULT_MT3_SERVICE_URL, DEFAULT_MT3_TIMEOUT, get_mt3_output_path  # noqa: E402
+from transcription import get_backend as _get_transcription_backend  # noqa: E402
+from transcription.base import BackendDependencyError, EmptyTranscriptionError, TranscriptionError  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,6 +59,18 @@ MT3_TIMEOUT = int(os.getenv('MT3_TIMEOUT', str(DEFAULT_MT3_TIMEOUT)))
 MT3_TRANSCRIBE_STEMS = os.getenv('MT3_TRANSCRIBE_STEMS', 'true').strip().lower() in ('1', 'true', 'yes', 'on')
 MT3_FAIL_TASK_ON_ERROR = os.getenv('MT3_FAIL_TASK_ON_ERROR', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
 TRANSCRIPTION_BACKEND = os.getenv('TRANSCRIPTION_BACKEND', 'basic_pitch').strip() or 'basic_pitch'
+MIDI_STEMS_ENABLED = os.getenv('MIDI_STEMS_ENABLED', 'true').strip().lower() in ('1', 'true', 'yes', 'on')
+
+# Mapping from audio stem name → MIDI role name used for output files.
+# Priority order matters when multiple stems share a role (first match wins).
+_STEM_MIDI_ROLE_MAP: dict[str, str] = {
+    'drums': 'drums',
+    'bass': 'bass',
+    'vocals': 'melody',
+    'guitar': 'melody',
+    'piano': 'chords',
+    'other': 'chords',
+}
 
 # Standard WAV output format
 WAV_SAMPLE_RATE = '44100'
@@ -218,6 +232,7 @@ def _task_artifact_paths(
     stem_tracks: dict[str, str] | None,
     mt3_result: dict[str, Any] | None,
     result_artifacts: dict[str, str] | None = None,
+    midi_stems_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     artifacts: dict[str, Any] = {'normalized_wav': normalized_path}
 
@@ -251,6 +266,19 @@ def _task_artifact_paths(
             if stem_artifacts:
                 artifacts['mt3_stems'] = stem_artifacts
 
+    if midi_stems_result is not None:
+        midi_stems = midi_stems_result.get('stems')
+        if isinstance(midi_stems, dict):
+            midi_stem_artifacts: dict[str, str] = {}
+            for role, stem_data in midi_stems.items():
+                if not isinstance(role, str) or not isinstance(stem_data, dict):
+                    continue
+                midi_path = stem_data.get('midi_path')
+                if isinstance(midi_path, str) and midi_path:
+                    midi_stem_artifacts[role] = midi_path
+            if midi_stem_artifacts:
+                artifacts['midi_stems'] = midi_stem_artifacts
+
     if isinstance(result_artifacts, dict):
         for artifact_name, key in (
             ('beatgrid_json', 'beatgrid_json'),
@@ -283,6 +311,7 @@ def _structured_result_paths(task_id: str) -> dict[str, str]:
         'tempo_curve_png': str(result_dir / 'tempo_curve.png'),
         'beatgraph_png': str(result_dir / 'beatgraph.png'),
         'mt3_json': str(result_dir / 'mt3.json'),
+        'midi_stems_json': str(result_dir / 'midi_stems.json'),
         'lyrics_json': str(result_dir / 'lyrics.json'),
         'credits_json': str(result_dir / 'credits.json'),
         'song_metadata_json': str(result_dir / 'song_metadata.json'),
@@ -430,6 +459,7 @@ def _write_structured_results(
     metadata_payload: dict[str, Any],
     mt3_result: dict[str, Any] | None,
     stem_tracks: dict[str, str] | None,
+    midi_stems_result: dict[str, Any] | None = None,
 ) -> None:
     result_dir = Path(result_artifacts['dir'])
     result_dir.mkdir(parents=True, exist_ok=True)
@@ -437,6 +467,7 @@ def _write_structured_results(
     task_path = Path(result_artifacts['task_json'])
     analysis_path = Path(result_artifacts['analysis_json'])
     mt3_path = Path(result_artifacts['mt3_json'])
+    midi_stems_path = Path(result_artifacts['midi_stems_json'])
     lyrics_path = Path(result_artifacts['lyrics_json'])
     credits_path = Path(result_artifacts['credits_json'])
     song_metadata_path = Path(result_artifacts['song_metadata_json'])
@@ -448,14 +479,25 @@ def _write_structured_results(
     _write_structure_output(result_artifacts, analysis_payload)
     _write_cue_points_output(result_artifacts, analysis_payload)
     mt3_payload = mt3_result if isinstance(mt3_result, dict) else {}
+    midi_stems_payload = midi_stems_result if isinstance(midi_stems_result, dict) else {}
     lyrics_payload = metadata_payload.get('lyrics') if isinstance(metadata_payload.get('lyrics'), dict) else {}
     credits_payload = metadata_payload.get('credits') if isinstance(metadata_payload.get('credits'), dict) else {}
     mt3_path.write_text(json.dumps(mt3_payload, indent=2))
+    midi_stems_path.write_text(json.dumps(midi_stems_payload, indent=2))
     lyrics_path.write_text(json.dumps(lyrics_payload, indent=2))
     credits_path.write_text(json.dumps(credits_payload, indent=2))
     song_metadata_path.write_text(json.dumps(metadata_payload, indent=2))
     artifacts_path.write_text(
-        json.dumps(_task_artifact_paths(normalized_path, stem_tracks, mt3_payload, result_artifacts), indent=2),
+        json.dumps(
+            _task_artifact_paths(
+                normalized_path,
+                stem_tracks,
+                mt3_payload,
+                result_artifacts=result_artifacts,
+                midi_stems_result=midi_stems_payload,
+            ),
+            indent=2,
+        ),
     )
 
 
@@ -611,6 +653,108 @@ def _transcription_payload_from_mt3(mt3_result: dict[str, Any]) -> dict[str, Any
         'midi_file': midi_file,
         'notes': notes,
     }
+
+
+def run_stem_midi_extraction(
+    task_id: str,
+    stem_tracks: dict[str, str],
+    *,
+    enabled: bool | None = None,
+) -> dict[str, Any]:
+    """Transcribe each separated stem to MIDI using the configured local backend.
+
+    Produces named output files (drums.mid, bass.mid, melody.mid, chords.mid) in
+    ``RESULTS_DIR/<task_id>/midi/``.  Stems are mapped to roles via
+    ``_STEM_MIDI_ROLE_MAP``; when multiple stems share a role the first one
+    encountered wins.
+
+    Returns a result dict with keys: ``enabled``, ``backend``, ``status``,
+    ``stems`` (role→per-stem info), ``output_paths``, ``warnings``, ``errors``.
+    """
+    midi_enabled = MIDI_STEMS_ENABLED if enabled is None else bool(enabled)
+    result: dict[str, Any] = {
+        'enabled': midi_enabled,
+        'backend': TRANSCRIPTION_BACKEND,
+        'status': 'disabled',
+        'stems': {},
+        'output_paths': [],
+        'warnings': [],
+        'errors': [],
+    }
+
+    if not midi_enabled:
+        return result
+
+    if TRANSCRIPTION_BACKEND in ('disabled', 'none', ''):
+        result['warnings'].append('MIDI stem extraction skipped: TRANSCRIPTION_BACKEND is disabled')
+        return result
+
+    if not stem_tracks:
+        result['warnings'].append('MIDI stem extraction skipped: no stems available')
+        return result
+
+    try:
+        backend = _get_transcription_backend(TRANSCRIPTION_BACKEND)
+    except ValueError as exc:
+        result['status'] = 'failed'
+        result['errors'].append(f'unsupported transcription backend: {exc}')
+        result['error'] = '; '.join(str(e) for e in result['errors'])
+        return result
+
+    output_dir = RESULTS_DIR / task_id / 'midi'
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    claimed_roles: set[str] = set()
+
+    for stem_name, stem_path in stem_tracks.items():
+        role = _STEM_MIDI_ROLE_MAP.get(stem_name)
+        if role is None:
+            result['warnings'].append(f'Stem {stem_name!r} has no MIDI role mapping; skipped')
+            continue
+        if role in claimed_roles:
+            result['warnings'].append(
+                f'Stem {stem_name!r} maps to role {role!r} which is already filled; skipped'
+            )
+            continue
+
+        midi_file = output_dir / f'{role}.mid'
+        try:
+            transcription = backend.transcribe(Path(stem_path))
+            midi_file.write_bytes(transcription.midi_bytes)
+            stem_result: dict[str, Any] = {
+                'stem': stem_name,
+                'role': role,
+                'midi_path': str(midi_file),
+                'note_count': len(transcription.notes),
+                'completed_at': datetime.now(timezone.utc).isoformat(),
+            }
+            if transcription.warnings:
+                stem_result['warnings'] = list(transcription.warnings)
+            result['stems'][role] = stem_result
+            result['output_paths'].append(str(midi_file))
+            claimed_roles.add(role)
+            log.info('Task %s MIDI stem extraction: %s → %s (%d notes)', task_id, stem_name, role, len(transcription.notes))
+        except (BackendDependencyError, EmptyTranscriptionError, TranscriptionError) as exc:
+            log.warning('Task %s MIDI stem extraction failed for %s: %s', task_id, stem_name, exc)
+            result['errors'].append(f'{stem_name}: {exc}')
+        except Exception as exc:
+            log.exception('Task %s unexpected error during MIDI stem extraction for %s: %s', task_id, stem_name, exc)
+            result['errors'].append(f'{stem_name}: {exc}')
+
+    if not result['stems'] and not result['errors']:
+        result['warnings'].append('No stems were transcribed to MIDI')
+
+    if result['errors'] and result['stems']:
+        result['status'] = 'partial'
+    elif result['errors']:
+        result['status'] = 'failed'
+    else:
+        result['status'] = 'completed'
+
+    if result['errors']:
+        result['error'] = '; '.join(str(e) for e in result['errors'])
+
+    return result
 
 
 def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
@@ -984,6 +1128,19 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
             _record_task_progress(task_file, 100, f'MIDI transcription failed: {error_msg}')
             continue
 
+        task_midi_stems_override = task.get('enable_midi_stems')
+        midi_stems_enabled_for_task = (
+            task_midi_stems_override if isinstance(task_midi_stems_override, bool) else MIDI_STEMS_ENABLED
+        )
+        if stem_tracks and midi_stems_enabled_for_task and TRANSCRIPTION_BACKEND not in ('disabled', 'none', ''):
+            _record_task_progress(task_file, 82, 'Extracting MIDI stems')
+        midi_stems_result = run_stem_midi_extraction(
+            task_id,
+            stem_tracks or {},
+            enabled=midi_stems_enabled_for_task,
+        )
+        _update_task(task_file, {'midi_stems': midi_stems_result})
+
         try:
             _record_task_progress(task_file, 90, 'Running audio analysis')
             full_mix_analysis = analyze_audio(normalized_path)
@@ -1029,6 +1186,7 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                 metadata_payload=metadata_payload,
                 mt3_result=mt3_result,
                 stem_tracks=stem_tracks,
+                midi_stems_result=midi_stems_result,
             )
             _update_task(task_file, completion_updates)
             _record_task_progress(task_file, 100, 'Task completed')
