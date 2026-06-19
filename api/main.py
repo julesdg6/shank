@@ -1718,6 +1718,20 @@ def _task_artifacts(task: dict) -> dict[str, Path]:
                     continue
                 artifacts[f'stem_{stem_name}_midi'] = resolved
 
+    midi_stems_data = task.get('midi_stems')
+    if isinstance(midi_stems_data, dict):
+        midi_stems = midi_stems_data.get('stems')
+        if isinstance(midi_stems, dict):
+            for role, stem_info in midi_stems.items():
+                if not isinstance(role, str) or not isinstance(stem_info, dict):
+                    continue
+                midi_path = stem_info.get('midi_path')
+                if not isinstance(midi_path, str) or not midi_path:
+                    continue
+                resolved = _resolve_data_path(midi_path)
+                if resolved is not None:
+                    artifacts[f'midi_stem_{role}'] = resolved
+
     structured_results = task.get('results')
     if isinstance(structured_results, dict):
         structured_files = {
@@ -1730,6 +1744,7 @@ def _task_artifacts(task: dict) -> dict[str, Path]:
             'tempo_curve_png': structured_results.get('tempo_curve_png'),
             'beatgraph_png': structured_results.get('beatgraph_png'),
             'results_mt3_json': structured_results.get('mt3_json'),
+            'results_midi_stems_json': structured_results.get('midi_stems_json'),
             'lyrics_json': structured_results.get('lyrics_json'),
             'credits_json': structured_results.get('credits_json'),
             'song_metadata_json': structured_results.get('song_metadata_json'),
@@ -1844,6 +1859,63 @@ def get_mt3_notes(task_id: str, track_name: str):
         raise HTTPException(status_code=500, detail='MIDI note metadata is unreadable')
 
 
+# ---------------------------------------------------------------------------
+# MIDI stem extraction endpoints
+# ---------------------------------------------------------------------------
+
+def _midi_stems_from_task(task: dict) -> dict:
+    """Return the ``midi_stems.stems`` dict from a task, or an empty dict."""
+    midi_stems_data = task.get('midi_stems')
+    if not isinstance(midi_stems_data, dict):
+        return {}
+    stems = midi_stems_data.get('stems')
+    return stems if isinstance(stems, dict) else {}
+
+
+@app.get('/tasks/{task_id}/midi-stems')
+def list_midi_stems(task_id: str):
+    """List available MIDI stem roles for a task.
+
+    Returns ``{"roles": [...], "status": "...", "backend": "..."}`` where
+    ``roles`` is a list of available role names (e.g. ``drums``, ``bass``,
+    ``melody``, ``chords``).
+    """
+    task = _load_task(task_id)
+    midi_stems_data = task.get('midi_stems')
+    if not isinstance(midi_stems_data, dict):
+        return {'roles': [], 'status': 'unavailable', 'backend': None}
+    stems = _midi_stems_from_task(task)
+    available_roles = [
+        role for role, info in stems.items()
+        if isinstance(info, dict) and isinstance(info.get('midi_path'), str)
+        and _resolve_data_path(info['midi_path']) is not None
+    ]
+    return {
+        'roles': sorted(available_roles),
+        'status': midi_stems_data.get('status', 'unknown'),
+        'backend': midi_stems_data.get('backend'),
+        'warnings': midi_stems_data.get('warnings') or [],
+        'errors': midi_stems_data.get('errors') or [],
+    }
+
+
+@app.get('/tasks/{task_id}/midi-stems/{role}')
+def download_midi_stem(task_id: str, role: str):
+    """Download the MIDI file for a specific stem role (drums, bass, melody, chords)."""
+    task = _load_task(task_id)
+    stems = _midi_stems_from_task(task)
+    stem_info = stems.get(role)
+    if not isinstance(stem_info, dict):
+        raise HTTPException(status_code=404, detail=f'MIDI stem {role!r} not found')
+    midi_path = stem_info.get('midi_path')
+    if not isinstance(midi_path, str) or not midi_path:
+        raise HTTPException(status_code=404, detail=f'MIDI stem {role!r} has no MIDI file')
+    resolved = _resolve_data_path(midi_path)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail=f'MIDI stem {role!r} file not found on disk')
+    return FileResponse(path=resolved, media_type='audio/midi', filename=f'{role}.mid')
+
+
 @app.get('/tasks/{task_id}/chords')
 def get_task_chords(task_id: str):
     """Return the chord detection results for a completed task.
@@ -1857,6 +1929,28 @@ def get_task_chords(task_id: str):
     if not isinstance(chords, dict):
         raise HTTPException(status_code=404, detail='Chord data not available for this task')
     return chords
+
+
+@app.get('/tasks/{task_id}/harmonic')
+def get_task_harmonic(task_id: str):
+    """Return the harmonic analysis for a completed task.
+
+    The response contains:
+
+    * ``key`` – the globally detected key string (e.g. ``'C major'``).
+    * ``key_changes`` – list of key-change events, each with
+      ``time_seconds``, ``timestamp`` (``MM:SS``), ``key``, and
+      ``confidence``.
+    * ``segments`` – chord segments enriched with ``roman_numeral``
+      (e.g. ``'I'``, ``'vi'``, ``'bVII'``) and ``is_borrowed`` (bool).
+    * ``borrowed_chords`` – filtered list of segments where ``is_borrowed``
+      is ``true``.
+    """
+    task = _load_task(task_id)
+    harmonic = task.get('harmonic')
+    if not isinstance(harmonic, dict):
+        raise HTTPException(status_code=404, detail='Harmonic analysis not available for this task')
+    return harmonic
 
 
 @app.get('/tasks/{task_id}/beatgrid')
