@@ -19,7 +19,7 @@ To provide users with an automated pipeline that transforms raw audio/URLs into 
 - **Built-in Stem Separation**: [python-audio-separator](https://github.com/nomadkaraoke/python-audio-separator) separates vocals, drums, bass, and other instruments (4-stem or 6-stem) — no external service required. Optional **ACE-Step** integration for comparison.
 - **Optional MT3 Transcription**: Worker can call a dedicated `shank-mt3` service to generate MIDI + note metadata from normalized mix and stems.
 - **Asynchronous Workflow**: A background worker polls a filesystem task queue and processes jobs independently of the API.
-- **Structured Result Artifacts**: Completed tasks now write a predictable `DATA_DIR/results/<task_id>/` folder with `task.json`, `analysis.json`, `beatgrid.json`, `structure.json`, `waveform_beats.png`, `tempo_curve.png`, `beatgraph.png`, `mt3.json`, `lyrics.json`, `credits.json`, `song_metadata.json`, and `artifacts.json`.
+- **Structured Result Artifacts**: Completed tasks now write a predictable `DATA_DIR/results/<task_id>/` folder with `task.json`, `analysis.json`, `beatgrid.json`, `structure.json`, `waveform_beats.png`, `tempo_curve.png`, `beatgraph.png`, `mt3.json`, `lyrics.json`, `credits.json`, `song_metadata.json`, `musical_profile.json`, `ace_step_prompt.json`, and `artifacts.json`.
 - **Optional Lyrics + Credits Lookup**: SHANK can enrich tasks with local song metadata (embedded tags, YouTube metadata, and sidecar `.lrc` files) and store `lyrics`, `credits`, and `song_metadata` on each completed task.
 - **Web Dashboard**: A built-in UI at `/ui` to submit tasks, monitor progress, and inspect results.
 - **MCP Automation Server**: Optional MCP server exposing SHANK task operations for automation clients.
@@ -454,9 +454,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-19T00:21:23Z
-- Latest commit: `45fcca8`
-- Commit message: Merge pull request #178 from julesdg6/copilot/feature-midi-stem-extraction  feat: MIDI stem extraction – drums, bass, melody, chords
+- Last automated update: 2026-06-19T03:13:24Z
+- Latest commit: `b6ca378`
+- Commit message: Merge pull request #181 from julesdg6/copilot/feature-ai-music-generation-prompt-builder  Add ACE-Step prompt builder outputs from SHANK analysis artifacts
 <!-- readme-update:end -->
 
 ## 🥁 Beat Detection & Beat Grid
