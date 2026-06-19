@@ -452,9 +452,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-19T00:21:23Z
-- Latest commit: `45fcca8`
-- Commit message: Merge pull request #178 from julesdg6/copilot/feature-midi-stem-extraction  feat: MIDI stem extraction – drums, bass, melody, chords
+- Last automated update: 2026-06-19T03:13:24Z
+- Latest commit: `b6ca378`
+- Commit message: Merge pull request #181 from julesdg6/copilot/feature-ai-music-generation-prompt-builder  Add ACE-Step prompt builder outputs from SHANK analysis artifacts
 <!-- readme-update:end -->
 
 ## 🥁 Beat Detection & Beat Grid
