@@ -11,7 +11,11 @@ import numpy as np
 import pytest
 
 # conftest.py adds the worker directory to sys.path, so we can import directly.
+<<<<<<< HEAD
 from analyze import _derive_song_structure, _detect_chords, analyze_audio, build_fingerprint
+=======
+from analyze import _derive_song_structure, _detect_chords, analyze_audio, _derive_cue_points
+>>>>>>> origin/master
 import worker_loop
 
 # ---------------------------------------------------------------------------
@@ -392,6 +396,112 @@ def reloaded_worker_loop(monkeypatch, tmp_path):
     monkeypatch.setenv('DATA_DIR', str(tmp_path))
     importlib.reload(worker_loop)
     return worker_loop
+
+
+# ---------------------------------------------------------------------------
+# _derive_cue_points
+# ---------------------------------------------------------------------------
+
+def test_derive_cue_points_uses_structure_labels():
+    """Cue points must be derived from the song structure in label order."""
+    structure = [
+        {'label': 'Intro', 'start_seconds': 0.0, 'end_seconds': 16.0, 'timestamp': '00:00'},
+        {'label': 'Verse', 'start_seconds': 16.0, 'end_seconds': 48.0, 'timestamp': '00:16'},
+        {'label': 'Chorus', 'start_seconds': 48.0, 'end_seconds': 80.0, 'timestamp': '00:48'},
+        {'label': 'Breakdown', 'start_seconds': 80.0, 'end_seconds': 112.0, 'timestamp': '01:20'},
+        {'label': 'Outro', 'start_seconds': 224.0, 'end_seconds': 240.0, 'timestamp': '03:44'},
+    ]
+    cues = _derive_cue_points([], [], 240.0, structure=structure)
+    names = [c['name'] for c in cues]
+    assert names == ['Intro', 'Verse', 'Chorus', 'Breakdown', 'Outro']
+    assert cues[0]['time_seconds'] == 0.0
+    assert cues[1]['time_seconds'] == 16.0
+    assert cues[2]['time_seconds'] == 48.0
+
+
+def test_derive_cue_points_assigns_hot_cue_indices():
+    """Each cue point must have a zero-based hot_cue index."""
+    structure = [
+        {'label': 'Intro', 'start_seconds': 0.0, 'end_seconds': 16.0, 'timestamp': '00:00'},
+        {'label': 'Verse', 'start_seconds': 16.0, 'end_seconds': 48.0, 'timestamp': '00:16'},
+        {'label': 'Chorus', 'start_seconds': 48.0, 'end_seconds': 80.0, 'timestamp': '00:48'},
+    ]
+    cues = _derive_cue_points([], [], 240.0, structure=structure)
+    assert cues[0]['hot_cue'] == 0
+    assert cues[1]['hot_cue'] == 1
+    assert cues[2]['hot_cue'] == 2
+
+
+def test_derive_cue_points_assigns_colors():
+    """Each cue point must carry a non-empty hex color string."""
+    structure = [
+        {'label': 'Intro', 'start_seconds': 0.0, 'end_seconds': 16.0, 'timestamp': '00:00'},
+        {'label': 'Verse', 'start_seconds': 16.0, 'end_seconds': 48.0, 'timestamp': '00:16'},
+    ]
+    cues = _derive_cue_points([], [], 240.0, structure=structure)
+    for cue in cues:
+        assert isinstance(cue['color'], str)
+        assert cue['color'].startswith('#')
+        assert len(cue['color']) == 7
+
+
+def test_derive_cue_points_deduplicated_labels():
+    """Repeated section labels should appear only once as a cue point."""
+    structure = [
+        {'label': 'Intro', 'start_seconds': 0.0, 'end_seconds': 16.0, 'timestamp': '00:00'},
+        {'label': 'Verse', 'start_seconds': 16.0, 'end_seconds': 48.0, 'timestamp': '00:16'},
+        {'label': 'Chorus', 'start_seconds': 48.0, 'end_seconds': 80.0, 'timestamp': '00:48'},
+        {'label': 'Verse', 'start_seconds': 80.0, 'end_seconds': 112.0, 'timestamp': '01:20'},
+        {'label': 'Chorus', 'start_seconds': 112.0, 'end_seconds': 144.0, 'timestamp': '01:52'},
+        {'label': 'Outro', 'start_seconds': 224.0, 'end_seconds': 240.0, 'timestamp': '03:44'},
+    ]
+    cues = _derive_cue_points([], [], 240.0, structure=structure)
+    names = [c['name'] for c in cues]
+    assert names.count('Verse') == 1
+    assert names.count('Chorus') == 1
+
+
+def test_derive_cue_points_fallback_without_structure():
+    """Without structure, fall back to beat/downbeat anchors."""
+    beats = [0.5, 0.97, 1.44]
+    downbeats = [0.5, 2.0]
+    cues = _derive_cue_points(downbeats, beats, 120.0)
+    names = [c['name'] for c in cues]
+    assert 'Intro' in names
+    assert 'Outro' in names
+    # Verify hot_cue indices are assigned sequentially
+    for idx, cue in enumerate(cues):
+        assert cue['hot_cue'] == idx
+
+
+def test_derive_cue_points_outro_added_when_missing_from_structure():
+    """An Outro cue must be synthesised from duration when the structure lacks one."""
+    structure = [
+        {'label': 'Intro', 'start_seconds': 0.0, 'end_seconds': 16.0, 'timestamp': '00:00'},
+        {'label': 'Verse', 'start_seconds': 16.0, 'end_seconds': 48.0, 'timestamp': '00:16'},
+    ]
+    cues = _derive_cue_points([], [], 120.0, structure=structure)
+    names = [c['name'] for c in cues]
+    assert 'Outro' in names
+    outro = next(c for c in cues if c['name'] == 'Outro')
+    # Should be duration - OUTRO_OFFSET_SECONDS (8 s)
+    assert outro['time_seconds'] == 112.0
+
+
+def test_analyze_audio_cue_points_have_hot_cue_and_color(tmp_path):
+    """analyze_audio output must include cue points with hot_cue and color fields."""
+    wav = _write_rhythmic_wav(tmp_path / 'rhythmic.wav', duration=30.0)
+    result = analyze_audio(str(wav))
+    cue_points = result['cue_points']
+    assert isinstance(cue_points, list)
+    assert len(cue_points) >= 1
+    for cue in cue_points:
+        assert 'name' in cue
+        assert 'time_seconds' in cue
+        assert 'hot_cue' in cue
+        assert isinstance(cue['hot_cue'], int)
+        assert 'color' in cue
+        assert cue['color'].startswith('#')
 
 
 def test_poll_once_processes_pending_task(tmp_path, reloaded_worker_loop):

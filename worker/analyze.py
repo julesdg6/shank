@@ -43,6 +43,19 @@ _OUTRO_OFFSET_SECONDS = 8.0
 _SILENT_LUFS = -70.0
 _BEAT_MODES = {'constant_tempo', 'variable_tempo'}
 _VALID_BEAT_ENGINES = {'librosa', 'mixxx', 'auto'}
+# DJ cue point configuration – labels derived from song structure, in priority order.
+_CUE_STRUCTURE_LABELS = ('Intro', 'Verse', 'Chorus', 'Breakdown', 'Bridge', 'Outro')
+# Hot cue colours (Rekordbox/Serato convention, indices 0-7 → A-H).
+_HOT_CUE_COLORS = (
+    '#28E614',  # A – green
+    '#F8821A',  # B – orange
+    '#C02626',  # C – red
+    '#1F9BFA',  # D – blue
+    '#FAC000',  # E – yellow
+    '#C84B8A',  # F – pink
+    '#C364FA',  # G – purple
+    '#19D1CE',  # H – cyan
+)
 
 # Audio DNA fingerprint settings
 _FINGERPRINT_VERSION = '1'
@@ -577,18 +590,75 @@ def _derive_song_structure(sections: list[dict], duration_seconds: float) -> lis
     return structure
 
 
-def _derive_cue_points(downbeats: list[float], beats: list[float], duration_seconds: float) -> list[dict]:
-    cue_points: list[dict] = []
-    if beats:
-        cue_points.append({'name': 'intro', 'time_seconds': beats[0]})
-    if downbeats:
-        cue_points.append({'name': 'first_downbeat', 'time_seconds': downbeats[0]})
-    if duration_seconds > 0:
-        cue_points.append({'name': 'outro', 'time_seconds': round(max(0.0, duration_seconds - _OUTRO_OFFSET_SECONDS), 3)})
-    unique: dict[str, dict] = {}
-    for cue in cue_points:
-        unique[cue['name']] = cue
-    return list(unique.values())
+def _derive_cue_points(
+    downbeats: list[float],
+    beats: list[float],
+    duration_seconds: float,
+    structure: list[dict] | None = None,
+) -> list[dict]:
+    """Derive DJ-style hot cue points from song structure and beat information.
+
+    When *structure* is provided each unique section label (Intro, Verse, Chorus,
+    Breakdown, Bridge, Outro) yields one cue point in the order they first appear.
+    The Outro cue falls back to *duration_seconds* offset if no Outro section is
+    found.  When structure is absent the function falls back to beat/downbeat
+    anchors for the intro and outro.
+
+    Each returned dict contains:
+    ``name`` (display label), ``time_seconds`` (float), ``hot_cue`` (0-based
+    integer mapping to A–H), and ``color`` (hex string).
+    """
+    raw: list[dict] = []
+
+    if structure:
+        seen: set[str] = set()
+        for section in structure:
+            label = section.get('label', '')
+            if not isinstance(label, str) or label not in _CUE_STRUCTURE_LABELS:
+                continue
+            if label in seen:
+                continue
+            seen.add(label)
+            start_raw = section.get('start_seconds', 0.0)
+            start = round(float(start_raw) if isinstance(start_raw, (int, float)) else 0.0, 3)
+            raw.append({'name': label, 'time_seconds': start})
+        if 'Outro' not in seen and duration_seconds > 0:
+            raw.append({
+                'name': 'Outro',
+                'time_seconds': round(max(0.0, duration_seconds - _OUTRO_OFFSET_SECONDS), 3),
+            })
+    else:
+        if beats:
+            raw.append({'name': 'Intro', 'time_seconds': round(float(beats[0]), 3)})
+        if downbeats:
+            first_db = round(float(downbeats[0]), 3)
+            # Avoid duplicating the intro entry when downbeat matches the first beat.
+            if not raw or abs(raw[0]['time_seconds'] - first_db) > 0.01:
+                raw.append({'name': 'First Downbeat', 'time_seconds': first_db})
+        if duration_seconds > 0:
+            raw.append({
+                'name': 'Outro',
+                'time_seconds': round(max(0.0, duration_seconds - _OUTRO_OFFSET_SECONDS), 3),
+            })
+
+    # Deduplicate by name (keep first occurrence) then assign hot_cue indices and colours.
+    seen_names: dict[str, dict] = {}
+    for cue in raw:
+        name = cue['name']
+        if name not in seen_names:
+            seen_names[name] = cue
+
+    result: list[dict] = []
+    for idx, (name, cue) in enumerate(seen_names.items()):
+        if idx >= len(_HOT_CUE_COLORS):
+            break
+        result.append({
+            'name': name,
+            'time_seconds': cue['time_seconds'],
+            'hot_cue': idx,
+            'color': _HOT_CUE_COLORS[idx],
+        })
+    return result
 
 
 def analyze_audio(file_path: str) -> dict:
@@ -659,7 +729,7 @@ def analyze_audio(file_path: str) -> dict:
     lufs = _measure_lufs(y, sr)
     sections = _derive_sections(downbeats, duration_seconds)
     structure = _derive_song_structure(sections, duration_seconds)
-    cue_points = _derive_cue_points(downbeats, beats, duration_seconds)
+    cue_points = _derive_cue_points(downbeats, beats, duration_seconds, structure)
     beatgrid = _build_beatgrid(beats, bpm, beat_mode, local_bpms=local_bpms)
     beat_detection = {
         'engine': 'mixxx' if bpm_source == 'mixxx' else bpm_source,
