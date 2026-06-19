@@ -234,6 +234,7 @@ docker build -t shank:local .
 | `GET` | `/tasks/{task_id}` | Retrieve the status and results of a task |
 | `POST` | `/tasks/{task_id}/reprocess` | Requeue an existing task using current or original analysis settings |
 | `GET` | `/tasks/{task_id}/chords` | Return chord detection results for a completed task |
+| `GET` | `/tasks/{task_id}/harmonic` | Return harmonic analysis (Roman numerals, key changes, borrowed chords) |
 | `GET` | `/tasks/{task_id}/beatgrid` | Return beat grid and beat detection metadata for a completed task |
 | `GET` | `/tasks/{task_id}/report` | Generate a complete song-breakdown report (`?format=json\|html\|pdf`) |
 | `GET` | `/tasks/{task_id}/artifacts` | List downloadable output files for a completed task |
@@ -613,7 +614,97 @@ CHORD_BACKEND=disabled
 
 Chord detection is skipped entirely and `chords` will be `{"segments": [], "progression": []}`.
 
-## 🎛 Stem Separation (python-audio-separator)
+## 🎼 Harmonic Analysis
+
+SHANK automatically performs harmonic analysis on every analysed track and enriches the raw chord timeline with Roman-numeral labels, key-change events, and borrowed-chord detection.
+
+### Output format
+
+Harmonic data is available inside the task JSON as the `harmonic` object, and via the dedicated endpoint:
+
+```bash
+curl http://localhost:8088/tasks/<task_id>/harmonic
+```
+
+Example response:
+
+```json
+{
+  "key": "C major",
+  "key_changes": [
+    { "time_seconds": 0.0, "timestamp": "00:00", "key": "C major", "confidence": 1.0 },
+    { "time_seconds": 62.5, "timestamp": "01:02", "key": "A minor", "confidence": 0.31 }
+  ],
+  "segments": [
+    {
+      "symbol": "C",
+      "root": "C",
+      "quality": "major",
+      "confidence": 0.85,
+      "start_seconds": 0.0,
+      "end_seconds": 4.0,
+      "roman_numeral": "I",
+      "is_borrowed": false
+    },
+    {
+      "symbol": "Am",
+      "root": "A",
+      "quality": "minor",
+      "confidence": 0.78,
+      "start_seconds": 4.0,
+      "end_seconds": 8.0,
+      "roman_numeral": "vi",
+      "is_borrowed": false
+    },
+    {
+      "symbol": "B-",
+      "root": "B-",
+      "quality": "major",
+      "confidence": 0.62,
+      "start_seconds": 8.0,
+      "end_seconds": 12.0,
+      "roman_numeral": "bVII",
+      "is_borrowed": true
+    }
+  ],
+  "borrowed_chords": [
+    {
+      "symbol": "B-",
+      "root": "B-",
+      "quality": "major",
+      "confidence": 0.62,
+      "start_seconds": 8.0,
+      "end_seconds": 12.0,
+      "roman_numeral": "bVII",
+      "is_borrowed": true
+    }
+  ]
+}
+```
+
+### Fields
+
+| Field | Description |
+|-------|-------------|
+| `key` | Globally detected musical key (e.g. `"C major"`, `"A minor"`) |
+| `key_changes` | Ordered list of key-change events with `time_seconds`, `timestamp` (`MM:SS`), `key`, and `confidence` (0–1) |
+| `segments` | Chord segments from the chord-detection step, each enriched with `roman_numeral` and `is_borrowed` |
+| `borrowed_chords` | Filtered list of segments where `is_borrowed` is `true` (chords from the parallel mode) |
+
+### Roman numeral notation
+
+Each chord segment receives a `roman_numeral` label relative to the detected key:
+
+- Uppercase numerals (`I`, `IV`, `V`) — major chords
+- Lowercase numerals (`ii`, `iii`, `vi`) — minor chords
+- Flat prefix (`bVII`, `bVI`) — chord roots one semitone below a scale degree (common borrowed chords)
+- Sharp prefix (`#IV`) — chord roots one semitone above a scale degree (less common)
+
+### Borrowed chords
+
+A chord is flagged `is_borrowed: true` when it is not diatonic in the current key but *is* diatonic (with the same quality) in the parallel key. For example, `bVII` (e.g. Bb major in C major) is borrowed from C minor.
+
+
 
 ## 🎹 Transcription backend (Basic Pitch)
 

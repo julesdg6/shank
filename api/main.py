@@ -1812,6 +1812,28 @@ def get_task_chords(task_id: str):
     return chords
 
 
+@app.get('/tasks/{task_id}/harmonic')
+def get_task_harmonic(task_id: str):
+    """Return the harmonic analysis for a completed task.
+
+    The response contains:
+
+    * ``key`` – the globally detected key string (e.g. ``'C major'``).
+    * ``key_changes`` – list of key-change events, each with
+      ``time_seconds``, ``timestamp`` (``MM:SS``), ``key``, and
+      ``confidence``.
+    * ``segments`` – chord segments enriched with ``roman_numeral``
+      (e.g. ``'I'``, ``'vi'``, ``'bVII'``) and ``is_borrowed`` (bool).
+    * ``borrowed_chords`` – filtered list of segments where ``is_borrowed``
+      is ``true``.
+    """
+    task = _load_task(task_id)
+    harmonic = task.get('harmonic')
+    if not isinstance(harmonic, dict):
+        raise HTTPException(status_code=404, detail='Harmonic analysis not available for this task')
+    return harmonic
+
+
 @app.get('/tasks/{task_id}/beatgrid')
 def get_task_beatgrid(task_id: str):
     """Return the beat grid and beat detection metadata for a completed task.
