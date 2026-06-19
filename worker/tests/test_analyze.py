@@ -11,7 +11,15 @@ import numpy as np
 import pytest
 
 # conftest.py adds the worker directory to sys.path, so we can import directly.
-from analyze import _derive_song_structure, _detect_chords, analyze_audio
+from analyze import (
+    _chord_to_roman_numeral,
+    _derive_cue_points,
+    _derive_song_structure,
+    _detect_chords,
+    _harmonic_analysis,
+    _is_borrowed_chord,
+    analyze_audio,
+)
 import worker_loop
 
 # ---------------------------------------------------------------------------
@@ -383,6 +391,173 @@ def test_analyze_audio_chord_backend_madmom_falls_back_to_librosa(tmp_path, monk
 
 
 # ---------------------------------------------------------------------------
+# Tests for harmonic analysis helpers
+# ---------------------------------------------------------------------------
+
+def test_chord_to_roman_numeral_major_key_diatonic():
+    """Diatonic chords in C major should map to the correct Roman numerals.
+
+    Note: Roman numeral case reflects the chord quality passed in (major →
+    uppercase, minor → lowercase). The function does not assert whether a
+    chord is diatonic – that is the job of ``_is_borrowed_chord``.
+    """
+    assert _chord_to_roman_numeral('C', 'major', 'C major') == 'I'
+    assert _chord_to_roman_numeral('D', 'minor', 'C major') == 'ii'
+    assert _chord_to_roman_numeral('E', 'minor', 'C major') == 'iii'
+    assert _chord_to_roman_numeral('F', 'major', 'C major') == 'IV'
+    assert _chord_to_roman_numeral('G', 'major', 'C major') == 'V'
+    assert _chord_to_roman_numeral('A', 'minor', 'C major') == 'vi'
+    # vii° in C major is on scale degree 7 (B); quality='minor' → lowercase 'vii'
+    assert _chord_to_roman_numeral('B', 'minor', 'C major') == 'vii'
+
+
+def test_chord_to_roman_numeral_minor_key_diatonic():
+    """Diatonic chords in A minor should map to correct Roman numerals."""
+    assert _chord_to_roman_numeral('A', 'minor', 'A minor') == 'i'
+    assert _chord_to_roman_numeral('C', 'major', 'A minor') == 'III'
+    assert _chord_to_roman_numeral('D', 'minor', 'A minor') == 'iv'
+    assert _chord_to_roman_numeral('E', 'minor', 'A minor') == 'v'
+    assert _chord_to_roman_numeral('F', 'major', 'A minor') == 'VI'
+    assert _chord_to_roman_numeral('G', 'major', 'A minor') == 'VII'
+
+
+def test_chord_to_roman_numeral_flat_degree():
+    """A chord one semitone below a scale degree should get a flat prefix."""
+    # Bb major in C major is bVII (one semitone below B)
+    result = _chord_to_roman_numeral('B-', 'major', 'C major')
+    assert result == 'bVII', f'Expected bVII, got {result!r}'
+
+
+def test_chord_to_roman_numeral_non_c_tonic():
+    """Roman numeral should be relative to the actual tonic, not always C."""
+    # I in G major is G major
+    assert _chord_to_roman_numeral('G', 'major', 'G major') == 'I'
+    # IV in G major is C major
+    assert _chord_to_roman_numeral('C', 'major', 'G major') == 'IV'
+    # V in G major is D major
+    assert _chord_to_roman_numeral('D', 'major', 'G major') == 'V'
+
+
+def test_is_borrowed_chord_diatonic_not_borrowed():
+    """Diatonic chords must not be flagged as borrowed."""
+    assert not _is_borrowed_chord('C', 'major', 'C major')   # I
+    assert not _is_borrowed_chord('A', 'minor', 'C major')   # vi
+    assert not _is_borrowed_chord('A', 'minor', 'A minor')   # i
+    assert not _is_borrowed_chord('C', 'major', 'A minor')   # III
+
+
+def test_is_borrowed_chord_parallel_mode_borrowed():
+    """Chords from the parallel mode should be flagged as borrowed."""
+    # bVII (Bb major) in C major - borrowed from C minor
+    assert _is_borrowed_chord('B-', 'major', 'C major')
+    # iv (Fm) in C major - borrowed from C minor
+    assert _is_borrowed_chord('F', 'minor', 'C major')
+    # bVI (Ab major) in C major - borrowed from C minor
+    assert _is_borrowed_chord('A-', 'major', 'C major')
+
+
+def test_is_borrowed_chord_harmonic_minor_V_not_borrowed():
+    """V major (dominant) in a minor key must not be flagged as borrowed.
+
+    E major is the harmonic-minor dominant (V) in A minor – it is standard
+    common-practice usage via the raised 7th and should never appear in the
+    borrowed_chords list.
+    """
+    assert not _is_borrowed_chord('E', 'major', 'A minor')
+
+
+def test_is_borrowed_chord_unrelated_not_borrowed():
+    """Chords not in either parallel mode should not be flagged as borrowed."""
+    # F# major has no place as a borrowed chord in C major
+    assert not _is_borrowed_chord('F#', 'major', 'C major')
+
+
+def test_harmonic_analysis_structure(tmp_path):
+    """_harmonic_analysis should return the expected top-level keys."""
+    wav = _write_chord_wav(tmp_path / 'c_major.wav', frequencies=(261.63, 329.63, 392.0))
+    y, sr = librosa.load(str(wav), mono=True)
+    chords = _detect_chords(y, sr)
+    result = _harmonic_analysis(chords, 'C major', y, sr, 4.0)
+
+    assert isinstance(result, dict)
+    assert 'key' in result
+    assert 'key_changes' in result
+    assert 'segments' in result
+    assert 'borrowed_chords' in result
+    assert result['key'] == 'C major'
+    assert isinstance(result['key_changes'], list)
+    assert isinstance(result['segments'], list)
+    assert isinstance(result['borrowed_chords'], list)
+
+
+def test_harmonic_analysis_segments_have_roman_numeral(tmp_path):
+    """Enriched segments should all carry a roman_numeral and is_borrowed field."""
+    wav = _write_chord_wav(tmp_path / 'c_major.wav', frequencies=(261.63, 329.63, 392.0))
+    y, sr = librosa.load(str(wav), mono=True)
+    chords = _detect_chords(y, sr)
+    result = _harmonic_analysis(chords, 'C major', y, sr, 4.0)
+
+    for seg in result['segments']:
+        assert 'roman_numeral' in seg, f'Missing roman_numeral in {seg!r}'
+        assert 'is_borrowed' in seg, f'Missing is_borrowed in {seg!r}'
+        assert isinstance(seg['roman_numeral'], str)
+        assert isinstance(seg['is_borrowed'], bool)
+
+
+def test_harmonic_analysis_c_major_chord_gets_I(tmp_path):
+    """A C-major triad in C major should receive the Roman numeral 'I'."""
+    wav = _write_chord_wav(tmp_path / 'c_major.wav', frequencies=(261.63, 329.63, 392.0))
+    y, sr = librosa.load(str(wav), mono=True)
+    chords = _detect_chords(y, sr)
+    result = _harmonic_analysis(chords, 'C major', y, sr, 4.0)
+
+    assert result['segments'], 'Expected at least one segment'
+    first = result['segments'][0]
+    assert first['root'] == 'C'
+    assert first['roman_numeral'] == 'I'
+    assert not first['is_borrowed']
+
+
+def test_harmonic_analysis_key_changes_starts_at_zero(tmp_path):
+    """key_changes must always include an entry at time 0."""
+    wav = _write_chord_wav(tmp_path / 'c_major.wav', frequencies=(261.63, 329.63, 392.0))
+    y, sr = librosa.load(str(wav), mono=True)
+    chords = _detect_chords(y, sr)
+    result = _harmonic_analysis(chords, 'C major', y, sr, 4.0)
+
+    assert result['key_changes'], 'key_changes must not be empty'
+    assert result['key_changes'][0]['time_seconds'] == 0.0
+    assert result['key_changes'][0]['key'] == 'C major'
+
+
+def test_harmonic_analysis_empty_chords(tmp_path):
+    """_harmonic_analysis should handle empty chords without errors."""
+    wav = _write_chord_wav(tmp_path / 'silence.wav', frequencies=())
+    y, sr = librosa.load(str(wav), mono=True)
+    chords = {'segments': [], 'progression': []}
+    result = _harmonic_analysis(chords, 'C major', y, sr, 4.0)
+
+    assert result['segments'] == []
+    assert result['borrowed_chords'] == []
+    assert isinstance(result['key_changes'], list)
+
+
+def test_analyze_audio_includes_harmonic(tmp_path):
+    """analyze_audio should return a 'harmonic' key in its result dict."""
+    wav = _write_chord_wav(tmp_path / 'c_major.wav', frequencies=(261.63, 329.63, 392.0))
+    result = analyze_audio(str(wav))
+
+    assert 'harmonic' in result
+    harmonic = result['harmonic']
+    assert isinstance(harmonic, dict)
+    assert 'key' in harmonic
+    assert 'key_changes' in harmonic
+    assert 'segments' in harmonic
+    assert 'borrowed_chords' in harmonic
+    assert harmonic['key'] == result['key']
+
+
+# ---------------------------------------------------------------------------
 # Tests for the worker loop helpers
 # ---------------------------------------------------------------------------
 
@@ -392,6 +567,112 @@ def reloaded_worker_loop(monkeypatch, tmp_path):
     monkeypatch.setenv('DATA_DIR', str(tmp_path))
     importlib.reload(worker_loop)
     return worker_loop
+
+
+# ---------------------------------------------------------------------------
+# _derive_cue_points
+# ---------------------------------------------------------------------------
+
+def test_derive_cue_points_uses_structure_labels():
+    """Cue points must be derived from the song structure in label order."""
+    structure = [
+        {'label': 'Intro', 'start_seconds': 0.0, 'end_seconds': 16.0, 'timestamp': '00:00'},
+        {'label': 'Verse', 'start_seconds': 16.0, 'end_seconds': 48.0, 'timestamp': '00:16'},
+        {'label': 'Chorus', 'start_seconds': 48.0, 'end_seconds': 80.0, 'timestamp': '00:48'},
+        {'label': 'Breakdown', 'start_seconds': 80.0, 'end_seconds': 112.0, 'timestamp': '01:20'},
+        {'label': 'Outro', 'start_seconds': 224.0, 'end_seconds': 240.0, 'timestamp': '03:44'},
+    ]
+    cues = _derive_cue_points([], [], 240.0, structure=structure)
+    names = [c['name'] for c in cues]
+    assert names == ['Intro', 'Verse', 'Chorus', 'Breakdown', 'Outro']
+    assert cues[0]['time_seconds'] == 0.0
+    assert cues[1]['time_seconds'] == 16.0
+    assert cues[2]['time_seconds'] == 48.0
+
+
+def test_derive_cue_points_assigns_hot_cue_indices():
+    """Each cue point must have a zero-based hot_cue index."""
+    structure = [
+        {'label': 'Intro', 'start_seconds': 0.0, 'end_seconds': 16.0, 'timestamp': '00:00'},
+        {'label': 'Verse', 'start_seconds': 16.0, 'end_seconds': 48.0, 'timestamp': '00:16'},
+        {'label': 'Chorus', 'start_seconds': 48.0, 'end_seconds': 80.0, 'timestamp': '00:48'},
+    ]
+    cues = _derive_cue_points([], [], 240.0, structure=structure)
+    assert cues[0]['hot_cue'] == 0
+    assert cues[1]['hot_cue'] == 1
+    assert cues[2]['hot_cue'] == 2
+
+
+def test_derive_cue_points_assigns_colors():
+    """Each cue point must carry a non-empty hex color string."""
+    structure = [
+        {'label': 'Intro', 'start_seconds': 0.0, 'end_seconds': 16.0, 'timestamp': '00:00'},
+        {'label': 'Verse', 'start_seconds': 16.0, 'end_seconds': 48.0, 'timestamp': '00:16'},
+    ]
+    cues = _derive_cue_points([], [], 240.0, structure=structure)
+    for cue in cues:
+        assert isinstance(cue['color'], str)
+        assert cue['color'].startswith('#')
+        assert len(cue['color']) == 7
+
+
+def test_derive_cue_points_deduplicated_labels():
+    """Repeated section labels should appear only once as a cue point."""
+    structure = [
+        {'label': 'Intro', 'start_seconds': 0.0, 'end_seconds': 16.0, 'timestamp': '00:00'},
+        {'label': 'Verse', 'start_seconds': 16.0, 'end_seconds': 48.0, 'timestamp': '00:16'},
+        {'label': 'Chorus', 'start_seconds': 48.0, 'end_seconds': 80.0, 'timestamp': '00:48'},
+        {'label': 'Verse', 'start_seconds': 80.0, 'end_seconds': 112.0, 'timestamp': '01:20'},
+        {'label': 'Chorus', 'start_seconds': 112.0, 'end_seconds': 144.0, 'timestamp': '01:52'},
+        {'label': 'Outro', 'start_seconds': 224.0, 'end_seconds': 240.0, 'timestamp': '03:44'},
+    ]
+    cues = _derive_cue_points([], [], 240.0, structure=structure)
+    names = [c['name'] for c in cues]
+    assert names.count('Verse') == 1
+    assert names.count('Chorus') == 1
+
+
+def test_derive_cue_points_fallback_without_structure():
+    """Without structure, fall back to beat/downbeat anchors."""
+    beats = [0.5, 0.97, 1.44]
+    downbeats = [0.5, 2.0]
+    cues = _derive_cue_points(downbeats, beats, 120.0)
+    names = [c['name'] for c in cues]
+    assert 'Intro' in names
+    assert 'Outro' in names
+    # Verify hot_cue indices are assigned sequentially
+    for idx, cue in enumerate(cues):
+        assert cue['hot_cue'] == idx
+
+
+def test_derive_cue_points_outro_added_when_missing_from_structure():
+    """An Outro cue must be synthesised from duration when the structure lacks one."""
+    structure = [
+        {'label': 'Intro', 'start_seconds': 0.0, 'end_seconds': 16.0, 'timestamp': '00:00'},
+        {'label': 'Verse', 'start_seconds': 16.0, 'end_seconds': 48.0, 'timestamp': '00:16'},
+    ]
+    cues = _derive_cue_points([], [], 120.0, structure=structure)
+    names = [c['name'] for c in cues]
+    assert 'Outro' in names
+    outro = next(c for c in cues if c['name'] == 'Outro')
+    # Should be duration - OUTRO_OFFSET_SECONDS (8 s)
+    assert outro['time_seconds'] == 112.0
+
+
+def test_analyze_audio_cue_points_have_hot_cue_and_color(tmp_path):
+    """analyze_audio output must include cue points with hot_cue and color fields."""
+    wav = _write_rhythmic_wav(tmp_path / 'rhythmic.wav', duration=30.0)
+    result = analyze_audio(str(wav))
+    cue_points = result['cue_points']
+    assert isinstance(cue_points, list)
+    assert len(cue_points) >= 1
+    for cue in cue_points:
+        assert 'name' in cue
+        assert 'time_seconds' in cue
+        assert 'hot_cue' in cue
+        assert isinstance(cue['hot_cue'], int)
+        assert 'color' in cue
+        assert cue['color'].startswith('#')
 
 
 def test_poll_once_processes_pending_task(tmp_path, reloaded_worker_loop):

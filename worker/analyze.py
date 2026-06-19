@@ -42,6 +42,60 @@ _OUTRO_OFFSET_SECONDS = 8.0
 _SILENT_LUFS = -70.0
 _BEAT_MODES = {'constant_tempo', 'variable_tempo'}
 _VALID_BEAT_ENGINES = {'librosa', 'mixxx', 'auto'}
+# DJ cue point configuration – labels derived from song structure, in priority order.
+_CUE_STRUCTURE_LABELS = ('Intro', 'Verse', 'Chorus', 'Breakdown', 'Bridge', 'Outro')
+# Hot cue colours (Rekordbox/Serato convention, indices 0-7 → A-H).
+_HOT_CUE_COLORS = (
+    '#28E614',  # A – green
+    '#F8821A',  # B – orange
+    '#C02626',  # C – red
+    '#1F9BFA',  # D – blue
+    '#FAC000',  # E – yellow
+    '#C84B8A',  # F – pink
+    '#C364FA',  # G – purple
+    '#19D1CE',  # H – cyan
+)
+
+# ---------------------------------------------------------------------------
+# Harmonic analysis constants
+# ---------------------------------------------------------------------------
+
+# Semitone offsets for each scale degree in major and natural minor
+_MAJOR_SCALE_STEPS = (0, 2, 4, 5, 7, 9, 11)
+_MINOR_SCALE_STEPS = (0, 2, 3, 5, 7, 8, 10)
+
+# Diatonic chord quality expected at each semitone offset for major key
+_MAJOR_DIATONIC_QUALITIES: dict[int, str] = {
+    0: 'major',   # I
+    2: 'minor',   # ii
+    4: 'minor',   # iii
+    5: 'major',   # IV
+    7: 'major',   # V
+    9: 'minor',   # vi
+    11: 'minor',  # vii° (diminished treated as minor here)
+}
+
+# Diatonic chord quality expected at each semitone offset for natural minor key
+_MINOR_DIATONIC_QUALITIES: dict[int, str] = {
+    0: 'minor',   # i
+    2: 'minor',   # ii°
+    3: 'major',   # III
+    5: 'minor',   # iv
+    7: 'minor',   # v  (V major possible via harmonic minor; we keep v as diatonic)
+    8: 'major',   # VI
+    10: 'major',  # VII
+}
+
+_ROMAN_NUMERAL_NAMES = ('I', 'II', 'III', 'IV', 'V', 'VI', 'VII')
+
+# V major is the dominant in harmonic minor (raised 7th) and is standard practice
+# in minor-key music; it should *not* be flagged as borrowed from the parallel major.
+_MINOR_HARMONIC_ACCEPTED: dict[int, str] = {7: 'major'}
+
+# Minimum number of seconds per window when detecting local key changes
+_KEY_CHANGE_WINDOW_SECONDS = 10.0
+# Minimum correlation-margin difference to consider a local key genuinely different
+_KEY_CHANGE_CONFIDENCE_THRESHOLD = 0.05
 
 
 def _clamp(value: float, minimum: float, maximum: float) -> float:
@@ -58,6 +112,189 @@ def _env_bool(name: str, default: bool) -> bool:
 @lru_cache(maxsize=12)
 def _normalize_pitch_name(pitch_class: str) -> str:
     return m21_pitch.Pitch(pitch_class).name
+
+
+def _pitch_class_index(name: str) -> int:
+    """Return the chromatic index (0=C … 11=B) for a pitch name.
+
+    Handles both sharp (e.g. ``'A#'``) and music21 flat notation
+    (e.g. ``'B-'``) by using the MIDI pitch-class value.
+    """
+    return m21_pitch.Pitch(name).midi % 12
+
+
+def _chord_to_roman_numeral(root: str, quality: str, key: str) -> str:
+    """Return a Roman-numeral label for *root*/*quality* relative to *key*.
+
+    Examples
+    --------
+    >>> _chord_to_roman_numeral('C', 'major', 'C major')
+    'I'
+    >>> _chord_to_roman_numeral('A', 'minor', 'C major')
+    'vi'
+    >>> _chord_to_roman_numeral('B-', 'major', 'C major')
+    'bVII'
+    """
+    parts = key.split()
+    key_root, key_mode = parts[0], (parts[1] if len(parts) > 1 else 'major')
+
+    tonic_idx = _pitch_class_index(key_root)
+    chord_idx = _pitch_class_index(root)
+    interval = (chord_idx - tonic_idx) % 12
+
+    scale = _MAJOR_SCALE_STEPS if key_mode == 'major' else _MINOR_SCALE_STEPS
+
+    # Find the scale degree whose semitone position is closest.
+    # First try exact match, then check flat (one below) across all degrees
+    # before checking sharp (one above), since flat interpretations are
+    # standard for borrowed/chromatic chords (e.g. bVII, not #VI).
+    for i, step in enumerate(scale):
+        if step == interval:
+            numeral = _ROMAN_NUMERAL_NAMES[i]
+            return numeral if quality == 'major' else numeral.lower()
+
+    for i, step in enumerate(scale):
+        if (step - 1) % 12 == interval:
+            numeral = 'b' + _ROMAN_NUMERAL_NAMES[i]
+            return numeral if quality == 'major' else numeral.lower()
+
+    for i, step in enumerate(scale):
+        if (step + 1) % 12 == interval:
+            numeral = '#' + _ROMAN_NUMERAL_NAMES[i]
+            return numeral if quality == 'major' else numeral.lower()
+
+    return '?'
+
+
+def _is_borrowed_chord(root: str, quality: str, key: str) -> bool:
+    """Return True when the chord is borrowed from the parallel mode.
+
+    A chord is considered borrowed when it is *not* diatonic in the current key
+    but *is* diatonic (with the same quality) in the parallel major/minor key.
+
+    The harmonic-minor V major chord (dominant) in minor keys is *not* flagged
+    as borrowed even though it is absent from the natural-minor diatonic table,
+    because it is standard common-practice usage (raised 7th / leading tone).
+    """
+    parts = key.split()
+    key_root, key_mode = parts[0], (parts[1] if len(parts) > 1 else 'major')
+
+    tonic_idx = _pitch_class_index(key_root)
+    chord_idx = _pitch_class_index(root)
+    interval = (chord_idx - tonic_idx) % 12
+
+    # Harmonic-minor exception: V major is idiomatic in minor keys.
+    if key_mode == 'minor' and _MINOR_HARMONIC_ACCEPTED.get(interval) == quality:
+        return False
+
+    diatonic = _MAJOR_DIATONIC_QUALITIES if key_mode == 'major' else _MINOR_DIATONIC_QUALITIES
+    # Diatonic: not borrowed.
+    if diatonic.get(interval) == quality:
+        return False
+
+    parallel_diatonic = _MINOR_DIATONIC_QUALITIES if key_mode == 'major' else _MAJOR_DIATONIC_QUALITIES
+    return parallel_diatonic.get(interval) == quality
+
+
+def _detect_key_changes(
+    y: np.ndarray,
+    sr: int,
+    global_key: str,
+    duration_seconds: float,
+) -> list[dict]:
+    """Detect local key changes by analysing overlapping windows of audio.
+
+    Returns a list of dicts with ``time_seconds``, ``key``, ``timestamp``, and
+    ``confidence``.  The list always starts at 0 s with the global key, and
+    only windows that differ from the previous reported key are included.
+    """
+    window_samples = int(_KEY_CHANGE_WINDOW_SECONDS * sr)
+    if window_samples <= 0 or y.size < window_samples:
+        return [{'time_seconds': 0.0, 'timestamp': '00:00', 'key': global_key, 'confidence': 1.0}]
+
+    hop_samples = window_samples // 2
+    key_changes: list[dict] = []
+    last_key = global_key
+
+    offset = 0
+    while offset < len(y):
+        window = y[offset: offset + window_samples]
+        if window.size < window_samples // 2:
+            break
+        local_key, local_conf = _detect_key_and_confidence(window, sr)
+        time_s = round(offset / sr, 3)
+
+        if local_key != last_key and local_conf >= _KEY_CHANGE_CONFIDENCE_THRESHOLD:
+            minutes = int(time_s) // 60
+            seconds = int(time_s) % 60
+            key_changes.append({
+                'time_seconds': time_s,
+                'timestamp': f'{minutes:02d}:{seconds:02d}',
+                'key': local_key,
+                'confidence': round(local_conf, 3),
+            })
+            last_key = local_key
+
+        offset += hop_samples
+
+    # Always prepend the global key at 0 s.
+    entry_zero = {
+        'time_seconds': 0.0,
+        'timestamp': '00:00',
+        'key': global_key,
+        'confidence': 1.0,
+    }
+    if not key_changes or key_changes[0]['time_seconds'] > 0.0:
+        key_changes.insert(0, entry_zero)
+
+    return key_changes
+
+
+def _harmonic_analysis(
+    chords: dict,
+    key: str,
+    y: np.ndarray,
+    sr: int,
+    duration_seconds: float,
+) -> dict:
+    """Augment chord segments with Roman numerals and borrowed-chord flags.
+
+    Returns a dict with:
+    - ``key`` – the global detected key.
+    - ``key_changes`` – list of key change events (each with ``time_seconds``,
+      ``timestamp``, ``key``, ``confidence``).
+    - ``segments`` – chord segments enriched with ``roman_numeral`` and
+      ``is_borrowed`` fields.
+    - ``borrowed_chords`` – filtered list of segments where ``is_borrowed`` is True.
+    """
+    segments = chords.get('segments', [])
+
+    enriched: list[dict] = []
+    for seg in segments:
+        root = seg.get('root', '')
+        quality = seg.get('quality', 'major')
+        try:
+            roman = _chord_to_roman_numeral(root, quality, key)
+            borrowed = _is_borrowed_chord(root, quality, key)
+        except (ValueError, IndexError):
+            roman = '?'
+            borrowed = False
+
+        enriched.append({
+            **seg,
+            'roman_numeral': roman,
+            'is_borrowed': borrowed,
+        })
+
+    key_changes = _detect_key_changes(y, sr, key, duration_seconds)
+    borrowed_chords = [s for s in enriched if s.get('is_borrowed')]
+
+    return {
+        'key': key,
+        'key_changes': key_changes,
+        'segments': enriched,
+        'borrowed_chords': borrowed_chords,
+    }
 
 
 def _detect_key_and_confidence(y: np.ndarray, sr: int) -> tuple[str, float]:
@@ -570,18 +807,75 @@ def _derive_song_structure(sections: list[dict], duration_seconds: float) -> lis
     return structure
 
 
-def _derive_cue_points(downbeats: list[float], beats: list[float], duration_seconds: float) -> list[dict]:
-    cue_points: list[dict] = []
-    if beats:
-        cue_points.append({'name': 'intro', 'time_seconds': beats[0]})
-    if downbeats:
-        cue_points.append({'name': 'first_downbeat', 'time_seconds': downbeats[0]})
-    if duration_seconds > 0:
-        cue_points.append({'name': 'outro', 'time_seconds': round(max(0.0, duration_seconds - _OUTRO_OFFSET_SECONDS), 3)})
-    unique: dict[str, dict] = {}
-    for cue in cue_points:
-        unique[cue['name']] = cue
-    return list(unique.values())
+def _derive_cue_points(
+    downbeats: list[float],
+    beats: list[float],
+    duration_seconds: float,
+    structure: list[dict] | None = None,
+) -> list[dict]:
+    """Derive DJ-style hot cue points from song structure and beat information.
+
+    When *structure* is provided each unique section label (Intro, Verse, Chorus,
+    Breakdown, Bridge, Outro) yields one cue point in the order they first appear.
+    The Outro cue falls back to *duration_seconds* offset if no Outro section is
+    found.  When structure is absent the function falls back to beat/downbeat
+    anchors for the intro and outro.
+
+    Each returned dict contains:
+    ``name`` (display label), ``time_seconds`` (float), ``hot_cue`` (0-based
+    integer mapping to A–H), and ``color`` (hex string).
+    """
+    raw: list[dict] = []
+
+    if structure:
+        seen: set[str] = set()
+        for section in structure:
+            label = section.get('label', '')
+            if not isinstance(label, str) or label not in _CUE_STRUCTURE_LABELS:
+                continue
+            if label in seen:
+                continue
+            seen.add(label)
+            start_raw = section.get('start_seconds', 0.0)
+            start = round(float(start_raw) if isinstance(start_raw, (int, float)) else 0.0, 3)
+            raw.append({'name': label, 'time_seconds': start})
+        if 'Outro' not in seen and duration_seconds > 0:
+            raw.append({
+                'name': 'Outro',
+                'time_seconds': round(max(0.0, duration_seconds - _OUTRO_OFFSET_SECONDS), 3),
+            })
+    else:
+        if beats:
+            raw.append({'name': 'Intro', 'time_seconds': round(float(beats[0]), 3)})
+        if downbeats:
+            first_db = round(float(downbeats[0]), 3)
+            # Avoid duplicating the intro entry when downbeat matches the first beat.
+            if not raw or abs(raw[0]['time_seconds'] - first_db) > 0.01:
+                raw.append({'name': 'First Downbeat', 'time_seconds': first_db})
+        if duration_seconds > 0:
+            raw.append({
+                'name': 'Outro',
+                'time_seconds': round(max(0.0, duration_seconds - _OUTRO_OFFSET_SECONDS), 3),
+            })
+
+    # Deduplicate by name (keep first occurrence) then assign hot_cue indices and colours.
+    seen_names: dict[str, dict] = {}
+    for cue in raw:
+        name = cue['name']
+        if name not in seen_names:
+            seen_names[name] = cue
+
+    result: list[dict] = []
+    for idx, (name, cue) in enumerate(seen_names.items()):
+        if idx >= len(_HOT_CUE_COLORS):
+            break
+        result.append({
+            'name': name,
+            'time_seconds': cue['time_seconds'],
+            'hot_cue': idx,
+            'color': _HOT_CUE_COLORS[idx],
+        })
+    return result
 
 
 def analyze_audio(file_path: str) -> dict:
@@ -645,6 +939,8 @@ def analyze_audio(file_path: str) -> dict:
     else:
         chords = _detect_chords(y, sr)
 
+    harmonic = _harmonic_analysis(chords, key, y, sr, duration_seconds)
+
     downbeats = _beatnet_downbeats(file_path) or _fallback_downbeats(beats)
     tempo_changes = _detect_tempo_changes(beats)
     if bpm_source != 'mixxx' and beat_mode != 'variable_tempo' and tempo_changes:
@@ -652,7 +948,7 @@ def analyze_audio(file_path: str) -> dict:
     lufs = _measure_lufs(y, sr)
     sections = _derive_sections(downbeats, duration_seconds)
     structure = _derive_song_structure(sections, duration_seconds)
-    cue_points = _derive_cue_points(downbeats, beats, duration_seconds)
+    cue_points = _derive_cue_points(downbeats, beats, duration_seconds, structure)
     beatgrid = _build_beatgrid(beats, bpm, beat_mode, local_bpms=local_bpms)
     beat_detection = {
         'engine': 'mixxx' if bpm_source == 'mixxx' else bpm_source,
@@ -730,6 +1026,7 @@ def analyze_audio(file_path: str) -> dict:
         'structure': structure,
         'cue_points': cue_points,
         'chords': chords,
+        'harmonic': harmonic,
         'beat_detection': beat_detection,
         'beatgrid': beatgrid,
         'tempo_changes': tempo_changes,
