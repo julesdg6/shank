@@ -1903,7 +1903,6 @@ def test_fingerprint_included_in_task_artifacts(client, tmp_path):
     assert response.status_code == 200
     assert 'fingerprint_json' in response.json()['artifacts']
 
-
 # ---------------------------------------------------------------------------
 # GET /tasks/{task_id}/report
 # ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 # conftest.py adds the worker directory to sys.path, so we can import directly.
-from analyze import _derive_song_structure, _detect_chords, analyze_audio, build_fingerprint, _derive_cue_points
+from analyze import _derive_cue_points, _derive_song_structure, _detect_chords, analyze_audio, build_fingerprint
 import worker_loop
 
 # ---------------------------------------------------------------------------
