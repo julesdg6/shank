@@ -1757,7 +1757,6 @@ def test_reprocess_all_valid_modes(client, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-<<<<<<< HEAD
 # Fingerprint endpoints
 # ---------------------------------------------------------------------------
 
@@ -1868,7 +1867,44 @@ def test_list_task_fingerprints_returns_all_completed(client, tmp_path):
 
 def test_list_task_fingerprints_omits_tasks_without_fingerprint(client, tmp_path):
     """GET /tasks/fingerprints must omit tasks that have no fingerprint file."""
-=======
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+    }))
+
+    response = client.get('/tasks/fingerprints')
+    assert response.status_code == 200
+    assert task_id not in response.json()['fingerprints']
+
+
+def test_fingerprint_included_in_task_artifacts(client, tmp_path):
+    """fingerprint_json must appear in the list_task_artifacts response."""
+    task_id = str(uuid.uuid4())
+    results_dir = tmp_path / 'results' / task_id
+    results_dir.mkdir(parents=True, exist_ok=True)
+    fp_file = results_dir / 'fingerprint.json'
+    fp_file.write_text(json.dumps({'version': '1', 'bpm': 120.0}))
+
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'results': {
+            'dir': str(results_dir),
+            'fingerprint_json': str(fp_file),
+        },
+    }))
+
+    response = client.get(f'/tasks/{task_id}/artifacts')
+    assert response.status_code == 200
+    assert 'fingerprint_json' in response.json()['artifacts']
+
+
+# ---------------------------------------------------------------------------
 # GET /tasks/{task_id}/report
 # ---------------------------------------------------------------------------
 
@@ -2062,44 +2098,11 @@ def test_report_json_minimal_task_no_analysis(client, tmp_path):
 
 def test_report_html_minimal_task_renders_placeholders(client, tmp_path):
     """HTML report for a task with no data should still render without crashing."""
->>>>>>> origin/master
     task_id = str(uuid.uuid4())
     tasks_dir = tmp_path / 'tasks'
     tasks_dir.mkdir(parents=True, exist_ok=True)
     (tasks_dir / f'{task_id}.json').write_text(json.dumps({
         'task_id': task_id,
-<<<<<<< HEAD
-        'status': 'done',
-    }))
-
-    response = client.get('/tasks/fingerprints')
-    assert response.status_code == 200
-    assert task_id not in response.json()['fingerprints']
-
-
-def test_fingerprint_included_in_task_artifacts(client, tmp_path):
-    """fingerprint_json must appear in the list_task_artifacts response."""
-    task_id = str(uuid.uuid4())
-    results_dir = tmp_path / 'results' / task_id
-    results_dir.mkdir(parents=True, exist_ok=True)
-    fp_file = results_dir / 'fingerprint.json'
-    fp_file.write_text(json.dumps({'version': '1', 'bpm': 120.0}))
-
-    tasks_dir = tmp_path / 'tasks'
-    tasks_dir.mkdir(parents=True, exist_ok=True)
-    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
-        'task_id': task_id,
-        'status': 'done',
-        'results': {
-            'dir': str(results_dir),
-            'fingerprint_json': str(fp_file),
-        },
-    }))
-
-    response = client.get(f'/tasks/{task_id}/artifacts')
-    assert response.status_code == 200
-    assert 'fingerprint_json' in response.json()['artifacts']
-=======
         'status': 'pending',
         'source': 'empty.mp3',
     }))
@@ -2108,4 +2111,3 @@ def test_fingerprint_included_in_task_artifacts(client, tmp_path):
     assert response.status_code == 200
     assert '<!DOCTYPE html>' in response.text
     assert 'No data' in response.text or 'No chord data' in response.text
->>>>>>> origin/master

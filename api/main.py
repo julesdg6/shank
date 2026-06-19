@@ -1885,7 +1885,6 @@ def get_task_beatgrid(task_id: str):
     return result
 
 
-<<<<<<< HEAD
 @app.get('/tasks/{task_id}/fingerprint')
 def get_task_fingerprint(task_id: str):
     """Return the Audio DNA fingerprint for a completed task.
@@ -1920,7 +1919,8 @@ def get_task_fingerprint(task_id: str):
                 except (OSError, json.JSONDecodeError):
                     pass
     raise HTTPException(status_code=404, detail='Fingerprint not available for this task')
-=======
+
+
 # ---------------------------------------------------------------------------
 # Cue points
 # ---------------------------------------------------------------------------
@@ -2043,7 +2043,6 @@ def export_cue_points_mixxx(task_id: str):
         media_type='application/xml',
         headers={'Content-Disposition': f'attachment; filename="{filename}"'},
     )
->>>>>>> origin/master
 
 
 @app.get('/tasks/{task_id}/loops')
