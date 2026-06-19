@@ -451,9 +451,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-19T00:00:59Z
-- Latest commit: `8aa2dec`
-- Commit message: Merge pull request #173 from julesdg6/copilot/feature-cue-point-generator  feat: DJ cue point generator with Rekordbox, Traktor, and Mixxx exports
+- Last automated update: 2026-06-19T00:04:56Z
+- Latest commit: `6abe0ad`
+- Commit message: Merge pull request #180 from julesdg6/copilot/feature-shank-analysis-report  feat: SHANK Analysis Report — JSON/HTML/PDF song breakdown endpoint
 <!-- readme-update:end -->
 
 ## 🥁 Beat Detection & Beat Grid
