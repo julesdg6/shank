@@ -256,6 +256,7 @@ def _task_artifact_paths(
             ('beatgrid_json', 'beatgrid_json'),
             ('structure_json', 'structure_json'),
             ('fingerprint_json', 'fingerprint_json'),
+            ('cue_points_json', 'cue_points_json'),
             ('waveform_beats_png', 'waveform_beats_png'),
             ('tempo_curve_png', 'tempo_curve_png'),
             ('beatgraph_png', 'beatgraph_png'),
@@ -279,6 +280,7 @@ def _structured_result_paths(task_id: str) -> dict[str, str]:
         'beatgrid_json': str(result_dir / 'beatgrid.json'),
         'structure_json': str(result_dir / 'structure.json'),
         'fingerprint_json': str(result_dir / 'fingerprint.json'),
+        'cue_points_json': str(result_dir / 'cue_points.json'),
         'waveform_beats_png': str(result_dir / 'waveform_beats.png'),
         'tempo_curve_png': str(result_dir / 'tempo_curve.png'),
         'beatgraph_png': str(result_dir / 'beatgraph.png'),
@@ -420,6 +422,16 @@ def _write_fingerprint_output(result_artifacts: dict[str, str], analysis_payload
     Path(result_artifacts['fingerprint_json']).write_text(json.dumps(fingerprint, indent=2))
 
 
+def _write_cue_points_output(result_artifacts: dict[str, str], analysis_payload: dict[str, Any]) -> None:
+    full_mix = analysis_payload.get('full_mix')
+    cue_points: list[dict[str, Any]] = []
+    if isinstance(full_mix, dict):
+        cue_points_raw = full_mix.get('cue_points')
+        if isinstance(cue_points_raw, list):
+            cue_points = [entry for entry in cue_points_raw if isinstance(entry, dict)]
+    Path(result_artifacts['cue_points_json']).write_text(json.dumps(cue_points, indent=2))
+
+
 def _write_structured_results(
     result_artifacts: dict[str, str],
     task_payload: dict[str, Any],
@@ -445,6 +457,7 @@ def _write_structured_results(
     _write_beat_outputs(result_artifacts, analysis_payload)
     _write_structure_output(result_artifacts, analysis_payload)
     _write_fingerprint_output(result_artifacts, analysis_payload)
+    _write_cue_points_output(result_artifacts, analysis_payload)
     mt3_payload = mt3_result if isinstance(mt3_result, dict) else {}
     lyrics_payload = metadata_payload.get('lyrics') if isinstance(metadata_payload.get('lyrics'), dict) else {}
     credits_payload = metadata_payload.get('credits') if isinstance(metadata_payload.get('credits'), dict) else {}

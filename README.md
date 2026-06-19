@@ -427,9 +427,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-18T22:33:11Z
-- Latest commit: `28f48bf`
-- Commit message: Merge pull request #172 from julesdg6/copilot/fix-youtube-downloads-with-cookies  Add optional yt-dlp cookies support and actionable YouTube bot-check errors
+- Last automated update: 2026-06-19T00:00:59Z
+- Latest commit: `8aa2dec`
+- Commit message: Merge pull request #173 from julesdg6/copilot/feature-cue-point-generator  feat: DJ cue point generator with Rekordbox, Traktor, and Mixxx exports
 <!-- readme-update:end -->
 
 ## 🥁 Beat Detection & Beat Grid
