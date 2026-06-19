@@ -498,6 +498,8 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
     results_lyrics_json = results_dir / 'lyrics.json'
     results_credits_json = results_dir / 'credits.json'
     results_song_metadata_json = results_dir / 'song_metadata.json'
+    results_musical_profile_json = results_dir / 'musical_profile.json'
+    results_ace_step_prompt_json = results_dir / 'ace_step_prompt.json'
     results_artifacts_json = results_dir / 'artifacts.json'
 
     normalized.parent.mkdir(parents=True, exist_ok=True)
@@ -520,6 +522,8 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
     results_lyrics_json.write_text(json.dumps({'plain_lyrics': 'Never gonna give you up'}))
     results_credits_json.write_text(json.dumps({'track_title': 'Never Gonna Give You Up'}))
     results_song_metadata_json.write_text(json.dumps({'enabled': True}))
+    results_musical_profile_json.write_text(json.dumps({'bpm': 120.0, 'key': 'C major'}))
+    results_ace_step_prompt_json.write_text(json.dumps({'prompts': {'primary': 'Create a track'}}))
     results_artifacts_json.write_text(json.dumps({'normalized_wav': str(normalized)}))
 
     tasks_dir = tmp_path / 'tasks'
@@ -552,6 +556,8 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
             'lyrics_json': str(results_lyrics_json),
             'credits_json': str(results_credits_json),
             'song_metadata_json': str(results_song_metadata_json),
+            'musical_profile_json': str(results_musical_profile_json),
+            'ace_step_prompt_json': str(results_ace_step_prompt_json),
             'artifacts_json': str(results_artifacts_json),
         },
     }))
@@ -560,11 +566,13 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
     assert response.status_code == 200
     assert response.json() == {
         'artifacts': [
+            'ace_step_prompt_json',
             'beatgraph_png',
             'beatgrid_json',
             'credits_json',
             'lyrics_json',
             'midi',
+            'musical_profile_json',
             'normalized_wav',
             'notes_json',
             'results_analysis_json',

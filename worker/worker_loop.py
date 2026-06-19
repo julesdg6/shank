@@ -290,6 +290,8 @@ def _task_artifact_paths(
             ('lyrics_json', 'lyrics_json'),
             ('credits_json', 'credits_json'),
             ('song_metadata_json', 'song_metadata_json'),
+            ('musical_profile_json', 'musical_profile_json'),
+            ('ace_step_prompt_json', 'ace_step_prompt_json'),
         ):
             value = result_artifacts.get(key)
             if isinstance(value, str) and value:
@@ -315,6 +317,8 @@ def _structured_result_paths(task_id: str) -> dict[str, str]:
         'lyrics_json': str(result_dir / 'lyrics.json'),
         'credits_json': str(result_dir / 'credits.json'),
         'song_metadata_json': str(result_dir / 'song_metadata.json'),
+        'musical_profile_json': str(result_dir / 'musical_profile.json'),
+        'ace_step_prompt_json': str(result_dir / 'ace_step_prompt.json'),
         'artifacts_json': str(result_dir / 'artifacts.json'),
     }
 
@@ -441,6 +445,101 @@ def _write_structure_output(result_artifacts: dict[str, str], analysis_payload: 
     Path(result_artifacts['structure_json']).write_text(json.dumps(structure, indent=2))
 
 
+def _build_ace_step_prompt_payload(
+    *,
+    task: dict[str, Any],
+    analysis_payload: dict[str, Any],
+    metadata_payload: dict[str, Any],
+    stem_tracks: dict[str, str] | None,
+    mt3_result: dict[str, Any] | None,
+) -> dict[str, Any]:
+    full_mix = analysis_payload.get('full_mix') if isinstance(analysis_payload.get('full_mix'), dict) else {}
+    chords = full_mix.get('chords') if isinstance(full_mix.get('chords'), dict) else {}
+    chord_progression = [
+        symbol.strip()
+        for symbol in chords.get('progression', [])
+        if isinstance(symbol, str) and symbol.strip()
+    ][:8]
+    structure_sections = []
+    if isinstance(full_mix.get('structure'), list):
+        for section in full_mix['structure']:
+            if not isinstance(section, dict):
+                continue
+            label = section.get('label')
+            if isinstance(label, str) and label and label not in structure_sections:
+                structure_sections.append(label)
+
+    genre_style_tags = []
+    for value in (
+        task.get('genre'),
+        task.get('style'),
+        full_mix.get('genre'),
+        full_mix.get('style'),
+    ):
+        if isinstance(value, str) and value.strip() and value.strip() not in genre_style_tags:
+            genre_style_tags.append(value.strip())
+
+    credits = metadata_payload.get('credits') if isinstance(metadata_payload.get('credits'), dict) else {}
+    lyrics = metadata_payload.get('lyrics') if isinstance(metadata_payload.get('lyrics'), dict) else {}
+    available_stems = sorted(stem_tracks.keys()) if isinstance(stem_tracks, dict) else []
+    bpm_raw = full_mix.get('bpm')
+    bpm = round(float(bpm_raw), 2) if isinstance(bpm_raw, (int, float)) else None
+    key = full_mix.get('key') if isinstance(full_mix.get('key'), str) and full_mix.get('key').strip() else None
+    duration = full_mix.get('duration_seconds')
+    duration_seconds = round(float(duration), 2) if isinstance(duration, (int, float)) else None
+    midi_available = bool(
+        isinstance(mt3_result, dict)
+        and isinstance(mt3_result.get('full_mix'), dict)
+        and isinstance(mt3_result['full_mix'].get('midi_path'), str)
+        and mt3_result['full_mix'].get('midi_path')
+    )
+
+    profile = {
+        'track_title': credits.get('track_title'),
+        'artist': credits.get('artist'),
+        'bpm': bpm,
+        'key': key,
+        'duration_seconds': duration_seconds,
+        'genre_style_tags': genre_style_tags,
+        'chord_progression': chord_progression,
+        'structure_sections': structure_sections,
+        'available_stems': available_stems,
+        'midi_available': midi_available,
+        'lyrics_available': bool(lyrics.get('plain_lyrics') or lyrics.get('synced_lyrics_lrc')),
+    }
+
+    tempo_text = f'{int(round(bpm))} BPM' if isinstance(bpm, (int, float)) else 'dynamic tempo'
+    key_text = key or 'modal key movement'
+    style_text = ', '.join(genre_style_tags) if genre_style_tags else 'modern electronic pop'
+    chords_text = ' -> '.join(chord_progression) if chord_progression else 'diatonic progression with tasteful passing chords'
+    structure_text = ', '.join(structure_sections) if structure_sections else 'intro, verse, chorus, bridge, outro'
+    stems_text = ', '.join(available_stems) if available_stems else 'full mix instrumentation'
+
+    primary_prompt = (
+        'Create an ACE-Step production-ready track inspired by this analysis profile: '
+        f'style {style_text}; tempo {tempo_text}; key center {key_text}; '
+        f'progression {chords_text}; arrangement {structure_text}; instrumentation emphasis {stems_text}. '
+        'Target polished transients, cohesive low-end, and strong melodic hooks while keeping section transitions musical.'
+    )
+    variation_prompt = (
+        'Generate an alternate ACE-Step version that keeps the same tempo/key identity and overall arrangement, '
+        'but introduces fresh motif development, subtle rhythmic variation, and wider stereo movement for choruses.'
+    )
+    negative_prompt = (
+        'Avoid muddy bass, clipped masters, abrupt key jumps, random tempo drift, dissonant chord clashes, and over-compressed dynamics.'
+    )
+
+    return {
+        'generator': 'ace_step_prompt_builder_v1',
+        'musical_profile': profile,
+        'prompts': {
+            'primary': primary_prompt,
+            'variation': variation_prompt,
+            'negative': negative_prompt,
+        },
+    }
+
+
 def _write_cue_points_output(result_artifacts: dict[str, str], analysis_payload: dict[str, Any]) -> None:
     full_mix = analysis_payload.get('full_mix')
     cue_points: list[dict[str, Any]] = []
@@ -459,6 +558,7 @@ def _write_structured_results(
     metadata_payload: dict[str, Any],
     mt3_result: dict[str, Any] | None,
     stem_tracks: dict[str, str] | None,
+    ace_step_prompt_payload: dict[str, Any] | None,
     midi_stems_result: dict[str, Any] | None = None,
 ) -> None:
     result_dir = Path(result_artifacts['dir'])
@@ -471,6 +571,8 @@ def _write_structured_results(
     lyrics_path = Path(result_artifacts['lyrics_json'])
     credits_path = Path(result_artifacts['credits_json'])
     song_metadata_path = Path(result_artifacts['song_metadata_json'])
+    profile_path = Path(result_artifacts['musical_profile_json'])
+    prompt_path = Path(result_artifacts['ace_step_prompt_json'])
     artifacts_path = Path(result_artifacts['artifacts_json'])
 
     task_path.write_text(json.dumps(task_payload, indent=2))
@@ -487,6 +589,13 @@ def _write_structured_results(
     lyrics_path.write_text(json.dumps(lyrics_payload, indent=2))
     credits_path.write_text(json.dumps(credits_payload, indent=2))
     song_metadata_path.write_text(json.dumps(metadata_payload, indent=2))
+    profile_payload = (
+        ace_step_prompt_payload.get('musical_profile')
+        if isinstance(ace_step_prompt_payload, dict) and isinstance(ace_step_prompt_payload.get('musical_profile'), dict)
+        else {}
+    )
+    profile_path.write_text(json.dumps(profile_payload, indent=2))
+    prompt_path.write_text(json.dumps(ace_step_prompt_payload if isinstance(ace_step_prompt_payload, dict) else {}, indent=2))
     artifacts_path.write_text(
         json.dumps(
             _task_artifact_paths(
@@ -1163,6 +1272,13 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
 
             current_task = _read_task(task_file) or {}
             metadata_payload = collect_song_metadata(current_task, input_path)
+            ace_step_prompt_payload = _build_ace_step_prompt_payload(
+                task=current_task,
+                analysis_payload=analysis_payload,
+                metadata_payload=metadata_payload,
+                stem_tracks=stem_tracks,
+                mt3_result=mt3_result,
+            )
             completion_updates: dict[str, Any] = {
                 'status': 'done',
                 'normalized_path': normalized_path,
@@ -1170,6 +1286,7 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                 'lyrics': metadata_payload.get('lyrics'),
                 'credits': metadata_payload.get('credits'),
                 'song_metadata': metadata_payload,
+                'ai_prompts': ace_step_prompt_payload,
                 'bpm': full_mix_analysis['bpm'],
                 'key': full_mix_analysis['key'],
                 **({'duration_seconds': full_mix_analysis.get('duration_seconds')} if full_mix_analysis.get('duration_seconds') is not None else {}),
@@ -1186,6 +1303,7 @@ def process_pending_tasks(tasks_dir: Path = TASKS_DIR) -> int:
                 metadata_payload=metadata_payload,
                 mt3_result=mt3_result,
                 stem_tracks=stem_tracks,
+                ace_step_prompt_payload=ace_step_prompt_payload,
                 midi_stems_result=midi_stems_result,
             )
             _update_task(task_file, completion_updates)
