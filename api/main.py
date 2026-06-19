@@ -9,13 +9,14 @@ import shutil
 import threading
 import urllib.request
 import uuid
+import xml.etree.ElementTree as ET
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
@@ -636,6 +637,227 @@ def _render_audio_loop(input_path: Path, output_path: Path, start_seconds: float
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise HTTPException(status_code=500, detail=f'ffmpeg failed while rendering loop: {result.stderr}')
+
+
+# ---------------------------------------------------------------------------
+# Cue point helpers
+# ---------------------------------------------------------------------------
+
+def _task_cue_points(task: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract the cue_points list from a task dict."""
+    analysis_raw = task.get('analysis')
+    analysis: dict[str, Any] = analysis_raw if isinstance(analysis_raw, dict) else {}
+    full_mix_raw = analysis.get('full_mix')
+    full_mix: dict[str, Any] = full_mix_raw if isinstance(full_mix_raw, dict) else {}
+    cue_points_raw = full_mix.get('cue_points')
+    if not isinstance(cue_points_raw, list):
+        return []
+    return [cp for cp in cue_points_raw if isinstance(cp, dict)]
+
+
+def _hex_to_rgb(color: str) -> tuple[int, int, int]:
+    """Convert a ``#RRGGBB`` hex string to an (R, G, B) integer tuple."""
+    color = color.lstrip('#')
+    if len(color) != 6:
+        return (0, 0, 0)
+    try:
+        r = int(color[0:2], 16)
+        g = int(color[2:4], 16)
+        b = int(color[4:6], 16)
+    except ValueError:
+        return (0, 0, 0)
+    return (r, g, b)
+
+
+def _cue_points_rekordbox_xml(
+    cue_points: list[dict[str, Any]],
+    *,
+    title: str = '',
+    artist: str = '',
+    bpm: float | None = None,
+    key: str | None = None,
+    duration_seconds: float | None = None,
+    file_location: str = '',
+) -> str:
+    """Render *cue_points* as a Rekordbox-compatible XML library string.
+
+    The output is a standard Pioneer Rekordbox 6 XML library file containing a
+    single TRACK entry with POSITION_MARK elements for each hot cue.
+    """
+    root = ET.Element('DJ_PLAYLISTS', Version='1.0.0')
+    ET.SubElement(root, 'PRODUCT', Name='rekordbox', Version='6.6.6', Company='AlphaTheta')
+
+    bpm_str = f'{bpm:.2f}' if bpm is not None else '0.00'
+    total_time = str(int(duration_seconds)) if duration_seconds is not None else '0'
+    collection = ET.SubElement(root, 'COLLECTION', Entries='1')
+    track_attrs: dict[str, str] = {
+        'TrackID': '1',
+        'Name': title,
+        'Artist': artist,
+        'Album': '',
+        'Genre': '',
+        'Kind': 'WAV File',
+        'Size': '0',
+        'TotalTime': total_time,
+        'DiscNumber': '0',
+        'TrackNumber': '0',
+        'Year': '0',
+        'AverageBpm': bpm_str,
+        'DateAdded': datetime.now(timezone.utc).strftime('%Y-%m-%d'),
+        'BitRate': '0',
+        'SampleRate': '44100',
+        'Comments': '',
+        'PlayCount': '0',
+        'Rating': '0',
+        'Location': file_location,
+        'Remixer': '',
+        'Tonality': key or '',
+        'Label': '',
+        'Mix': '',
+    }
+    track = ET.SubElement(collection, 'TRACK', track_attrs)
+
+    for cue in cue_points:
+        hot_cue = cue.get('hot_cue')
+        if not isinstance(hot_cue, int):
+            continue
+        time_seconds = cue.get('time_seconds', 0.0)
+        color_hex = cue.get('color', '#28E614')
+        r, g, b = _hex_to_rgb(str(color_hex))
+        ET.SubElement(
+            track,
+            'POSITION_MARK',
+            Name=str(cue.get('name', '')),
+            Type='0',
+            Start=f'{float(time_seconds):.3f}',
+            Num=str(hot_cue),
+            Red=str(r),
+            Green=str(g),
+            Blue=str(b),
+        )
+
+    playlists = ET.SubElement(root, 'PLAYLISTS')
+    ET.SubElement(playlists, 'NODE', Type='0', Name='ROOT', Count='0')
+
+    ET.indent(root, space='  ')
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding='unicode')
+
+
+def _cue_points_traktor_nml(
+    cue_points: list[dict[str, Any]],
+    *,
+    title: str = '',
+    artist: str = '',
+    bpm: float | None = None,
+    file_location: str = '',
+) -> str:
+    """Render *cue_points* as a Traktor-compatible NML string.
+
+    Traktor stores cue start positions in **milliseconds**.  Each hot cue
+    becomes a CUE_V2 element with ``TYPE="0"`` (standard cue).
+    """
+    root = ET.Element('NML', VERSION='19')
+    ET.SubElement(root, 'HEAD', COMPANY='www.native-instruments.com', PROGRAM='Traktor')
+
+    collection = ET.SubElement(root, 'COLLECTION', ENTRIES='1')
+    entry = ET.SubElement(
+        collection,
+        'ENTRY',
+        TITLE=title,
+        ARTIST=artist,
+    )
+
+    if file_location:
+        from pathlib import PurePosixPath
+        # Traktor LOCATION splits the path into DIR (parent with Traktor's /: prefix)
+        # and FILE (basename).  Strip any file:// scheme prefix first.
+        p = PurePosixPath(file_location.lstrip('file:///').lstrip('/'))
+        parent_parts = str(p.parent).strip('/')
+        dir_str = f'/:{("/" + parent_parts + "/") if parent_parts else "/"}'
+        ET.SubElement(
+            entry,
+            'LOCATION',
+            DIR=dir_str,
+            FILE=p.name,
+            VOLUME='',
+            VOLUMEID='',
+        )
+
+    if bpm is not None:
+        ET.SubElement(entry, 'TEMPO', BPM=f'{bpm:.6f}', BPM_QUALITY='100.000000')
+
+    for idx, cue in enumerate(cue_points):
+        hot_cue = cue.get('hot_cue')
+        if not isinstance(hot_cue, int):
+            continue
+        time_seconds = cue.get('time_seconds', 0.0)
+        # Traktor uses milliseconds
+        start_ms = float(time_seconds) * 1000.0
+        ET.SubElement(
+            entry,
+            'CUE_V2',
+            NAME=str(cue.get('name', '')),
+            DISPL_ORDER=str(idx),
+            TYPE='0',
+            START=f'{start_ms:.6f}',
+            LEN='0.000000',
+            REPEATS='-1',
+            HOTCUE=str(hot_cue),
+        )
+
+    ET.indent(root, space='  ')
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + ET.tostring(root, encoding='unicode')
+
+
+def _cue_points_mixxx_xml(
+    cue_points: list[dict[str, Any]],
+    *,
+    title: str = '',
+    artist: str = '',
+    file_location: str = '',
+    sample_rate: int = 44100,
+) -> str:
+    """Render *cue_points* as a Mixxx library XML string.
+
+    Mixxx stores cue positions in **samples** (file sample rate × seconds).
+    The *sample_rate* parameter defaults to 44100 Hz; pass the actual track
+    sample rate for bit-perfect accuracy.
+    """
+    root = ET.Element('Mixxx-Library')
+    track = ET.SubElement(
+        root,
+        'Track',
+        id='1',
+        location=file_location,
+        title=title,
+        artist=artist,
+    )
+    cues_el = ET.SubElement(track, 'Cues')
+
+    for cue in cue_points:
+        hot_cue = cue.get('hot_cue')
+        if not isinstance(hot_cue, int):
+            continue
+        time_seconds = cue.get('time_seconds', 0.0)
+        position_samples = int(round(float(time_seconds) * sample_rate))
+        color_hex = cue.get('color', '#FFFF00')
+        # Mixxx encodes colors as 0xAARRGGBB integers (FF = fully opaque).
+        r, g, b = _hex_to_rgb(str(color_hex))
+        color_int = (0xFF << 24) | (r << 16) | (g << 8) | b
+        ET.SubElement(
+            cues_el,
+            'Cue',
+            id=str(hot_cue + 1),
+            type='1',
+            position=str(position_samples),
+            length='0',
+            hotcue=str(hot_cue),
+            label=str(cue.get('name', '')),
+            color=f'0x{color_int:08X}',
+        )
+
+    ET.indent(root, space='  ')
+    return "<?xml version='1.0' encoding='UTF-8'?>\n" + ET.tostring(root, encoding='unicode')
 
 
 def _prepare_loop_exports(task: dict[str, Any], task_id: str, start_bar: int, bars: int) -> dict[str, Any]:
@@ -1563,6 +1785,130 @@ def get_task_beatgrid(task_id: str):
     if isinstance(beat_detection, dict):
         result['beat_detection'] = beat_detection
     return result
+
+
+# ---------------------------------------------------------------------------
+# Cue points
+# ---------------------------------------------------------------------------
+
+
+@app.get('/tasks/{task_id}/cue-points')
+def get_task_cue_points(task_id: str):
+    """Return the DJ cue points for a completed task.
+
+    Each entry contains:
+
+    * ``name`` – display label (e.g. ``'Intro'``, ``'Verse'``, ``'Chorus'``).
+    * ``time_seconds`` – cue position in seconds.
+    * ``hot_cue`` – zero-based hot cue index (0 = A, 1 = B, …, 7 = H).
+    * ``color`` – recommended hex colour string (e.g. ``'#28E614'``).
+    """
+    task = _load_task(task_id)
+    cue_points = _task_cue_points(task)
+    if not cue_points:
+        raise HTTPException(status_code=404, detail='Cue point data not available for this task')
+    return {'cue_points': cue_points}
+
+
+@app.get('/tasks/{task_id}/cue-points/export/rekordbox')
+def export_cue_points_rekordbox(task_id: str):
+    """Export cue points as a Rekordbox-compatible XML library file.
+
+    The response is a ``application/xml`` download named
+    ``<task_id>_cue_points_rekordbox.xml``.  Import this file into Rekordbox
+    via *File → Import → rekordbox xml*.
+    """
+    task = _load_task(task_id)
+    cue_points = _task_cue_points(task)
+    if not cue_points:
+        raise HTTPException(status_code=404, detail='Cue point data not available for this task')
+
+    analysis_raw = task.get('analysis')
+    full_mix: dict[str, Any] = {}
+    if isinstance(analysis_raw, dict):
+        fm = analysis_raw.get('full_mix')
+        if isinstance(fm, dict):
+            full_mix = fm
+
+    xml_content = _cue_points_rekordbox_xml(
+        cue_points,
+        title=str(task.get('title') or task.get('source') or ''),
+        artist=str(task.get('artist') or ''),
+        bpm=full_mix.get('bpm'),
+        key=full_mix.get('key'),
+        duration_seconds=full_mix.get('duration_seconds'),
+        file_location=str(task.get('normalized_path') or ''),
+    )
+    filename = f'{task_id}_cue_points_rekordbox.xml'
+    return Response(
+        content=xml_content,
+        media_type='application/xml',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get('/tasks/{task_id}/cue-points/export/traktor')
+def export_cue_points_traktor(task_id: str):
+    """Export cue points as a Traktor-compatible NML file.
+
+    The response is a ``application/xml`` download named
+    ``<task_id>_cue_points_traktor.nml``.  Import into Traktor Pro via
+    *Preferences → File Management → Import* or by dropping the NML onto the
+    Traktor collection.
+    """
+    task = _load_task(task_id)
+    cue_points = _task_cue_points(task)
+    if not cue_points:
+        raise HTTPException(status_code=404, detail='Cue point data not available for this task')
+
+    analysis_raw = task.get('analysis')
+    full_mix: dict[str, Any] = {}
+    if isinstance(analysis_raw, dict):
+        fm = analysis_raw.get('full_mix')
+        if isinstance(fm, dict):
+            full_mix = fm
+
+    nml_content = _cue_points_traktor_nml(
+        cue_points,
+        title=str(task.get('title') or task.get('source') or ''),
+        artist=str(task.get('artist') or ''),
+        bpm=full_mix.get('bpm'),
+        file_location=str(task.get('normalized_path') or ''),
+    )
+    filename = f'{task_id}_cue_points_traktor.nml'
+    return Response(
+        content=nml_content,
+        media_type='application/xml',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get('/tasks/{task_id}/cue-points/export/mixxx')
+def export_cue_points_mixxx(task_id: str):
+    """Export cue points as a Mixxx library XML file.
+
+    The response is a ``application/xml`` download named
+    ``<task_id>_cue_points_mixxx.xml``.  Import into Mixxx via
+    *Library → Import Library Backup* or by copying into the Mixxx library
+    directory.
+    """
+    task = _load_task(task_id)
+    cue_points = _task_cue_points(task)
+    if not cue_points:
+        raise HTTPException(status_code=404, detail='Cue point data not available for this task')
+
+    xml_content = _cue_points_mixxx_xml(
+        cue_points,
+        title=str(task.get('title') or task.get('source') or ''),
+        artist=str(task.get('artist') or ''),
+        file_location=str(task.get('normalized_path') or ''),
+    )
+    filename = f'{task_id}_cue_points_mixxx.xml'
+    return Response(
+        content=xml_content,
+        media_type='application/xml',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get('/tasks/{task_id}/loops')
