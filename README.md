@@ -424,9 +424,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-18T23:59:14Z
-- Latest commit: `f4cbd64`
-- Commit message: Merge pull request #175 from julesdg6/copilot/fix-ui-labels-for-transcription  fix: generic MIDI Transcription wording for non-MT3 backends
+- Last automated update: 2026-06-19T00:00:59Z
+- Latest commit: `8aa2dec`
+- Commit message: Merge pull request #173 from julesdg6/copilot/feature-cue-point-generator  feat: DJ cue point generator with Rekordbox, Traktor, and Mixxx exports
 <!-- readme-update:end -->
 
 ## 🥁 Beat Detection & Beat Grid
