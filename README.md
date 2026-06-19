@@ -452,9 +452,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-19T00:10:24Z
-- Latest commit: `7141de6`
-- Commit message: Merge pull request #176 from julesdg6/copilot/julesdg6-harmonic-analysis  feat: Harmonic Analysis – Roman numerals, key changes, borrowed chords
+- Last automated update: 2026-06-19T00:21:23Z
+- Latest commit: `45fcca8`
+- Commit message: Merge pull request #178 from julesdg6/copilot/feature-midi-stem-extraction  feat: MIDI stem extraction – drums, bass, melody, chords
 <!-- readme-update:end -->
 
 ## 🥁 Beat Detection & Beat Grid
