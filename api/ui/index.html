@@ -2428,7 +2428,9 @@
         ? data.available_models.find((model) => model.name === selectedModelValue)
         : null;
 
-      mt3StatusNote.textContent = midiStatus.reason_detail || 'MIDI transcription status unavailable.';
+      const midiBackendDisplay = midiStatus.backend_display || midiStatus.backend || '';
+      const midiReasonDetail = midiStatus.reason_detail || 'MIDI transcription status unavailable.';
+      mt3StatusNote.textContent = midiBackendDisplay ? `${midiBackendDisplay} · ${midiReasonDetail}` : midiReasonDetail;
       stemBackendNote.textContent = `Audio Separator: ${stemBackends?.audio_separator?.status || 'unknown'} · Demucs: ${stemBackends?.demucs?.status || 'unknown'} · Ace-Step: ${stemBackends?.acestep?.status || 'unknown'} · Active backend: ${activeBackend}`;
       stemModelNote.textContent = modelReady
         ? `${modelReady.name} is ${modelReady.ready ? 'ready' : (modelReady.available ? 'present but not ready' : 'missing')}.`

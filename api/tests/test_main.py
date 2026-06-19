@@ -995,6 +995,40 @@ def test_mt3_status_reports_service_unconfigured_reason(client, monkeypatch):
     assert 'not configured' in data['reason_detail']
 
 
+def test_mt3_status_basic_pitch_available_without_service_url(client, monkeypatch):
+    """basic_pitch runs in-process and must be available even without MT3_SERVICE_URL."""
+    monkeypatch.setenv('MT3_ENABLED', 'true')
+    monkeypatch.delenv('MT3_SERVICE_URL', raising=False)
+    monkeypatch.setenv('TRANSCRIPTION_BACKEND', 'basic_pitch')
+    import api.main as main_module  # noqa: PLC0415
+    importlib.reload(main_module)
+    c = TestClient(main_module.app)
+
+    response = c.get('/mt3/status')
+    assert response.status_code == 200
+    data = response.json()
+    assert data['available'] is True
+    assert data['state'] == 'available'
+    assert data['backend'] == 'basic_pitch'
+    assert data['backend_display'] == 'Basic Pitch'
+    assert 'Basic Pitch' in data['reason_detail']
+
+
+def test_mt3_status_basic_pitch_shows_backend_display(client, monkeypatch):
+    """backend_display must be returned and use friendly name for basic_pitch."""
+    monkeypatch.setenv('MT3_ENABLED', 'true')
+    monkeypatch.delenv('MT3_SERVICE_URL', raising=False)
+    monkeypatch.setenv('TRANSCRIPTION_BACKEND', 'basic_pitch')
+    import api.main as main_module  # noqa: PLC0415
+    importlib.reload(main_module)
+    c = TestClient(main_module.app)
+
+    response = c.get('/mt3/status')
+    data = response.json()
+    assert data['backend_display'] == 'Basic Pitch'
+    assert 'MT3' not in data['reason_detail']
+
+
 def test_analysis_settings_returns_defaults_and_availability(client, monkeypatch, tmp_path):
     model_dir = tmp_path / 'models' / 'separator'
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -1311,6 +1345,158 @@ def test_get_task_beatgrid_returns_404_for_unknown_task(client):
     """GET /tasks/{task_id}/beatgrid must return 404 for a nonexistent task."""
     response = client.get(f'/tasks/{uuid.uuid4()}/beatgrid')
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /tasks/{task_id}/cue-points  &  export endpoints
+# ---------------------------------------------------------------------------
+
+_SAMPLE_CUE_POINTS = [
+    {'name': 'Intro', 'time_seconds': 0.5, 'hot_cue': 0, 'color': '#28E614'},
+    {'name': 'Verse', 'time_seconds': 16.0, 'hot_cue': 1, 'color': '#F8821A'},
+    {'name': 'Chorus', 'time_seconds': 48.0, 'hot_cue': 2, 'color': '#C02626'},
+    {'name': 'Breakdown', 'time_seconds': 96.0, 'hot_cue': 3, 'color': '#1F9BFA'},
+    {'name': 'Outro', 'time_seconds': 220.0, 'hot_cue': 4, 'color': '#FAC000'},
+]
+
+
+def _make_cue_task(tmp_path, task_id: str, cue_points=None):
+    """Write a minimal task JSON file containing cue point data."""
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'title': 'Test Track',
+        'artist': 'Test Artist',
+        'analysis': {
+            'full_mix': {
+                'bpm': 128.0,
+                'key': 'A minor',
+                'duration_seconds': 240.0,
+                'cue_points': cue_points if cue_points is not None else _SAMPLE_CUE_POINTS,
+            },
+        },
+    }))
+
+
+def test_get_task_cue_points_returns_cue_data(client, tmp_path):
+    """GET /tasks/{task_id}/cue-points must return the hot cue list."""
+    task_id = str(uuid.uuid4())
+    _make_cue_task(tmp_path, task_id)
+
+    response = client.get(f'/tasks/{task_id}/cue-points')
+    assert response.status_code == 200
+    data = response.json()
+    assert 'cue_points' in data
+    cues = data['cue_points']
+    assert isinstance(cues, list)
+    assert len(cues) == len(_SAMPLE_CUE_POINTS)
+    first = cues[0]
+    assert first['name'] == 'Intro'
+    assert first['time_seconds'] == 0.5
+    assert first['hot_cue'] == 0
+    assert first['color'].startswith('#')
+
+
+def test_get_task_cue_points_returns_404_when_no_cue_points(client, tmp_path):
+    """GET /tasks/{task_id}/cue-points must return 404 when no cue data is stored."""
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'bpm': 128.0,
+    }))
+    response = client.get(f'/tasks/{task_id}/cue-points')
+    assert response.status_code == 404
+
+
+def test_get_task_cue_points_returns_404_for_unknown_task(client):
+    """GET /tasks/{task_id}/cue-points must return 404 for a nonexistent task."""
+    response = client.get(f'/tasks/{uuid.uuid4()}/cue-points')
+    assert response.status_code == 404
+
+
+def test_export_cue_points_rekordbox_returns_xml(client, tmp_path):
+    """Rekordbox export must return XML with POSITION_MARK elements."""
+    task_id = str(uuid.uuid4())
+    _make_cue_task(tmp_path, task_id)
+
+    response = client.get(f'/tasks/{task_id}/cue-points/export/rekordbox')
+    assert response.status_code == 200
+    assert 'xml' in response.headers.get('content-type', '')
+    body = response.text
+    assert 'DJ_PLAYLISTS' in body
+    assert 'POSITION_MARK' in body
+    assert 'Intro' in body
+    assert 'Verse' in body
+    assert 'Chorus' in body
+    assert f'attachment; filename="{task_id}_cue_points_rekordbox.xml"' in response.headers.get('content-disposition', '')
+
+
+def test_export_cue_points_traktor_returns_nml(client, tmp_path):
+    """Traktor export must return NML XML with CUE_V2 elements in milliseconds."""
+    task_id = str(uuid.uuid4())
+    _make_cue_task(tmp_path, task_id)
+
+    response = client.get(f'/tasks/{task_id}/cue-points/export/traktor')
+    assert response.status_code == 200
+    assert 'xml' in response.headers.get('content-type', '')
+    body = response.text
+    assert 'NML' in body
+    assert 'CUE_V2' in body
+    # Intro at 0.5 s → 500 ms
+    assert '500.000000' in body
+    assert 'Intro' in body
+    assert f'attachment; filename="{task_id}_cue_points_traktor.nml"' in response.headers.get('content-disposition', '')
+
+
+def test_export_cue_points_mixxx_returns_xml(client, tmp_path):
+    """Mixxx export must return XML with Cue elements in sample positions."""
+    task_id = str(uuid.uuid4())
+    _make_cue_task(tmp_path, task_id)
+
+    response = client.get(f'/tasks/{task_id}/cue-points/export/mixxx')
+    assert response.status_code == 200
+    assert 'xml' in response.headers.get('content-type', '')
+    body = response.text
+    assert 'Mixxx-Library' in body
+    assert '<Cue' in body
+    assert 'Intro' in body
+    # Intro at 0.5 s × 44100 = 22050 samples
+    assert '22050' in body
+    assert f'attachment; filename="{task_id}_cue_points_mixxx.xml"' in response.headers.get('content-disposition', '')
+
+
+def test_export_cue_points_returns_404_when_no_cue_data(client, tmp_path):
+    """Export endpoints must return 404 when no cue points are available."""
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+    }))
+    for endpoint in ('rekordbox', 'traktor', 'mixxx'):
+        response = client.get(f'/tasks/{task_id}/cue-points/export/{endpoint}')
+        assert response.status_code == 404, f'Expected 404 for {endpoint}'
+
+
+def test_rekordbox_xml_contains_correct_rgb_values(client, tmp_path):
+    """Rekordbox POSITION_MARK must carry split RGB components for the cue colour."""
+    task_id = str(uuid.uuid4())
+    # Single green cue (#28E614 → R=40, G=230, B=20)
+    _make_cue_task(tmp_path, task_id, cue_points=[
+        {'name': 'Intro', 'time_seconds': 1.0, 'hot_cue': 0, 'color': '#28E614'},
+    ])
+    response = client.get(f'/tasks/{task_id}/cue-points/export/rekordbox')
+    assert response.status_code == 200
+    body = response.text
+    assert 'Red="40"' in body
+    assert 'Green="230"' in body
+    assert 'Blue="20"' in body
 
 
 # ---------------------------------------------------------------------------
@@ -1699,3 +1885,212 @@ def test_midi_stems_included_in_task_artifacts(client, tmp_path):
     assert response.status_code == 200
     artifacts = response.json()['artifacts']
     assert 'midi_stem_chords' in artifacts
+
+
+# ---------------------------------------------------------------------------
+# GET /tasks/{task_id}/report
+# ---------------------------------------------------------------------------
+
+def _make_completed_task(tmp_path: Path, task_id: str) -> dict:
+    """Write and return a minimal completed task with full analysis data."""
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    task = {
+        'task_id': task_id,
+        'status': 'done',
+        'source': 'mysong.mp3',
+        'bpm': 128.0,
+        'key': 'C major',
+        'duration_seconds': 180.0,
+        'analysis': {
+            'full_mix': {
+                'bpm': 128.0,
+                'key': 'C major',
+                'duration_seconds': 180.0,
+                'lufs': -14.0,
+                'waveform': [0.1, 0.2, 0.3, 0.2, 0.1],
+                'energy_over_time': [0.01, 0.04, 0.09, 0.04, 0.01],
+                'loudness_curve': [0.5, 0.6, 0.7, 0.6, 0.5],
+                'structure': [
+                    {'label': 'Intro', 'start_seconds': 0.0, 'end_seconds': 30.0, 'timestamp': '0:00'},
+                    {'label': 'Verse', 'start_seconds': 30.0, 'end_seconds': 90.0, 'timestamp': '0:30'},
+                    {'label': 'Outro', 'start_seconds': 90.0, 'end_seconds': 180.0, 'timestamp': '1:30'},
+                ],
+                'sections': [
+                    {'label': 'A', 'start_seconds': 0.0, 'end_seconds': 60.0},
+                    {'label': 'B', 'start_seconds': 60.0, 'end_seconds': 180.0},
+                ],
+                'cue_points': [
+                    {'name': 'intro', 'time_seconds': 0.0},
+                    {'name': 'first_downbeat', 'time_seconds': 0.47},
+                    {'name': 'outro', 'time_seconds': 150.0},
+                ],
+                'chords': {
+                    'segments': [
+                        {'symbol': 'C', 'start_seconds': 0.0, 'end_seconds': 4.0, 'confidence': 0.9},
+                        {'symbol': 'Am', 'start_seconds': 4.0, 'end_seconds': 8.0, 'confidence': 0.85},
+                    ],
+                    'progression': ['C', 'Am', 'F', 'G'],
+                },
+                'beatgrid': {'bpm': 128.0, 'first_beat_seconds': 0.0, 'beats': []},
+            },
+            'stems': {
+                'vocals': {'bpm': 128.0, 'key': 'C major', 'duration_seconds': 180.0, 'lufs': -18.0},
+                'drums': {'bpm': 128.0, 'key': None, 'duration_seconds': 180.0, 'lufs': -12.0},
+            },
+        },
+        'stems': {
+            'vocals': '/srv/shank/data/stems/vocals.wav',
+            'drums': '/srv/shank/data/stems/drums.wav',
+        },
+        'mt3': {
+            'status': 'completed',
+            'full_mix': {
+                'midi_path': '/srv/shank/data/mt3/full_mix.mid',
+                'notes': [{'pitch': 60, 'onset': 0.0, 'offset': 0.5}],
+            },
+            'stems': {},
+        },
+    }
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps(task))
+    return task
+
+
+def test_report_json_returns_structured_payload(client, tmp_path):
+    """GET /tasks/{task_id}/report returns a JSON report with all expected fields."""
+    task_id = str(uuid.uuid4())
+    _make_completed_task(tmp_path, task_id)
+
+    response = client.get(f'/tasks/{task_id}/report?format=json')
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data['report_version'] == '1.0'
+    assert data['task_id'] == task_id
+    assert 'generated_at' in data
+    assert data['title'] == 'mysong'
+    assert data['summary']['bpm'] == 128.0
+    assert data['summary']['key'] == 'C major'
+    assert data['summary']['duration_seconds'] == 180.0
+    assert data['summary']['lufs'] == -14.0
+    assert len(data['structure']) == 3
+    assert data['structure'][0]['label'] == 'Intro'
+    assert len(data['sections']) == 2
+    assert len(data['cue_points']) == 3
+    assert len(data['chords']['segments']) == 2
+    assert data['chords']['progression'] == ['C', 'Am', 'F', 'G']
+    assert len(data['waveform']) == 5
+    assert len(data['energy']) == 5
+    assert len(data['loudness']) == 5
+    assert 'vocals' in data['stems']
+    assert 'drums' in data['stems']
+    assert data['stems']['vocals']['bpm'] == 128.0
+    assert 'full_mix' in data['midi']
+    assert data['midi']['full_mix']['note_count'] == 1
+
+
+def test_report_json_is_default_format(client, tmp_path):
+    """GET /tasks/{task_id}/report without format param defaults to JSON."""
+    task_id = str(uuid.uuid4())
+    _make_completed_task(tmp_path, task_id)
+
+    response = client.get(f'/tasks/{task_id}/report')
+    assert response.status_code == 200
+    assert response.headers['content-type'].startswith('application/json')
+    data = response.json()
+    assert 'report_version' in data
+
+
+def test_report_html_returns_self_contained_page(client, tmp_path):
+    """GET /tasks/{task_id}/report?format=html returns a complete HTML page."""
+    task_id = str(uuid.uuid4())
+    _make_completed_task(tmp_path, task_id)
+
+    response = client.get(f'/tasks/{task_id}/report?format=html')
+    assert response.status_code == 200
+    assert response.headers['content-type'].startswith('text/html')
+    body = response.text
+    assert '<!DOCTYPE html>' in body
+    assert 'SHANK Report' in body
+    assert '128.00' in body
+    assert 'C major' in body
+    assert 'Intro' in body
+    assert 'Verse' in body
+    assert 'Outro' in body
+    assert '<svg' in body
+
+
+def test_report_html_served_by_accept_header(client, tmp_path):
+    """Accept: text/html should trigger HTML format even without ?format=."""
+    task_id = str(uuid.uuid4())
+    _make_completed_task(tmp_path, task_id)
+
+    response = client.get(
+        f'/tasks/{task_id}/report',
+        headers={'accept': 'text/html,application/xhtml+xml'},
+    )
+    assert response.status_code == 200
+    assert response.headers['content-type'].startswith('text/html')
+    assert '<!DOCTYPE html>' in response.text
+
+
+def test_report_pdf_returns_pdf_bytes(client, tmp_path):
+    """GET /tasks/{task_id}/report?format=pdf returns a PDF file."""
+    task_id = str(uuid.uuid4())
+    _make_completed_task(tmp_path, task_id)
+
+    response = client.get(f'/tasks/{task_id}/report?format=pdf')
+    assert response.status_code == 200
+    assert response.headers['content-type'] == 'application/pdf'
+    assert response.content[:4] == b'%PDF'
+    assert 'attachment' in response.headers.get('content-disposition', '')
+
+
+def test_report_returns_404_for_unknown_task(client):
+    """Report endpoint returns 404 when the task does not exist."""
+    missing = str(uuid.uuid4())
+    response = client.get(f'/tasks/{missing}/report')
+    assert response.status_code == 404
+
+
+def test_report_returns_404_for_invalid_task_id(client):
+    """Report endpoint returns 404 for non-UUID task IDs."""
+    response = client.get('/tasks/not-a-uuid/report')
+    assert response.status_code == 404
+
+
+def test_report_json_minimal_task_no_analysis(client, tmp_path):
+    """Report should work for a task with no analysis data (e.g. pending task)."""
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'pending',
+        'source': 'song.mp3',
+    }))
+
+    response = client.get(f'/tasks/{task_id}/report?format=json')
+    assert response.status_code == 200
+    data = response.json()
+    assert data['report_version'] == '1.0'
+    assert data['summary']['bpm'] is None
+    assert data['structure'] == []
+    assert data['chords']['segments'] == []
+
+
+def test_report_html_minimal_task_renders_placeholders(client, tmp_path):
+    """HTML report for a task with no data should still render without crashing."""
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'pending',
+        'source': 'empty.mp3',
+    }))
+
+    response = client.get(f'/tasks/{task_id}/report?format=html')
+    assert response.status_code == 200
+    assert '<!DOCTYPE html>' in response.text
+    assert 'No data' in response.text or 'No chord data' in response.text
