@@ -158,9 +158,16 @@ def test_pending_upload_task_is_normalized(data_dir):
     assert Path(updated['results']['lyrics_json']).is_file()
     assert Path(updated['results']['credits_json']).is_file()
     assert Path(updated['results']['song_metadata_json']).is_file()
+    assert Path(updated['results']['musical_profile_json']).is_file()
+    assert Path(updated['results']['ace_step_prompt_json']).is_file()
     assert Path(updated['results']['artifacts_json']).is_file()
     structured_analysis = json.loads(Path(updated['results']['analysis_json']).read_text())
     assert structured_analysis == updated['analysis']
+    structured_profile = json.loads(Path(updated['results']['musical_profile_json']).read_text())
+    assert structured_profile == updated['ai_prompts']['musical_profile']
+    structured_prompt = json.loads(Path(updated['results']['ace_step_prompt_json']).read_text())
+    assert structured_prompt == updated['ai_prompts']
+    assert updated['ai_prompts']['prompts']['primary']
     structured_task = json.loads(Path(updated['results']['task_json']).read_text())
     assert structured_task['status'] == 'done'
     assert structured_task['bpm'] == 128.0

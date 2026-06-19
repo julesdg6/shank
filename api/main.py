@@ -1464,6 +1464,8 @@ def _task_artifacts(task: dict) -> dict[str, Path]:
             'lyrics_json': structured_results.get('lyrics_json'),
             'credits_json': structured_results.get('credits_json'),
             'song_metadata_json': structured_results.get('song_metadata_json'),
+            'musical_profile_json': structured_results.get('musical_profile_json'),
+            'ace_step_prompt_json': structured_results.get('ace_step_prompt_json'),
             'results_artifacts_json': structured_results.get('artifacts_json'),
         }
         for artifact_name, artifact_path in structured_files.items():
