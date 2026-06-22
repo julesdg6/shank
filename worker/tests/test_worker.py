@@ -158,9 +158,16 @@ def test_pending_upload_task_is_normalized(data_dir):
     assert Path(updated['results']['lyrics_json']).is_file()
     assert Path(updated['results']['credits_json']).is_file()
     assert Path(updated['results']['song_metadata_json']).is_file()
+    assert Path(updated['results']['musical_profile_json']).is_file()
+    assert Path(updated['results']['ace_step_prompt_json']).is_file()
     assert Path(updated['results']['artifacts_json']).is_file()
     structured_analysis = json.loads(Path(updated['results']['analysis_json']).read_text())
     assert structured_analysis == updated['analysis']
+    structured_profile = json.loads(Path(updated['results']['musical_profile_json']).read_text())
+    assert structured_profile == updated['ai_prompts']['musical_profile']
+    structured_prompt = json.loads(Path(updated['results']['ace_step_prompt_json']).read_text())
+    assert structured_prompt == updated['ai_prompts']
+    assert updated['ai_prompts']['prompts']['primary']
     structured_task = json.loads(Path(updated['results']['task_json']).read_text())
     assert structured_task['status'] == 'done'
     assert structured_task['bpm'] == 128.0
@@ -1415,3 +1422,247 @@ def test_auto_mode_continues_without_stems_when_audio_separator_unavailable(data
     updated = json.loads(task_file.read_text())
     assert updated['status'] == 'done'
     assert 'stems' not in updated
+
+
+# ---------------------------------------------------------------------------
+# run_stem_midi_extraction
+# ---------------------------------------------------------------------------
+
+def _fake_midi_bytes() -> bytes:
+    """Return a minimal valid MIDI file header."""
+    return b'MThd\x00\x00\x00\x06\x00\x00\x00\x01\x01\xe0MTrk\x00\x00\x00\x04\x00\xff/\x00'
+
+
+def _make_fake_transcription_result(note_count: int = 3):
+    from transcription.base import TranscriptionResult
+    notes = [{'start': float(i), 'end': float(i) + 0.5, 'pitch': 60 + i} for i in range(note_count)]
+    return TranscriptionResult(backend='basic_pitch', midi_bytes=_fake_midi_bytes(), notes=notes)
+
+
+def test_run_stem_midi_extraction_disabled_when_env_false(tmp_path, monkeypatch):
+    """run_stem_midi_extraction returns status='disabled' when MIDI_STEMS_ENABLED=false."""
+    monkeypatch.setenv('MIDI_STEMS_ENABLED', 'false')
+    monkeypatch.setenv('DATA_DIR', str(tmp_path))
+    importlib.reload(worker_loop)
+
+    task_id = str(uuid.uuid4())
+    result = worker_loop.run_stem_midi_extraction(task_id, {'drums': '/tmp/drums.wav'})
+
+    assert result['enabled'] is False
+    assert result['status'] == 'disabled'
+    assert result['stems'] == {}
+
+
+def test_run_stem_midi_extraction_disabled_when_enabled_false_arg(tmp_path, monkeypatch):
+    """run_stem_midi_extraction respects the enabled=False override."""
+    monkeypatch.setenv('MIDI_STEMS_ENABLED', 'true')
+    monkeypatch.setenv('DATA_DIR', str(tmp_path))
+    importlib.reload(worker_loop)
+
+    task_id = str(uuid.uuid4())
+    result = worker_loop.run_stem_midi_extraction(task_id, {'drums': '/tmp/drums.wav'}, enabled=False)
+
+    assert result['enabled'] is False
+    assert result['status'] == 'disabled'
+
+
+def test_run_stem_midi_extraction_disabled_when_backend_disabled(tmp_path, monkeypatch):
+    """run_stem_midi_extraction skips and warns when TRANSCRIPTION_BACKEND=disabled."""
+    monkeypatch.setenv('MIDI_STEMS_ENABLED', 'true')
+    monkeypatch.setenv('TRANSCRIPTION_BACKEND', 'disabled')
+    monkeypatch.setenv('DATA_DIR', str(tmp_path))
+    importlib.reload(worker_loop)
+
+    task_id = str(uuid.uuid4())
+    result = worker_loop.run_stem_midi_extraction(task_id, {'drums': '/tmp/drums.wav'})
+
+    assert result['status'] == 'disabled'
+    assert any('disabled' in w for w in result['warnings'])
+
+
+def test_run_stem_midi_extraction_skips_unmapped_stems(tmp_path, monkeypatch):
+    """Stems without a role mapping are skipped with a warning; no transcription occurs."""
+    monkeypatch.setenv('MIDI_STEMS_ENABLED', 'true')
+    monkeypatch.setenv('TRANSCRIPTION_BACKEND', 'basic_pitch')
+    monkeypatch.setenv('DATA_DIR', str(tmp_path))
+    importlib.reload(worker_loop)
+
+    task_id = str(uuid.uuid4())
+    fake_result = _make_fake_transcription_result()
+
+    with patch('worker_loop._get_transcription_backend') as mock_backend_factory:
+        mock_backend = MagicMock()
+        mock_backend.transcribe.return_value = fake_result
+        mock_backend_factory.return_value = mock_backend
+
+        result = worker_loop.run_stem_midi_extraction(task_id, {'unknown_stem': '/tmp/unknown.wav'})
+
+    # No transcription took place; status is completed but stems is empty
+    assert result['stems'] == {}
+    assert any('no MIDI role mapping' in w for w in result['warnings'])
+    mock_backend.transcribe.assert_not_called()
+
+
+def test_run_stem_midi_extraction_produces_named_midi_files(tmp_path, monkeypatch):
+    """run_stem_midi_extraction writes drums.mid, bass.mid, melody.mid, chords.mid."""
+    monkeypatch.setenv('MIDI_STEMS_ENABLED', 'true')
+    monkeypatch.setenv('TRANSCRIPTION_BACKEND', 'basic_pitch')
+    monkeypatch.setenv('DATA_DIR', str(tmp_path))
+    importlib.reload(worker_loop)
+
+    task_id = str(uuid.uuid4())
+
+    with patch('worker_loop._get_transcription_backend') as mock_backend_factory:
+        mock_backend = MagicMock()
+        mock_backend.transcribe.return_value = _make_fake_transcription_result(note_count=5)
+        mock_backend_factory.return_value = mock_backend
+
+        result = worker_loop.run_stem_midi_extraction(task_id, {
+            'drums': '/tmp/drums.wav',
+            'bass': '/tmp/bass.wav',
+            'vocals': '/tmp/vocals.wav',
+            'other': '/tmp/other.wav',
+        })
+
+    assert result['status'] == 'completed'
+    assert result['backend'] == 'basic_pitch'
+    assert set(result['stems'].keys()) == {'drums', 'bass', 'melody', 'chords'}
+
+    for role in ('drums', 'bass', 'melody', 'chords'):
+        stem_info = result['stems'][role]
+        assert 'midi_path' in stem_info
+        midi_file = Path(stem_info['midi_path'])
+        assert midi_file.name == f'{role}.mid'
+        assert midi_file.exists()
+        assert midi_file.read_bytes() == _fake_midi_bytes()
+        assert stem_info['note_count'] == 5
+
+    assert len(result['output_paths']) == 4
+
+
+def test_run_stem_midi_extraction_role_priority_for_duplicate_roles(tmp_path, monkeypatch):
+    """When two stems map to the same role, the first one wins and the second is skipped."""
+    monkeypatch.setenv('MIDI_STEMS_ENABLED', 'true')
+    monkeypatch.setenv('TRANSCRIPTION_BACKEND', 'basic_pitch')
+    monkeypatch.setenv('DATA_DIR', str(tmp_path))
+    importlib.reload(worker_loop)
+
+    task_id = str(uuid.uuid4())
+
+    with patch('worker_loop._get_transcription_backend') as mock_backend_factory:
+        mock_backend = MagicMock()
+        mock_backend.transcribe.return_value = _make_fake_transcription_result()
+        mock_backend_factory.return_value = mock_backend
+
+        # 'vocals' and 'guitar' both map to 'melody'; only the first processed should win
+        result = worker_loop.run_stem_midi_extraction(task_id, {
+            'vocals': '/tmp/vocals.wav',
+            'guitar': '/tmp/guitar.wav',
+        })
+
+    assert result['status'] == 'completed'
+    assert 'melody' in result['stems']
+    assert result['stems']['melody']['stem'] in ('vocals', 'guitar')
+    assert any('already filled' in w for w in result['warnings'])
+    # transcribe should have been called only once (for the winner)
+    assert mock_backend.transcribe.call_count == 1
+
+
+def test_run_stem_midi_extraction_partial_on_transcription_error(tmp_path, monkeypatch):
+    """Errors for individual stems are recorded and status becomes 'partial'."""
+    from transcription.base import TranscriptionError
+    monkeypatch.setenv('MIDI_STEMS_ENABLED', 'true')
+    monkeypatch.setenv('TRANSCRIPTION_BACKEND', 'basic_pitch')
+    monkeypatch.setenv('DATA_DIR', str(tmp_path))
+    importlib.reload(worker_loop)
+
+    task_id = str(uuid.uuid4())
+
+    call_count = 0
+
+    def _side_effect(path):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return _make_fake_transcription_result()
+        raise TranscriptionError('model error')
+
+    with patch('worker_loop._get_transcription_backend') as mock_backend_factory:
+        mock_backend = MagicMock()
+        mock_backend.transcribe.side_effect = _side_effect
+        mock_backend_factory.return_value = mock_backend
+
+        result = worker_loop.run_stem_midi_extraction(task_id, {
+            'drums': '/tmp/drums.wav',
+            'bass': '/tmp/bass.wav',
+        })
+
+    assert result['status'] == 'partial'
+    assert len(result['stems']) == 1
+    assert len(result['errors']) == 1
+
+
+def test_run_stem_midi_extraction_no_stems_warns(tmp_path, monkeypatch):
+    """run_stem_midi_extraction warns when called with an empty stems dict."""
+    monkeypatch.setenv('MIDI_STEMS_ENABLED', 'true')
+    monkeypatch.setenv('TRANSCRIPTION_BACKEND', 'basic_pitch')
+    monkeypatch.setenv('DATA_DIR', str(tmp_path))
+    importlib.reload(worker_loop)
+
+    task_id = str(uuid.uuid4())
+    result = worker_loop.run_stem_midi_extraction(task_id, {})
+
+    assert result['status'] == 'disabled'
+    assert any('no stems available' in w for w in result['warnings'])
+
+
+def test_process_pending_task_writes_midi_stems_when_stems_available(data_dir, monkeypatch):
+    """process_pending_tasks should run MIDI stem extraction when stems are produced."""
+    monkeypatch.setenv('MIDI_STEMS_ENABLED', 'true')
+    monkeypatch.setenv('TRANSCRIPTION_BACKEND', 'basic_pitch')
+    monkeypatch.setenv('STEM_BACKEND', 'audio_separator')
+    importlib.reload(worker_loop)
+    _, task_file = _make_upload_task(data_dir)
+
+    fake_stems = {
+        'drums': str(data_dir / 'stems' / 'drums.wav'),
+        'bass': str(data_dir / 'stems' / 'bass.wav'),
+    }
+
+    fake_midi_stems_result = {
+        'enabled': True,
+        'backend': 'basic_pitch',
+        'status': 'completed',
+        'stems': {
+            'drums': {'stem': 'drums', 'role': 'drums', 'midi_path': '/srv/shank/data/results/t/midi/drums.mid', 'note_count': 10},
+            'bass': {'stem': 'bass', 'role': 'bass', 'midi_path': '/srv/shank/data/results/t/midi/bass.mid', 'note_count': 7},
+        },
+        'output_paths': [],
+        'warnings': [],
+        'errors': [],
+    }
+
+    with patch('worker_loop.normalize_audio'), \
+         patch('worker_loop.separate_stems_with_audio_separator',
+               return_value={'tracks': fake_stems}), \
+         patch('worker_loop.run_stem_midi_extraction', return_value=fake_midi_stems_result) as mock_midi_stems, \
+         patch('worker_loop.run_mt3_transcription', return_value={
+             'enabled': False, 'backend': 'basic_pitch', 'status': 'disabled',
+             'model': 'mt3', 'output_paths': [], 'warnings': [], 'errors': [],
+             'full_mix': None, 'stems': {},
+         }), \
+         patch('worker_loop.analyze_audio', return_value={'bpm': 120.0, 'key': 'C major'}):
+        count = worker_loop.process_pending_tasks()
+
+    assert count == 1
+    mock_midi_stems.assert_called_once()
+    call_kwargs = mock_midi_stems.call_args
+    assert call_kwargs.args[1] == fake_stems or (
+        isinstance(call_kwargs.args[1], dict) and set(call_kwargs.args[1]) == {'drums', 'bass'}
+    )
+
+    updated = json.loads(task_file.read_text())
+    assert updated['status'] == 'done'
+    assert updated['midi_stems']['status'] == 'completed'
+    assert 'drums' in updated['midi_stems']['stems']
+    assert 'bass' in updated['midi_stems']['stems']

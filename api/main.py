@@ -1483,13 +1483,22 @@ def list_completed_tasks():
 
 @app.get('/tasks/fingerprints')
 def list_task_fingerprints():
-    """Return fingerprints for all completed tasks.
+    """Return Audio DNA fingerprints for all completed tasks.
 
-    Each entry includes the ``task_id`` alongside the fingerprint fields so
-    callers can identify which task a fingerprint belongs to.
+    The response maps each ``task_id`` to its fingerprint dict.  Fingerprints
+    are loaded from the on-disk ``fingerprint.json`` artifact written by the
+    worker when a task completes.  Tasks that have no fingerprint yet (e.g.
+    still processing, or processed before this feature was added) are omitted.
+
+    Callers can use the returned fingerprints for:
+
+    * **Duplicate detection** – find tasks sharing the same ``fingerprint_hash``.
+    * **Collection organisation** – group by ``key`` or ``bpm`` range.
+    * **Similarity search** – compare ``energy_profile``/``spectral_profile``
+      vectors using cosine similarity or nearest-neighbour algorithms.
     """
     _ensure_dirs()
-    result: list[dict[str, Any]] = []
+    fingerprints: dict[str, Any] = {}
     for task_file in TASKS_DIR.glob('*.json'):
         try:
             task = json.loads(task_file.read_text())
@@ -1497,12 +1506,25 @@ def list_task_fingerprints():
             continue
         if task.get('status') != 'done':
             continue
-        fingerprint = _load_task_fingerprint(task)
-        if fingerprint is None:
+        task_id = task.get('task_id')
+        if not isinstance(task_id, str):
             continue
-        task_id_val = task.get('task_id') or task_file.stem
-        result.append({'task_id': str(task_id_val), **fingerprint})
-    return {'fingerprints': result}
+        structured_results = task.get('results')
+        if not isinstance(structured_results, dict):
+            continue
+        fp_path = structured_results.get('fingerprint_json')
+        if not isinstance(fp_path, str) or not fp_path:
+            continue
+        resolved = _resolve_data_path(fp_path)
+        if resolved is None:
+            continue
+        try:
+            fingerprint = json.loads(resolved.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(fingerprint, dict) and fingerprint:
+            fingerprints[task_id] = fingerprint
+    return {'fingerprints': fingerprints}
 
 
 # ---------------------------------------------------------------------------
@@ -1696,6 +1718,20 @@ def _task_artifacts(task: dict) -> dict[str, Path]:
                     continue
                 artifacts[f'stem_{stem_name}_midi'] = resolved
 
+    midi_stems_data = task.get('midi_stems')
+    if isinstance(midi_stems_data, dict):
+        midi_stems = midi_stems_data.get('stems')
+        if isinstance(midi_stems, dict):
+            for role, stem_info in midi_stems.items():
+                if not isinstance(role, str) or not isinstance(stem_info, dict):
+                    continue
+                midi_path = stem_info.get('midi_path')
+                if not isinstance(midi_path, str) or not midi_path:
+                    continue
+                resolved = _resolve_data_path(midi_path)
+                if resolved is not None:
+                    artifacts[f'midi_stem_{role}'] = resolved
+
     structured_results = task.get('results')
     if isinstance(structured_results, dict):
         structured_files = {
@@ -1703,13 +1739,17 @@ def _task_artifacts(task: dict) -> dict[str, Path]:
             'results_analysis_json': structured_results.get('analysis_json'),
             'beatgrid_json': structured_results.get('beatgrid_json'),
             'structure_json': structured_results.get('structure_json'),
+            'fingerprint_json': structured_results.get('fingerprint_json'),
             'waveform_beats_png': structured_results.get('waveform_beats_png'),
             'tempo_curve_png': structured_results.get('tempo_curve_png'),
             'beatgraph_png': structured_results.get('beatgraph_png'),
             'results_mt3_json': structured_results.get('mt3_json'),
+            'results_midi_stems_json': structured_results.get('midi_stems_json'),
             'lyrics_json': structured_results.get('lyrics_json'),
             'credits_json': structured_results.get('credits_json'),
             'song_metadata_json': structured_results.get('song_metadata_json'),
+            'musical_profile_json': structured_results.get('musical_profile_json'),
+            'ace_step_prompt_json': structured_results.get('ace_step_prompt_json'),
             'results_artifacts_json': structured_results.get('artifacts_json'),
         }
         for artifact_name, artifact_path in structured_files.items():
@@ -1720,6 +1760,57 @@ def _task_artifacts(task: dict) -> dict[str, Path]:
                 artifacts[artifact_name] = resolved
 
     return artifacts
+
+
+@app.get('/tasks/{task_id}/report')
+def get_task_report(task_id: str, format: str = 'json', request: Request = None):  # type: ignore[assignment]
+    """Return a complete song-breakdown report for a completed task.
+
+    Supported formats (via ``?format=`` query parameter or ``Accept`` header):
+
+    * ``json``  – structured JSON (default)
+    * ``html``  – self-contained HTML page with inline SVG charts
+    * ``pdf``   – multi-page PDF (requires matplotlib)
+
+    The ``Accept`` header is checked when no ``format`` parameter is supplied:
+    ``text/html`` → HTML, ``application/pdf`` → PDF, everything else → JSON.
+    """
+    from api.report import build_report_json, build_report_html, build_report_pdf
+
+    task = _load_task(task_id)
+
+    # Resolve format from query param or Accept header.
+    fmt = format.lower().strip()
+    if fmt == 'json' and request is not None:
+        accept = request.headers.get('accept', '')
+        if _get_media_type_quality(accept, 'text/html') > _get_media_type_quality(accept, 'application/json'):
+            fmt = 'html'
+        elif _get_media_type_quality(accept, 'application/pdf') > _get_media_type_quality(accept, 'application/json'):
+            fmt = 'pdf'
+
+    if fmt == 'html':
+        html_content = build_report_html(task)
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(content=html_content)
+
+    if fmt == 'pdf':
+        try:
+            pdf_bytes = build_report_pdf(task)
+        except ImportError as exc:
+            raise HTTPException(
+                status_code=501,
+                detail=f'PDF generation requires matplotlib: {exc}',
+            )
+        from fastapi.responses import Response
+        safe_task_id = _validated_task_id(task_id)
+        return Response(
+            content=pdf_bytes,
+            media_type='application/pdf',
+            headers={'Content-Disposition': f'attachment; filename="shank-report-{safe_task_id}.pdf"'},
+        )
+
+    # Default: JSON
+    return build_report_json(task)
 
 
 @app.get('/tasks/{task_id}/artifacts')
@@ -1770,6 +1861,63 @@ def get_mt3_notes(task_id: str, track_name: str):
         raise HTTPException(status_code=500, detail='MIDI note metadata is unreadable')
 
 
+# ---------------------------------------------------------------------------
+# MIDI stem extraction endpoints
+# ---------------------------------------------------------------------------
+
+def _midi_stems_from_task(task: dict) -> dict:
+    """Return the ``midi_stems.stems`` dict from a task, or an empty dict."""
+    midi_stems_data = task.get('midi_stems')
+    if not isinstance(midi_stems_data, dict):
+        return {}
+    stems = midi_stems_data.get('stems')
+    return stems if isinstance(stems, dict) else {}
+
+
+@app.get('/tasks/{task_id}/midi-stems')
+def list_midi_stems(task_id: str):
+    """List available MIDI stem roles for a task.
+
+    Returns ``{"roles": [...], "status": "...", "backend": "..."}`` where
+    ``roles`` is a list of available role names (e.g. ``drums``, ``bass``,
+    ``melody``, ``chords``).
+    """
+    task = _load_task(task_id)
+    midi_stems_data = task.get('midi_stems')
+    if not isinstance(midi_stems_data, dict):
+        return {'roles': [], 'status': 'unavailable', 'backend': None}
+    stems = _midi_stems_from_task(task)
+    available_roles = [
+        role for role, info in stems.items()
+        if isinstance(info, dict) and isinstance(info.get('midi_path'), str)
+        and _resolve_data_path(info['midi_path']) is not None
+    ]
+    return {
+        'roles': sorted(available_roles),
+        'status': midi_stems_data.get('status', 'unknown'),
+        'backend': midi_stems_data.get('backend'),
+        'warnings': midi_stems_data.get('warnings') or [],
+        'errors': midi_stems_data.get('errors') or [],
+    }
+
+
+@app.get('/tasks/{task_id}/midi-stems/{role}')
+def download_midi_stem(task_id: str, role: str):
+    """Download the MIDI file for a specific stem role (drums, bass, melody, chords)."""
+    task = _load_task(task_id)
+    stems = _midi_stems_from_task(task)
+    stem_info = stems.get(role)
+    if not isinstance(stem_info, dict):
+        raise HTTPException(status_code=404, detail=f'MIDI stem {role!r} not found')
+    midi_path = stem_info.get('midi_path')
+    if not isinstance(midi_path, str) or not midi_path:
+        raise HTTPException(status_code=404, detail=f'MIDI stem {role!r} has no MIDI file')
+    resolved = _resolve_data_path(midi_path)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail=f'MIDI stem {role!r} file not found on disk')
+    return FileResponse(path=resolved, media_type='audio/midi', filename=f'{role}.mid')
+
+
 @app.get('/tasks/{task_id}/chords')
 def get_task_chords(task_id: str):
     """Return the chord detection results for a completed task.
@@ -1783,6 +1931,28 @@ def get_task_chords(task_id: str):
     if not isinstance(chords, dict):
         raise HTTPException(status_code=404, detail='Chord data not available for this task')
     return chords
+
+
+@app.get('/tasks/{task_id}/harmonic')
+def get_task_harmonic(task_id: str):
+    """Return the harmonic analysis for a completed task.
+
+    The response contains:
+
+    * ``key`` – the globally detected key string (e.g. ``'C major'``).
+    * ``key_changes`` – list of key-change events, each with
+      ``time_seconds``, ``timestamp`` (``MM:SS``), ``key``, and
+      ``confidence``.
+    * ``segments`` – chord segments enriched with ``roman_numeral``
+      (e.g. ``'I'``, ``'vi'``, ``'bVII'``) and ``is_borrowed`` (bool).
+    * ``borrowed_chords`` – filtered list of segments where ``is_borrowed``
+      is ``true``.
+    """
+    task = _load_task(task_id)
+    harmonic = task.get('harmonic')
+    if not isinstance(harmonic, dict):
+        raise HTTPException(status_code=404, detail='Harmonic analysis not available for this task')
+    return harmonic
 
 
 @app.get('/tasks/{task_id}/beatgrid')
@@ -1809,6 +1979,42 @@ def get_task_beatgrid(task_id: str):
     if isinstance(beat_detection, dict):
         result['beat_detection'] = beat_detection
     return result
+
+
+@app.get('/tasks/{task_id}/fingerprint')
+def get_task_fingerprint(task_id: str):
+    """Return the Audio DNA fingerprint for a completed task.
+
+    The fingerprint encodes key musical characteristics for duplicate detection,
+    similarity search, collection organisation, and recommendation.
+
+    Fields:
+
+    * ``version``          – fingerprint schema version.
+    * ``bpm``              – raw BPM float.
+    * ``bpm_normalized``   – BPM normalised to [0, 1] on a 0–200 BPM scale.
+    * ``key``              – musical key, e.g. ``'A minor'``.
+    * ``key_index``        – integer 0–23 encoding tonic + mode.
+    * ``chord_profile``    – duration-weighted chord frequency map.
+    * ``energy_profile``   – 32-bin normalised energy curve.
+    * ``spectral_profile`` – 8-bin normalised mel-spectral summary.
+    * ``duration_seconds`` – track length in seconds.
+    * ``fingerprint_hash`` – SHA-256 hex digest for quick duplicate lookup.
+    """
+    task = _load_task(task_id)
+    structured_results = task.get('results')
+    if isinstance(structured_results, dict):
+        fp_path = structured_results.get('fingerprint_json')
+        if isinstance(fp_path, str) and fp_path:
+            resolved = _resolve_data_path(fp_path)
+            if resolved is not None:
+                try:
+                    fingerprint = json.loads(resolved.read_text())
+                    if isinstance(fingerprint, dict) and fingerprint:
+                        return fingerprint
+                except (OSError, json.JSONDecodeError):
+                    pass
+    raise HTTPException(status_code=404, detail='Fingerprint not available for this task')
 
 
 # ---------------------------------------------------------------------------
@@ -1923,21 +2129,6 @@ def _load_task_fingerprint(task: dict[str, Any]) -> dict[str, Any] | None:
     except (OSError, json.JSONDecodeError):
         return None
     return data if isinstance(data, dict) else None
-
-
-@app.get('/tasks/{task_id}/fingerprint')
-def get_task_fingerprint(task_id: str):
-    """Return the pre-computed audio DNA fingerprint for a completed task.
-
-    The fingerprint captures BPM, musical key, de-duplicated chord
-    progression, a coarsened energy profile, and a spectral centroid
-    proxy suitable for similarity comparison.
-    """
-    task = _load_task(task_id)
-    fingerprint = _load_task_fingerprint(task)
-    if fingerprint is None:
-        raise HTTPException(status_code=404, detail='Fingerprint not available for this task')
-    return fingerprint
 
 
 @app.get('/tasks/{task_id}/similar')

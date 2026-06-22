@@ -498,6 +498,8 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
     results_lyrics_json = results_dir / 'lyrics.json'
     results_credits_json = results_dir / 'credits.json'
     results_song_metadata_json = results_dir / 'song_metadata.json'
+    results_musical_profile_json = results_dir / 'musical_profile.json'
+    results_ace_step_prompt_json = results_dir / 'ace_step_prompt.json'
     results_artifacts_json = results_dir / 'artifacts.json'
 
     normalized.parent.mkdir(parents=True, exist_ok=True)
@@ -520,6 +522,8 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
     results_lyrics_json.write_text(json.dumps({'plain_lyrics': 'Never gonna give you up'}))
     results_credits_json.write_text(json.dumps({'track_title': 'Never Gonna Give You Up'}))
     results_song_metadata_json.write_text(json.dumps({'enabled': True}))
+    results_musical_profile_json.write_text(json.dumps({'bpm': 120.0, 'key': 'C major'}))
+    results_ace_step_prompt_json.write_text(json.dumps({'prompts': {'primary': 'Create a track'}}))
     results_artifacts_json.write_text(json.dumps({'normalized_wav': str(normalized)}))
 
     tasks_dir = tmp_path / 'tasks'
@@ -552,6 +556,8 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
             'lyrics_json': str(results_lyrics_json),
             'credits_json': str(results_credits_json),
             'song_metadata_json': str(results_song_metadata_json),
+            'musical_profile_json': str(results_musical_profile_json),
+            'ace_step_prompt_json': str(results_ace_step_prompt_json),
             'artifacts_json': str(results_artifacts_json),
         },
     }))
@@ -560,11 +566,13 @@ def test_list_task_artifacts_includes_normalized_and_mt3_outputs(client, tmp_pat
     assert response.status_code == 200
     assert response.json() == {
         'artifacts': [
+            'ace_step_prompt_json',
             'beatgraph_png',
             'beatgrid_json',
             'credits_json',
             'lyrics_json',
             'midi',
+            'musical_profile_json',
             'normalized_wav',
             'notes_json',
             'results_analysis_json',
@@ -1238,6 +1246,76 @@ def test_get_task_chords_returns_empty_when_disabled_backend(client, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# GET /tasks/{task_id}/harmonic
+# ---------------------------------------------------------------------------
+
+def test_get_task_harmonic_returns_analysis(client, tmp_path):
+    """GET /tasks/{task_id}/harmonic must return the harmonic dict from the task."""
+    task_id = str(uuid.uuid4())
+    harmonic_data = {
+        'key': 'C major',
+        'key_changes': [
+            {'time_seconds': 0.0, 'timestamp': '00:00', 'key': 'C major', 'confidence': 1.0},
+        ],
+        'segments': [
+            {
+                'symbol': 'C',
+                'root': 'C',
+                'quality': 'major',
+                'confidence': 0.85,
+                'start_seconds': 0.0,
+                'end_seconds': 4.0,
+                'roman_numeral': 'I',
+                'is_borrowed': False,
+            },
+            {
+                'symbol': 'Am',
+                'root': 'A',
+                'quality': 'minor',
+                'confidence': 0.78,
+                'start_seconds': 4.0,
+                'end_seconds': 8.0,
+                'roman_numeral': 'vi',
+                'is_borrowed': False,
+            },
+        ],
+        'borrowed_chords': [],
+    }
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'harmonic': harmonic_data,
+    }))
+
+    response = client.get(f'/tasks/{task_id}/harmonic')
+    assert response.status_code == 200
+    assert response.json() == harmonic_data
+
+
+def test_get_task_harmonic_returns_404_when_absent(client, tmp_path):
+    """GET /tasks/{task_id}/harmonic must return 404 when the task has no harmonic data."""
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'bpm': 120.0,
+    }))
+
+    response = client.get(f'/tasks/{task_id}/harmonic')
+    assert response.status_code == 404
+
+
+def test_get_task_harmonic_returns_404_for_unknown_task(client):
+    """GET /tasks/{task_id}/harmonic must return 404 for a nonexistent task."""
+    response = client.get(f'/tasks/{uuid.uuid4()}/harmonic')
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # GET /tasks/{task_id}/beatgrid
 # ---------------------------------------------------------------------------
 
@@ -1795,6 +1873,48 @@ def _make_fingerprint_task(tmp_path, task_id, bpm=120.0, key='C major',
     return fp_path
 
 
+def test_get_task_fingerprint_returns_data(client, tmp_path):
+    """GET /tasks/{task_id}/fingerprint must return the fingerprint JSON."""
+    task_id = str(uuid.uuid4())
+    results_dir = tmp_path / 'results' / task_id
+    results_dir.mkdir(parents=True, exist_ok=True)
+    fingerprint_json = results_dir / 'fingerprint.json'
+    fingerprint_data = {
+        'version': '1',
+        'bpm': 120.0,
+        'bpm_normalized': 0.6,
+        'key': 'C major',
+        'key_index': 0,
+        'chord_profile': {'C_major': 0.6, 'G_major': 0.4},
+        'energy_profile': [0.5] * 32,
+        'spectral_profile': [0.5] * 8,
+        'duration_seconds': 180.0,
+        'fingerprint_hash': 'abc123',
+    }
+    fingerprint_json.write_text(json.dumps(fingerprint_data))
+
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'results': {
+            'dir': str(results_dir),
+            'fingerprint_json': str(fingerprint_json),
+        },
+    }))
+
+    response = client.get(f'/tasks/{task_id}/fingerprint')
+    assert response.status_code == 200
+    data = response.json()
+    assert data['version'] == '1'
+    assert data['bpm'] == 120.0
+    assert data['key'] == 'C major'
+    assert data['key_index'] == 0
+    assert len(data['energy_profile']) == 32
+    assert len(data['spectral_profile']) == 8
+
+
 def test_get_task_fingerprint_returns_fingerprint(client, tmp_path):
     task_id = str(uuid.uuid4())
     _make_fingerprint_task(tmp_path, task_id, bpm=128.0, key='A minor')
@@ -1805,6 +1925,20 @@ def test_get_task_fingerprint_returns_fingerprint(client, tmp_path):
     assert data['key'] == 'A minor'
     assert 'chord_progression' in data
     assert 'energy_profile' in data
+
+
+def test_get_task_fingerprint_404_when_not_available(client, tmp_path):
+    """GET /tasks/{task_id}/fingerprint returns 404 when no fingerprint exists."""
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+    }))
+
+    response = client.get(f'/tasks/{task_id}/fingerprint')
+    assert response.status_code == 404
 
 
 def test_get_task_fingerprint_returns_404_when_no_fingerprint(client, tmp_path):
@@ -1820,6 +1954,55 @@ def test_get_task_fingerprint_returns_404_when_no_fingerprint(client, tmp_path):
     assert response.status_code == 404
 
 
+def test_list_task_fingerprints_returns_all_completed(client, tmp_path):
+    """GET /tasks/fingerprints must return fingerprints for all completed tasks."""
+    task_id_a = str(uuid.uuid4())
+    task_id_b = str(uuid.uuid4())
+    task_id_pending = str(uuid.uuid4())
+
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+
+    for task_id in (task_id_a, task_id_b):
+        results_dir = tmp_path / 'results' / task_id
+        results_dir.mkdir(parents=True, exist_ok=True)
+        fp_path = results_dir / 'fingerprint.json'
+        fp_path.write_text(json.dumps({
+            'version': '1',
+            'bpm': 120.0,
+            'bpm_normalized': 0.6,
+            'key': 'C major',
+            'key_index': 0,
+            'chord_profile': {},
+            'energy_profile': [0.0] * 32,
+            'spectral_profile': [0.0] * 8,
+            'duration_seconds': 60.0,
+            'fingerprint_hash': f'hash_{task_id}',
+        }))
+        (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+            'task_id': task_id,
+            'status': 'done',
+            'results': {
+                'dir': str(results_dir),
+                'fingerprint_json': str(fp_path),
+            },
+        }))
+
+    (tasks_dir / f'{task_id_pending}.json').write_text(json.dumps({
+        'task_id': task_id_pending,
+        'status': 'pending',
+    }))
+
+    response = client.get('/tasks/fingerprints')
+    assert response.status_code == 200
+    data = response.json()
+    assert 'fingerprints' in data
+    assert task_id_a in data['fingerprints']
+    assert task_id_b in data['fingerprints']
+    assert task_id_pending not in data['fingerprints']
+    assert data['fingerprints'][task_id_a]['version'] == '1'
+
+
 def test_list_task_fingerprints_returns_completed_only(client, tmp_path):
     done_id = str(uuid.uuid4())
     pending_id = str(uuid.uuid4())
@@ -1830,18 +2013,47 @@ def test_list_task_fingerprints_returns_completed_only(client, tmp_path):
     assert response.status_code == 200
     data = response.json()
     assert 'fingerprints' in data
-    ids = {fp['task_id'] for fp in data['fingerprints']}
-    assert done_id in ids
-    assert pending_id not in ids
+    assert done_id in data['fingerprints']
+    assert pending_id not in data['fingerprints']
 
 
-def test_list_task_fingerprints_includes_task_id(client, tmp_path):
+def test_list_task_fingerprints_omits_tasks_without_fingerprint(client, tmp_path):
+    """GET /tasks/fingerprints must omit tasks that have no fingerprint file."""
     task_id = str(uuid.uuid4())
-    _make_fingerprint_task(tmp_path, task_id)
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+    }))
+
     response = client.get('/tasks/fingerprints')
     assert response.status_code == 200
-    fps = response.json()['fingerprints']
-    assert any(fp['task_id'] == task_id for fp in fps)
+    assert task_id not in response.json()['fingerprints']
+
+
+def test_fingerprint_included_in_task_artifacts(client, tmp_path):
+    """fingerprint_json must appear in the list_task_artifacts response."""
+    task_id = str(uuid.uuid4())
+    results_dir = tmp_path / 'results' / task_id
+    results_dir.mkdir(parents=True, exist_ok=True)
+    fp_file = results_dir / 'fingerprint.json'
+    fp_file.write_text(json.dumps({'version': '1', 'bpm': 120.0}))
+
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'results': {
+            'dir': str(results_dir),
+            'fingerprint_json': str(fp_file),
+        },
+    }))
+
+    response = client.get(f'/tasks/{task_id}/artifacts')
+    assert response.status_code == 200
+    assert 'fingerprint_json' in response.json()['artifacts']
 
 
 def test_get_similar_tasks_returns_matches(client, tmp_path):

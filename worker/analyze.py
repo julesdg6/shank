@@ -1,6 +1,7 @@
 """Audio analysis helpers with optional advanced beat/downbeat/loudness detectors."""
 
 from functools import lru_cache
+import hashlib
 import json
 import logging
 import os
@@ -56,6 +57,53 @@ _HOT_CUE_COLORS = (
     '#19D1CE',  # H – cyan
 )
 
+# Audio DNA fingerprint settings
+_FINGERPRINT_VERSION = '1'
+_BPM_NORM_SCALE = 200.0   # BPM normalization ceiling (BPM / scale → [0, 1])
+_FINGERPRINT_ENERGY_BINS = 32
+_FINGERPRINT_SPECTRAL_BINS = 8
+
+# ---------------------------------------------------------------------------
+# Harmonic analysis constants
+# ---------------------------------------------------------------------------
+
+# Semitone offsets for each scale degree in major and natural minor
+_MAJOR_SCALE_STEPS = (0, 2, 4, 5, 7, 9, 11)
+_MINOR_SCALE_STEPS = (0, 2, 3, 5, 7, 8, 10)
+
+# Diatonic chord quality expected at each semitone offset for major key
+_MAJOR_DIATONIC_QUALITIES: dict[int, str] = {
+    0: 'major',   # I
+    2: 'minor',   # ii
+    4: 'minor',   # iii
+    5: 'major',   # IV
+    7: 'major',   # V
+    9: 'minor',   # vi
+    11: 'minor',  # vii° (diminished treated as minor here)
+}
+
+# Diatonic chord quality expected at each semitone offset for natural minor key
+_MINOR_DIATONIC_QUALITIES: dict[int, str] = {
+    0: 'minor',   # i
+    2: 'minor',   # ii°
+    3: 'major',   # III
+    5: 'minor',   # iv
+    7: 'minor',   # v  (V major possible via harmonic minor; we keep v as diatonic)
+    8: 'major',   # VI
+    10: 'major',  # VII
+}
+
+_ROMAN_NUMERAL_NAMES = ('I', 'II', 'III', 'IV', 'V', 'VI', 'VII')
+
+# V major is the dominant in harmonic minor (raised 7th) and is standard practice
+# in minor-key music; it should *not* be flagged as borrowed from the parallel major.
+_MINOR_HARMONIC_ACCEPTED: dict[int, str] = {7: 'major'}
+
+# Minimum number of seconds per window when detecting local key changes
+_KEY_CHANGE_WINDOW_SECONDS = 10.0
+# Minimum correlation-margin difference to consider a local key genuinely different
+_KEY_CHANGE_CONFIDENCE_THRESHOLD = 0.05
+
 
 def _clamp(value: float, minimum: float, maximum: float) -> float:
     return max(minimum, min(maximum, value))
@@ -71,6 +119,189 @@ def _env_bool(name: str, default: bool) -> bool:
 @lru_cache(maxsize=12)
 def _normalize_pitch_name(pitch_class: str) -> str:
     return m21_pitch.Pitch(pitch_class).name
+
+
+def _pitch_class_index(name: str) -> int:
+    """Return the chromatic index (0=C … 11=B) for a pitch name.
+
+    Handles both sharp (e.g. ``'A#'``) and music21 flat notation
+    (e.g. ``'B-'``) by using the MIDI pitch-class value.
+    """
+    return m21_pitch.Pitch(name).midi % 12
+
+
+def _chord_to_roman_numeral(root: str, quality: str, key: str) -> str:
+    """Return a Roman-numeral label for *root*/*quality* relative to *key*.
+
+    Examples
+    --------
+    >>> _chord_to_roman_numeral('C', 'major', 'C major')
+    'I'
+    >>> _chord_to_roman_numeral('A', 'minor', 'C major')
+    'vi'
+    >>> _chord_to_roman_numeral('B-', 'major', 'C major')
+    'bVII'
+    """
+    parts = key.split()
+    key_root, key_mode = parts[0], (parts[1] if len(parts) > 1 else 'major')
+
+    tonic_idx = _pitch_class_index(key_root)
+    chord_idx = _pitch_class_index(root)
+    interval = (chord_idx - tonic_idx) % 12
+
+    scale = _MAJOR_SCALE_STEPS if key_mode == 'major' else _MINOR_SCALE_STEPS
+
+    # Find the scale degree whose semitone position is closest.
+    # First try exact match, then check flat (one below) across all degrees
+    # before checking sharp (one above), since flat interpretations are
+    # standard for borrowed/chromatic chords (e.g. bVII, not #VI).
+    for i, step in enumerate(scale):
+        if step == interval:
+            numeral = _ROMAN_NUMERAL_NAMES[i]
+            return numeral if quality == 'major' else numeral.lower()
+
+    for i, step in enumerate(scale):
+        if (step - 1) % 12 == interval:
+            numeral = 'b' + _ROMAN_NUMERAL_NAMES[i]
+            return numeral if quality == 'major' else numeral.lower()
+
+    for i, step in enumerate(scale):
+        if (step + 1) % 12 == interval:
+            numeral = '#' + _ROMAN_NUMERAL_NAMES[i]
+            return numeral if quality == 'major' else numeral.lower()
+
+    return '?'
+
+
+def _is_borrowed_chord(root: str, quality: str, key: str) -> bool:
+    """Return True when the chord is borrowed from the parallel mode.
+
+    A chord is considered borrowed when it is *not* diatonic in the current key
+    but *is* diatonic (with the same quality) in the parallel major/minor key.
+
+    The harmonic-minor V major chord (dominant) in minor keys is *not* flagged
+    as borrowed even though it is absent from the natural-minor diatonic table,
+    because it is standard common-practice usage (raised 7th / leading tone).
+    """
+    parts = key.split()
+    key_root, key_mode = parts[0], (parts[1] if len(parts) > 1 else 'major')
+
+    tonic_idx = _pitch_class_index(key_root)
+    chord_idx = _pitch_class_index(root)
+    interval = (chord_idx - tonic_idx) % 12
+
+    # Harmonic-minor exception: V major is idiomatic in minor keys.
+    if key_mode == 'minor' and _MINOR_HARMONIC_ACCEPTED.get(interval) == quality:
+        return False
+
+    diatonic = _MAJOR_DIATONIC_QUALITIES if key_mode == 'major' else _MINOR_DIATONIC_QUALITIES
+    # Diatonic: not borrowed.
+    if diatonic.get(interval) == quality:
+        return False
+
+    parallel_diatonic = _MINOR_DIATONIC_QUALITIES if key_mode == 'major' else _MAJOR_DIATONIC_QUALITIES
+    return parallel_diatonic.get(interval) == quality
+
+
+def _detect_key_changes(
+    y: np.ndarray,
+    sr: int,
+    global_key: str,
+    duration_seconds: float,
+) -> list[dict]:
+    """Detect local key changes by analysing overlapping windows of audio.
+
+    Returns a list of dicts with ``time_seconds``, ``key``, ``timestamp``, and
+    ``confidence``.  The list always starts at 0 s with the global key, and
+    only windows that differ from the previous reported key are included.
+    """
+    window_samples = int(_KEY_CHANGE_WINDOW_SECONDS * sr)
+    if window_samples <= 0 or y.size < window_samples:
+        return [{'time_seconds': 0.0, 'timestamp': '00:00', 'key': global_key, 'confidence': 1.0}]
+
+    hop_samples = window_samples // 2
+    key_changes: list[dict] = []
+    last_key = global_key
+
+    offset = 0
+    while offset < len(y):
+        window = y[offset: offset + window_samples]
+        if window.size < window_samples // 2:
+            break
+        local_key, local_conf = _detect_key_and_confidence(window, sr)
+        time_s = round(offset / sr, 3)
+
+        if local_key != last_key and local_conf >= _KEY_CHANGE_CONFIDENCE_THRESHOLD:
+            minutes = int(time_s) // 60
+            seconds = int(time_s) % 60
+            key_changes.append({
+                'time_seconds': time_s,
+                'timestamp': f'{minutes:02d}:{seconds:02d}',
+                'key': local_key,
+                'confidence': round(local_conf, 3),
+            })
+            last_key = local_key
+
+        offset += hop_samples
+
+    # Always prepend the global key at 0 s.
+    entry_zero = {
+        'time_seconds': 0.0,
+        'timestamp': '00:00',
+        'key': global_key,
+        'confidence': 1.0,
+    }
+    if not key_changes or key_changes[0]['time_seconds'] > 0.0:
+        key_changes.insert(0, entry_zero)
+
+    return key_changes
+
+
+def _harmonic_analysis(
+    chords: dict,
+    key: str,
+    y: np.ndarray,
+    sr: int,
+    duration_seconds: float,
+) -> dict:
+    """Augment chord segments with Roman numerals and borrowed-chord flags.
+
+    Returns a dict with:
+    - ``key`` – the global detected key.
+    - ``key_changes`` – list of key change events (each with ``time_seconds``,
+      ``timestamp``, ``key``, ``confidence``).
+    - ``segments`` – chord segments enriched with ``roman_numeral`` and
+      ``is_borrowed`` fields.
+    - ``borrowed_chords`` – filtered list of segments where ``is_borrowed`` is True.
+    """
+    segments = chords.get('segments', [])
+
+    enriched: list[dict] = []
+    for seg in segments:
+        root = seg.get('root', '')
+        quality = seg.get('quality', 'major')
+        try:
+            roman = _chord_to_roman_numeral(root, quality, key)
+            borrowed = _is_borrowed_chord(root, quality, key)
+        except (ValueError, IndexError):
+            roman = '?'
+            borrowed = False
+
+        enriched.append({
+            **seg,
+            'roman_numeral': roman,
+            'is_borrowed': borrowed,
+        })
+
+    key_changes = _detect_key_changes(y, sr, key, duration_seconds)
+    borrowed_chords = [s for s in enriched if s.get('is_borrowed')]
+
+    return {
+        'key': key,
+        'key_changes': key_changes,
+        'segments': enriched,
+        'borrowed_chords': borrowed_chords,
+    }
 
 
 def _detect_key_and_confidence(y: np.ndarray, sr: int) -> tuple[str, float]:
@@ -869,6 +1100,8 @@ def analyze_audio(file_path: str) -> dict:
     else:
         chords = _detect_chords(y, sr)
 
+    harmonic = _harmonic_analysis(chords, key, y, sr, duration_seconds)
+
     downbeats = _beatnet_downbeats(file_path) or _fallback_downbeats(beats)
     tempo_changes = _detect_tempo_changes(beats)
     if bpm_source != 'mixxx' and beat_mode != 'variable_tempo' and tempo_changes:
@@ -954,6 +1187,7 @@ def analyze_audio(file_path: str) -> dict:
         'structure': structure,
         'cue_points': cue_points,
         'chords': chords,
+        'harmonic': harmonic,
         'beat_detection': beat_detection,
         'beatgrid': beatgrid,
         'tempo_changes': tempo_changes,
@@ -962,4 +1196,155 @@ def analyze_audio(file_path: str) -> dict:
         'spectrogram_summary': spectrogram_summary,
         'loudness_curve': loudness_curve,
         'energy_over_time': energy_over_time,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Audio DNA fingerprint
+# ---------------------------------------------------------------------------
+
+def _key_to_index(key: str) -> int:
+    """Convert a key string like ``'C major'`` or ``'F# minor'`` to 0–23.
+
+    The index encodes both tonic (0–11) and mode (major = 0–11, minor = 12–23).
+    Unknown or malformed keys default to 0 (C major).
+    """
+    parts = key.strip().split()
+    if len(parts) < 2:
+        return 0
+    pitch_name = parts[0]
+    mode = parts[1].lower()
+    try:
+        pitch_idx = _PITCH_CLASSES.index(pitch_name)
+    except ValueError:
+        return 0
+    return pitch_idx + (12 if mode == 'minor' else 0)
+
+
+def _build_chord_profile(chords: dict) -> dict[str, float]:
+    """Return a duration-weighted, normalised frequency histogram of chord occurrences.
+
+    Keys are ``'<Root>_<quality>'``, e.g. ``'C_major'``.  Values sum to 1.0.
+    An empty dict is returned when no chord segments are present.
+    """
+    segments = chords.get('segments', []) if isinstance(chords, dict) else []
+    counts: dict[str, float] = {}
+    for seg in segments:
+        if not isinstance(seg, dict):
+            continue
+        root = seg.get('root', '')
+        quality = seg.get('quality', '')
+        if not root or not quality:
+            continue
+        chord_key = f'{root}_{quality}'
+        start = float(seg.get('start_seconds') or 0.0)
+        end = float(seg.get('end_seconds') or 0.0)
+        duration = max(end - start, 0.0)
+        counts[chord_key] = counts.get(chord_key, 0.0) + duration
+    total = sum(counts.values())
+    if total <= 0:
+        return {}
+    return {
+        k: round(v / total, 4)
+        for k, v in sorted(counts.items(), key=lambda item: -item[1])
+    }
+
+
+def _downsample_to(values: list[float], target_bins: int) -> list[float]:
+    """Average *values* into exactly *target_bins* bins.
+
+    If *values* is shorter than *target_bins*, the list is zero-padded.
+    """
+    if not values:
+        return [0.0] * target_bins
+    if len(values) <= target_bins:
+        return list(values) + [0.0] * (target_bins - len(values))
+    arr = np.array(values)
+    return [round(float(np.mean(chunk)), 5) for chunk in np.array_split(arr, target_bins)]
+
+
+def _normalize_to_unit(values: list[float]) -> list[float]:
+    """Min-max normalise *values* to the [0, 1] range."""
+    if not values:
+        return values
+    min_v = min(values)
+    max_v = max(values)
+    if max_v == min_v:
+        return [0.0] * len(values)
+    scale = max_v - min_v
+    return [round((v - min_v) / scale, 5) for v in values]
+
+
+def build_fingerprint(analysis_result: dict) -> dict:
+    """Build a compact Audio DNA fingerprint from *analysis_result*.
+
+    The fingerprint encodes the key musical characteristics of a track so that
+    it can be used for:
+
+    * **Duplicate detection** – compare ``fingerprint_hash`` values.
+    * **Similar track search** – compare ``energy_profile``, ``spectral_profile``,
+      ``chord_profile``, and ``bpm_normalized``.
+    * **Collection organisation** – group by ``key`` and ``bpm`` range.
+    * **Recommendation engine** – nearest-neighbour search on the feature vectors.
+
+    Parameters
+    ----------
+    analysis_result:
+        Dict as returned by :func:`analyze_audio`.
+
+    Returns
+    -------
+    dict
+        ``version``          – fingerprint schema version string.
+        ``bpm``              – raw BPM (float).
+        ``bpm_normalized``   – BPM normalised to [0, 1] on a 0–200 BPM scale.
+        ``key``              – musical key string, e.g. ``'A minor'``.
+        ``key_index``        – integer 0–23 encoding tonic + mode.
+        ``chord_profile``    – duration-weighted chord frequency dict.
+        ``energy_profile``   – 32-bin normalised energy curve.
+        ``spectral_profile`` – 8-bin normalised mel-spectral summary.
+        ``duration_seconds`` – track duration in seconds.
+        ``fingerprint_hash`` – SHA-256 hex digest over quantised key fields.
+    """
+    bpm = float(analysis_result.get('bpm') or 0.0)
+    key = str(analysis_result.get('key') or 'C major')
+    key_index = _key_to_index(key)
+
+    chords = analysis_result.get('chords') or {}
+    energy_over_time = analysis_result.get('energy_over_time') or []
+    spectrogram_summary = analysis_result.get('spectrogram_summary') or []
+    duration_seconds = float(analysis_result.get('duration_seconds') or 0.0)
+
+    bpm_normalized = round(min(bpm / _BPM_NORM_SCALE, 1.0), 4)
+    chord_profile = _build_chord_profile(chords)
+
+    raw_energy = [float(v) for v in energy_over_time if isinstance(v, (int, float))]
+    energy_profile = _normalize_to_unit(_downsample_to(raw_energy, _FINGERPRINT_ENERGY_BINS))
+
+    raw_spectral = [float(v) for v in spectrogram_summary if isinstance(v, (int, float))]
+    spectral_profile = _normalize_to_unit(_downsample_to(raw_spectral, _FINGERPRINT_SPECTRAL_BINS))
+
+    # Build a reproducible hash over quantised fields for duplicate detection.
+    hash_data = {
+        'bpm_int': round(bpm),
+        'key_index': key_index,
+        'energy_8': [round(v, 2) for v in _downsample_to(energy_profile, 8)],
+        'spectral_4': [round(v, 2) for v in _downsample_to(spectral_profile, 4)],
+        'top_chords': list(chord_profile.keys())[:3],
+    }
+    fingerprint_hash = hashlib.sha256(
+        json.dumps(hash_data, sort_keys=True).encode()
+    ).hexdigest()
+
+    return {
+        'version': _FINGERPRINT_VERSION,
+        'bpm': round(bpm, 2),
+        'bpm_normalized': bpm_normalized,
+        'key': key,
+        'key_index': key_index,
+        'chord_profile': chord_profile,
+        'energy_profile': energy_profile,
+        'spectral_profile': spectral_profile,
+        'duration_seconds': round(duration_seconds, 2),
+        'fingerprint_hash': fingerprint_hash,
     }
