@@ -455,9 +455,9 @@ This project is for research and personal use. Ensure you have the rights to any
 
 ## 🤖 Automated README Updates
 <!-- readme-update:start -->
-- Last automated update: 2026-06-22T21:19:14Z
-- Latest commit: `d641962`
-- Commit message: Merge pull request #177 from julesdg6/copilot/feature-audio-dna-fingerprint  feat: Audio DNA Fingerprint
+- Last automated update: 2026-06-22T22:27:26Z
+- Latest commit: `1af6fcf`
+- Commit message: Merge pull request #179 from julesdg6/copilot/feature-similar-song-finder  feat: Similar Song Finder via audio DNA fingerprints
 <!-- readme-update:end -->
 
 ## 🥁 Beat Detection & Beat Grid
