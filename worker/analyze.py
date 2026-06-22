@@ -885,70 +885,9 @@ def _derive_cue_points(
     return result
 
 
-_FINGERPRINT_ENERGY_BINS = 16
 _BPM_SIMILARITY_THRESHOLD = 0.95  # ~5% tolerance
 _CHORD_SIMILARITY_THRESHOLD = 0.5
 _ENERGY_SIMILARITY_THRESHOLD = 0.8
-
-
-def build_fingerprint(analysis: dict) -> dict:
-    """Build a compact fingerprint dict from an ``analyze_audio`` result.
-
-    The fingerprint captures the key musical characteristics needed for
-    similarity comparison: BPM, musical key, chord progression, and energy
-    profile.
-
-    Parameters
-    ----------
-    analysis:
-        The dict returned by :func:`analyze_audio`.
-
-    Returns
-    -------
-    dict with keys ``bpm``, ``key``, ``chord_progression``,
-    ``energy_profile``, and ``spectral_centroid``.
-    """
-    bpm = float(analysis.get('bpm') or 0.0)
-    key = str(analysis.get('key') or '').strip()
-
-    # Coarsen energy curve to a smaller, fixed number of bins for fast comparison.
-    energy_over_time: list = analysis.get('energy_over_time') or []
-    if energy_over_time:
-        arr = np.array(energy_over_time, dtype=float)
-        chunks = np.array_split(arr, _FINGERPRINT_ENERGY_BINS)
-        energy_profile = [round(float(chunk.mean()), 6) for chunk in chunks]
-    else:
-        energy_profile = [0.0] * _FINGERPRINT_ENERGY_BINS
-
-    # Chord progression: de-duplicated ordered list of chord symbol strings.
-    chords: dict = analysis.get('chords') or {}
-    raw_progression: list = chords.get('progression') or []
-    progression: list[str] = []
-    seen: set[str] = set()
-    for chord in raw_progression:
-        token = str(chord).strip()
-        if token and token not in seen:
-            progression.append(token)
-            seen.add(token)
-
-    # Spectral centroid proxy derived from the frequency histogram.
-    freq_hist: list = analysis.get('frequency_histogram') or []
-    if freq_hist:
-        arr_f = np.array(freq_hist, dtype=float)
-        total = float(arr_f.sum())
-        spectral_centroid = (
-            float(np.dot(arr_f, np.arange(len(arr_f))) / total) if total > 0 else 0.0
-        )
-    else:
-        spectral_centroid = 0.0
-
-    return {
-        'bpm': round(bpm, 2),
-        'key': key,
-        'chord_progression': progression,
-        'energy_profile': energy_profile,
-        'spectral_centroid': round(spectral_centroid, 3),
-    }
 
 
 def compare_fingerprints(fp_a: dict, fp_b: dict) -> dict:
@@ -1000,8 +939,15 @@ def compare_fingerprints(fp_a: dict, fp_b: dict) -> dict:
         total_weight += 0.25
 
     # 3. Chord progression similarity (weight 0.25) – Jaccard index over chord sets.
-    prog_a = set(str(c) for c in (fp_a.get('chord_progression') or []) if str(c).strip())
-    prog_b = set(str(c) for c in (fp_b.get('chord_progression') or []) if str(c).strip())
+    # Supports both the legacy ``chord_progression`` list and the current
+    # ``chord_profile`` dict produced by build_fingerprint.
+    def _chord_set(fp: dict) -> set[str]:
+        if fp.get('chord_profile'):
+            return set(fp['chord_profile'].keys())
+        return set(str(c) for c in (fp.get('chord_progression') or []) if str(c).strip())
+
+    prog_a = _chord_set(fp_a)
+    prog_b = _chord_set(fp_b)
     if prog_a and prog_b:
         union = len(prog_a | prog_b)
         chord_score = len(prog_a & prog_b) / union if union > 0 else 0.0

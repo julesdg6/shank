@@ -405,10 +405,13 @@ def test_build_fingerprint_returns_expected_keys(tmp_path):
 
     assert isinstance(fp, dict)
     assert 'bpm' in fp
+    assert 'bpm_normalized' in fp
     assert 'key' in fp
-    assert 'chord_progression' in fp
+    assert 'key_index' in fp
+    assert 'chord_profile' in fp
     assert 'energy_profile' in fp
-    assert 'spectral_centroid' in fp
+    assert 'spectral_profile' in fp
+    assert 'fingerprint_hash' in fp
 
 
 def test_build_fingerprint_bpm_matches_analysis(tmp_path):
@@ -434,25 +437,32 @@ def test_build_fingerprint_energy_profile_length():
     assert len(fp['energy_profile']) == _FINGERPRINT_ENERGY_BINS
 
 
-def test_build_fingerprint_chord_progression_is_deduped():
-    """Repeated chord tokens should appear only once in the fingerprint progression."""
+def test_build_fingerprint_chord_profile_keys_are_strings():
+    """chord_profile keys should be non-empty strings derived from chord symbols."""
     analysis = {
         'bpm': 120.0,
         'key': 'C major',
         'energy_over_time': [],
-        'chords': {'progression': ['C', 'Am', 'C', 'F', 'Am']},
-        'frequency_histogram': [],
+        'chords': {
+            'segments': [
+                {'symbol': 'C', 'quality': 'major', 'start_seconds': 0.0, 'end_seconds': 2.0},
+                {'symbol': 'Am', 'quality': 'minor', 'start_seconds': 2.0, 'end_seconds': 4.0},
+            ],
+            'progression': ['C', 'Am'],
+        },
     }
     fp = build_fingerprint(analysis)
-    assert fp['chord_progression'] == ['C', 'Am', 'F']
+    assert isinstance(fp['chord_profile'], dict)
+    for k in fp['chord_profile']:
+        assert isinstance(k, str) and k
 
 
 def test_build_fingerprint_handles_missing_fields():
     """build_fingerprint must not raise when optional analysis fields are absent."""
     fp = build_fingerprint({'bpm': 128.0})
     assert fp['bpm'] == 128.0
-    assert fp['key'] == ''
-    assert fp['chord_progression'] == []
+    assert isinstance(fp['key'], str)
+    assert isinstance(fp['chord_profile'], dict)
 
 
 def test_compare_fingerprints_identical():
