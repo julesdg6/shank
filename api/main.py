@@ -2018,6 +2018,175 @@ def get_task_fingerprint(task_id: str):
 
 
 # ---------------------------------------------------------------------------
+# Fingerprint & similar-song finder
+# ---------------------------------------------------------------------------
+
+# These threshold constants mirror _BPM_SIMILARITY_THRESHOLD,
+# _CHORD_SIMILARITY_THRESHOLD, and _ENERGY_SIMILARITY_THRESHOLD in
+# worker/analyze.py.  The API and worker run in separate containers so the
+# values are intentionally kept in sync manually rather than via a shared
+# import.
+_FP_BPM_THRESHOLD = 0.95
+_FP_CHORD_THRESHOLD = 0.5
+_FP_ENERGY_THRESHOLD = 0.8
+
+
+def _fp_cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Return cosine similarity between two equal-length float lists.
+
+    This is a dependency-free equivalent of the numpy-based implementation
+    used by ``compare_fingerprints`` in ``worker/analyze.py``; the API
+    container does not depend on numpy.
+    """
+    n = min(len(a), len(b))
+    if n == 0:
+        return 0.0
+    dot = sum(a[i] * b[i] for i in range(n))
+    norm_a = sum(x * x for x in a[:n]) ** 0.5
+    norm_b = sum(x * x for x in b[:n]) ** 0.5
+    return max(0.0, min(1.0, dot / (norm_a * norm_b))) if (norm_a > 0 and norm_b > 0) else 0.0
+
+
+def _compare_fingerprints(fp_a: dict[str, Any], fp_b: dict[str, Any]) -> dict[str, Any]:
+    """Compare two fingerprint dicts; return similarity score (0–100) and reasons.
+
+    Mirrors ``compare_fingerprints`` in ``worker/analyze.py`` using pure Python
+    instead of numpy (the API container has no numpy dependency).
+    """
+    reasons: list[str] = []
+    details: dict[str, Any] = {}
+    score = 0.0
+    total_weight = 0.0
+
+    # BPM similarity (weight 0.25)
+    bpm_a = float(fp_a.get('bpm') or 0.0)
+    bpm_b = float(fp_b.get('bpm') or 0.0)
+    if bpm_a > 0 and bpm_b > 0:
+        bpm_ratio = min(bpm_a, bpm_b) / max(bpm_a, bpm_b)
+        if bpm_ratio >= _FP_BPM_THRESHOLD:
+            reasons.append('Same BPM range')
+        details['bpm_similarity'] = round(bpm_ratio, 3)
+        score += bpm_ratio * 0.25
+        total_weight += 0.25
+
+    # Key similarity (weight 0.25)
+    key_a = str(fp_a.get('key') or '').strip()
+    key_b = str(fp_b.get('key') or '').strip()
+    if key_a and key_b:
+        if key_a == key_b:
+            key_score = 1.0
+            reasons.append('Same key')
+        else:
+            tonic_a = key_a.split()[0] if key_a else ''
+            tonic_b = key_b.split()[0] if key_b else ''
+            key_score = 0.5 if (tonic_a and tonic_a == tonic_b) else 0.0
+            if key_score > 0:
+                reasons.append('Same tonic, different mode')
+        details['key_match'] = key_score > 0.0
+        score += key_score * 0.25
+        total_weight += 0.25
+
+    # Chord progression similarity (weight 0.25) – Jaccard index
+    prog_a = {str(c) for c in (fp_a.get('chord_progression') or []) if str(c).strip()}
+    prog_b = {str(c) for c in (fp_b.get('chord_progression') or []) if str(c).strip()}
+    if prog_a and prog_b:
+        union = len(prog_a | prog_b)
+        chord_score = len(prog_a & prog_b) / union if union > 0 else 0.0
+        if chord_score >= _FP_CHORD_THRESHOLD:
+            reasons.append('Similar chord progression')
+        details['chord_similarity'] = round(chord_score, 3)
+        score += chord_score * 0.25
+        total_weight += 0.25
+
+    # Energy curve similarity (weight 0.25) – cosine
+    energy_a = [float(v) for v in (fp_a.get('energy_profile') or []) if isinstance(v, (int, float))]
+    energy_b = [float(v) for v in (fp_b.get('energy_profile') or []) if isinstance(v, (int, float))]
+    if energy_a and energy_b:
+        energy_score = _fp_cosine_similarity(energy_a, energy_b)
+        if energy_score >= _FP_ENERGY_THRESHOLD:
+            reasons.append('Similar energy curve')
+        details['energy_similarity'] = round(energy_score, 3)
+        score += energy_score * 0.25
+        total_weight += 0.25
+
+    similarity = int(round((score / total_weight) * 100)) if total_weight > 0 else 0
+    return {'similarity': similarity, 'reasons': reasons, 'details': details}
+
+
+def _load_task_fingerprint(task: dict[str, Any]) -> dict[str, Any] | None:
+    """Load the pre-computed fingerprint for a task, or return None."""
+    results = task.get('results')
+    if not isinstance(results, dict):
+        return None
+    fp_path = results.get('fingerprint_json')
+    if not isinstance(fp_path, str) or not fp_path:
+        return None
+    resolved = _resolve_data_path(fp_path)
+    if resolved is None:
+        return None
+    try:
+        data = json.loads(resolved.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+@app.get('/tasks/{task_id}/similar')
+def get_similar_tasks(task_id: str, limit: int = 10):
+    """Find completed tasks with audio fingerprints similar to *task_id*.
+
+    Similarity is computed across four weighted dimensions:
+
+    * **BPM** – ratio of the lower to higher BPM (weight 25%).
+    * **Key** – exact key match scores 100 %; same tonic in different mode
+      scores 50 % (weight 25%).
+    * **Chord progression** – Jaccard index over the de-duplicated chord sets
+      (weight 25%).
+    * **Energy curve** – cosine similarity of the coarsened energy profiles
+      (weight 25%).
+
+    Returns a list of matches sorted by descending similarity, each with
+    ``task_id``, ``similarity`` (0–100), ``reasons``, and ``details``.
+    """
+    if limit < 1 or limit > 100:
+        raise HTTPException(status_code=400, detail='limit must be between 1 and 100')
+    safe_task_id = _validated_task_id(task_id)
+    target_task = _load_task(task_id)
+    target_fp = _load_task_fingerprint(target_task)
+    if target_fp is None:
+        raise HTTPException(status_code=404, detail='Fingerprint not available for this task')
+
+    _ensure_dirs()
+    matches: list[dict[str, Any]] = []
+    for task_file in TASKS_DIR.glob('*.json'):
+        try:
+            candidate = json.loads(task_file.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if candidate.get('status') != 'done':
+            continue
+        candidate_id = str(candidate.get('task_id') or task_file.stem)
+        if candidate_id == safe_task_id:
+            continue
+        candidate_fp = _load_task_fingerprint(candidate)
+        if candidate_fp is None:
+            continue
+        comparison = _compare_fingerprints(target_fp, candidate_fp)
+        matches.append({
+            'task_id': candidate_id,
+            'similarity': comparison['similarity'],
+            'reasons': comparison['reasons'],
+            'details': comparison['details'],
+        })
+
+    matches.sort(key=lambda m: m['similarity'], reverse=True)
+    return {
+        'task_id': safe_task_id,
+        'matches': matches[:limit],
+    }
+
+
+# ---------------------------------------------------------------------------
 # Cue points
 # ---------------------------------------------------------------------------
 

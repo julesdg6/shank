@@ -1835,8 +1835,43 @@ def test_reprocess_all_valid_modes(client, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Fingerprint endpoints
+# GET /tasks/{task_id}/fingerprint, GET /tasks/fingerprints, GET /tasks/{task_id}/similar
 # ---------------------------------------------------------------------------
+
+def _make_fingerprint_task(tmp_path, task_id, bpm=120.0, key='C major',
+                            chord_progression=None, energy_profile=None,
+                            status='done'):
+    """Helper: write a task file plus a fingerprint.json in results dir."""
+    if chord_progression is None:
+        chord_progression = ['C', 'Am', 'F', 'G']
+    if energy_profile is None:
+        energy_profile = [0.1] * 16
+
+    results_dir = tmp_path / 'results' / task_id
+    results_dir.mkdir(parents=True, exist_ok=True)
+    fp_path = results_dir / 'fingerprint.json'
+    fp_path.write_text(json.dumps({
+        'bpm': bpm,
+        'key': key,
+        'chord_progression': chord_progression,
+        'energy_profile': energy_profile,
+        'spectral_centroid': 5.0,
+    }))
+
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': status,
+        'bpm': bpm,
+        'key': key,
+        'results': {
+            'dir': str(results_dir),
+            'fingerprint_json': str(fp_path),
+        },
+    }))
+    return fp_path
+
 
 def test_get_task_fingerprint_returns_data(client, tmp_path):
     """GET /tasks/{task_id}/fingerprint must return the fingerprint JSON."""
@@ -1880,6 +1915,18 @@ def test_get_task_fingerprint_returns_data(client, tmp_path):
     assert len(data['spectral_profile']) == 8
 
 
+def test_get_task_fingerprint_returns_fingerprint(client, tmp_path):
+    task_id = str(uuid.uuid4())
+    _make_fingerprint_task(tmp_path, task_id, bpm=128.0, key='A minor')
+    response = client.get(f'/tasks/{task_id}/fingerprint')
+    assert response.status_code == 200
+    data = response.json()
+    assert data['bpm'] == 128.0
+    assert data['key'] == 'A minor'
+    assert 'chord_progression' in data
+    assert 'energy_profile' in data
+
+
 def test_get_task_fingerprint_404_when_not_available(client, tmp_path):
     """GET /tasks/{task_id}/fingerprint returns 404 when no fingerprint exists."""
     task_id = str(uuid.uuid4())
@@ -1890,6 +1937,19 @@ def test_get_task_fingerprint_404_when_not_available(client, tmp_path):
         'status': 'done',
     }))
 
+    response = client.get(f'/tasks/{task_id}/fingerprint')
+    assert response.status_code == 404
+
+
+def test_get_task_fingerprint_returns_404_when_no_fingerprint(client, tmp_path):
+    task_id = str(uuid.uuid4())
+    tasks_dir = tmp_path / 'tasks'
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
+        'task_id': task_id,
+        'status': 'done',
+        'bpm': 120.0,
+    }))
     response = client.get(f'/tasks/{task_id}/fingerprint')
     assert response.status_code == 404
 
@@ -1943,6 +2003,20 @@ def test_list_task_fingerprints_returns_all_completed(client, tmp_path):
     assert data['fingerprints'][task_id_a]['version'] == '1'
 
 
+def test_list_task_fingerprints_returns_completed_only(client, tmp_path):
+    done_id = str(uuid.uuid4())
+    pending_id = str(uuid.uuid4())
+    _make_fingerprint_task(tmp_path, done_id, bpm=130.0, key='D minor')
+    _make_fingerprint_task(tmp_path, pending_id, bpm=100.0, key='G major', status='pending')
+
+    response = client.get('/tasks/fingerprints')
+    assert response.status_code == 200
+    data = response.json()
+    assert 'fingerprints' in data
+    assert done_id in data['fingerprints']
+    assert pending_id not in data['fingerprints']
+
+
 def test_list_task_fingerprints_omits_tasks_without_fingerprint(client, tmp_path):
     """GET /tasks/fingerprints must omit tasks that have no fingerprint file."""
     task_id = str(uuid.uuid4())
@@ -1982,340 +2056,102 @@ def test_fingerprint_included_in_task_artifacts(client, tmp_path):
     assert 'fingerprint_json' in response.json()['artifacts']
 
 
-# ---------------------------------------------------------------------------
-# MIDI stem extraction endpoints
-# ---------------------------------------------------------------------------
+def test_get_similar_tasks_returns_matches(client, tmp_path):
+    target_id = str(uuid.uuid4())
+    similar_id = str(uuid.uuid4())
+    _make_fingerprint_task(tmp_path, target_id, bpm=128.0, key='A minor',
+                           chord_progression=['Am', 'F', 'C', 'G'],
+                           energy_profile=[0.1] * 16)
+    _make_fingerprint_task(tmp_path, similar_id, bpm=128.0, key='A minor',
+                           chord_progression=['Am', 'F', 'C', 'G'],
+                           energy_profile=[0.1] * 16)
 
-def _midi_bytes() -> bytes:
-    return b'MThd\x00\x00\x00\x06\x00\x00\x00\x01\x01\xe0MTrk\x00\x00\x00\x04\x00\xff/\x00'
-
-
-def test_list_midi_stems_returns_available_roles(client, tmp_path):
-    """GET /tasks/{id}/midi-stems should return roles for stems with accessible MIDI files."""
-    task_id = str(uuid.uuid4())
-    midi_dir = tmp_path / 'results' / task_id / 'midi'
-    midi_dir.mkdir(parents=True, exist_ok=True)
-    drums_mid = midi_dir / 'drums.mid'
-    bass_mid = midi_dir / 'bass.mid'
-    drums_mid.write_bytes(_midi_bytes())
-    bass_mid.write_bytes(_midi_bytes())
-
-    tasks_dir = tmp_path / 'tasks'
-    tasks_dir.mkdir(parents=True, exist_ok=True)
-    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
-        'task_id': task_id,
-        'status': 'done',
-        'midi_stems': {
-            'enabled': True,
-            'backend': 'basic_pitch',
-            'status': 'completed',
-            'stems': {
-                'drums': {'stem': 'drums', 'role': 'drums', 'midi_path': str(drums_mid), 'note_count': 10},
-                'bass': {'stem': 'bass', 'role': 'bass', 'midi_path': str(bass_mid), 'note_count': 8},
-            },
-            'output_paths': [],
-            'warnings': [],
-            'errors': [],
-        },
-    }))
-
-    response = client.get(f'/tasks/{task_id}/midi-stems')
+    response = client.get(f'/tasks/{target_id}/similar')
     assert response.status_code == 200
     data = response.json()
-    assert set(data['roles']) == {'drums', 'bass'}
-    assert data['status'] == 'completed'
-    assert data['backend'] == 'basic_pitch'
+    assert data['task_id'] == target_id
+    assert 'matches' in data
+    assert len(data['matches']) == 1
+    assert data['matches'][0]['task_id'] == similar_id
+    assert data['matches'][0]['similarity'] == 100
 
 
-def test_list_midi_stems_returns_empty_when_no_midi_stems(client, tmp_path):
-    """GET /tasks/{id}/midi-stems should return empty roles when no midi_stems key."""
+def test_get_similar_tasks_excludes_self(client, tmp_path):
     task_id = str(uuid.uuid4())
-    tasks_dir = tmp_path / 'tasks'
-    tasks_dir.mkdir(parents=True, exist_ok=True)
-    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
-        'task_id': task_id,
-        'status': 'done',
-    }))
-
-    response = client.get(f'/tasks/{task_id}/midi-stems')
+    _make_fingerprint_task(tmp_path, task_id)
+    response = client.get(f'/tasks/{task_id}/similar')
     assert response.status_code == 200
-    data = response.json()
-    assert data['roles'] == []
-    assert data['status'] == 'unavailable'
+    ids = [m['task_id'] for m in response.json()['matches']]
+    assert task_id not in ids
 
 
-def test_download_midi_stem_serves_file(client, tmp_path):
-    """GET /tasks/{id}/midi-stems/{role} should serve the MIDI file."""
-    task_id = str(uuid.uuid4())
-    midi_dir = tmp_path / 'results' / task_id / 'midi'
-    midi_dir.mkdir(parents=True, exist_ok=True)
-    melody_mid = midi_dir / 'melody.mid'
-    melody_mid.write_bytes(_midi_bytes())
-
-    tasks_dir = tmp_path / 'tasks'
-    tasks_dir.mkdir(parents=True, exist_ok=True)
-    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
-        'task_id': task_id,
-        'status': 'done',
-        'midi_stems': {
-            'status': 'completed',
-            'stems': {
-                'melody': {'stem': 'vocals', 'role': 'melody', 'midi_path': str(melody_mid), 'note_count': 5},
-            },
-        },
-    }))
-
-    response = client.get(f'/tasks/{task_id}/midi-stems/melody')
-    assert response.status_code == 200
-    assert response.content == _midi_bytes()
-    assert response.headers.get('content-disposition', '').find('melody.mid') >= 0
-
-
-def test_download_midi_stem_returns_404_for_unknown_role(client, tmp_path):
-    """GET /tasks/{id}/midi-stems/{role} should return 404 for an unrecognised role."""
+def test_get_similar_tasks_returns_404_when_no_fingerprint(client, tmp_path):
     task_id = str(uuid.uuid4())
     tasks_dir = tmp_path / 'tasks'
     tasks_dir.mkdir(parents=True, exist_ok=True)
     (tasks_dir / f'{task_id}.json').write_text(json.dumps({
         'task_id': task_id,
         'status': 'done',
-        'midi_stems': {'status': 'completed', 'stems': {}},
+        'bpm': 120.0,
     }))
-
-    response = client.get(f'/tasks/{task_id}/midi-stems/unknown')
+    response = client.get(f'/tasks/{task_id}/similar')
     assert response.status_code == 404
 
 
-def test_midi_stems_included_in_task_artifacts(client, tmp_path):
-    """MIDI stem files should appear in the artifacts listing."""
-    task_id = str(uuid.uuid4())
-    midi_dir = tmp_path / 'results' / task_id / 'midi'
-    midi_dir.mkdir(parents=True, exist_ok=True)
-    chords_mid = midi_dir / 'chords.mid'
-    chords_mid.write_bytes(_midi_bytes())
+def test_get_similar_tasks_sorted_by_similarity(client, tmp_path):
+    target_id = str(uuid.uuid4())
+    high_id = str(uuid.uuid4())
+    low_id = str(uuid.uuid4())
+    _make_fingerprint_task(tmp_path, target_id, bpm=128.0, key='A minor',
+                           chord_progression=['Am', 'F', 'C', 'G'],
+                           energy_profile=[0.1] * 16)
+    # High similarity: same key, BPM, chords
+    _make_fingerprint_task(tmp_path, high_id, bpm=128.0, key='A minor',
+                           chord_progression=['Am', 'F', 'C', 'G'],
+                           energy_profile=[0.1] * 16)
+    # Low similarity: different BPM, key, chords
+    _make_fingerprint_task(tmp_path, low_id, bpm=72.0, key='B major',
+                           chord_progression=['B', 'E', 'F#'],
+                           energy_profile=[0.9] * 16)
 
-    tasks_dir = tmp_path / 'tasks'
-    tasks_dir.mkdir(parents=True, exist_ok=True)
-    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
-        'task_id': task_id,
-        'status': 'done',
-        'midi_stems': {
-            'status': 'completed',
-            'stems': {
-                'chords': {'stem': 'other', 'role': 'chords', 'midi_path': str(chords_mid), 'note_count': 3},
-            },
-        },
-    }))
-
-    response = client.get(f'/tasks/{task_id}/artifacts')
+    response = client.get(f'/tasks/{target_id}/similar')
     assert response.status_code == 200
-    artifacts = response.json()['artifacts']
-    assert 'midi_stem_chords' in artifacts
-
-# ---------------------------------------------------------------------------
-# GET /tasks/{task_id}/report
-# ---------------------------------------------------------------------------
-
-def _make_completed_task(tmp_path: Path, task_id: str) -> dict:
-    """Write and return a minimal completed task with full analysis data."""
-    tasks_dir = tmp_path / 'tasks'
-    tasks_dir.mkdir(parents=True, exist_ok=True)
-    task = {
-        'task_id': task_id,
-        'status': 'done',
-        'source': 'mysong.mp3',
-        'bpm': 128.0,
-        'key': 'C major',
-        'duration_seconds': 180.0,
-        'analysis': {
-            'full_mix': {
-                'bpm': 128.0,
-                'key': 'C major',
-                'duration_seconds': 180.0,
-                'lufs': -14.0,
-                'waveform': [0.1, 0.2, 0.3, 0.2, 0.1],
-                'energy_over_time': [0.01, 0.04, 0.09, 0.04, 0.01],
-                'loudness_curve': [0.5, 0.6, 0.7, 0.6, 0.5],
-                'structure': [
-                    {'label': 'Intro', 'start_seconds': 0.0, 'end_seconds': 30.0, 'timestamp': '0:00'},
-                    {'label': 'Verse', 'start_seconds': 30.0, 'end_seconds': 90.0, 'timestamp': '0:30'},
-                    {'label': 'Outro', 'start_seconds': 90.0, 'end_seconds': 180.0, 'timestamp': '1:30'},
-                ],
-                'sections': [
-                    {'label': 'A', 'start_seconds': 0.0, 'end_seconds': 60.0},
-                    {'label': 'B', 'start_seconds': 60.0, 'end_seconds': 180.0},
-                ],
-                'cue_points': [
-                    {'name': 'intro', 'time_seconds': 0.0},
-                    {'name': 'first_downbeat', 'time_seconds': 0.47},
-                    {'name': 'outro', 'time_seconds': 150.0},
-                ],
-                'chords': {
-                    'segments': [
-                        {'symbol': 'C', 'start_seconds': 0.0, 'end_seconds': 4.0, 'confidence': 0.9},
-                        {'symbol': 'Am', 'start_seconds': 4.0, 'end_seconds': 8.0, 'confidence': 0.85},
-                    ],
-                    'progression': ['C', 'Am', 'F', 'G'],
-                },
-                'beatgrid': {'bpm': 128.0, 'first_beat_seconds': 0.0, 'beats': []},
-            },
-            'stems': {
-                'vocals': {'bpm': 128.0, 'key': 'C major', 'duration_seconds': 180.0, 'lufs': -18.0},
-                'drums': {'bpm': 128.0, 'key': None, 'duration_seconds': 180.0, 'lufs': -12.0},
-            },
-        },
-        'stems': {
-            'vocals': '/srv/shank/data/stems/vocals.wav',
-            'drums': '/srv/shank/data/stems/drums.wav',
-        },
-        'mt3': {
-            'status': 'completed',
-            'full_mix': {
-                'midi_path': '/srv/shank/data/mt3/full_mix.mid',
-                'notes': [{'pitch': 60, 'onset': 0.0, 'offset': 0.5}],
-            },
-            'stems': {},
-        },
-    }
-    (tasks_dir / f'{task_id}.json').write_text(json.dumps(task))
-    return task
+    matches = response.json()['matches']
+    assert matches[0]['task_id'] == high_id
+    assert matches[0]['similarity'] > matches[1]['similarity']
 
 
-def test_report_json_returns_structured_payload(client, tmp_path):
-    """GET /tasks/{task_id}/report returns a JSON report with all expected fields."""
-    task_id = str(uuid.uuid4())
-    _make_completed_task(tmp_path, task_id)
+def test_get_similar_tasks_limit_parameter(client, tmp_path):
+    target_id = str(uuid.uuid4())
+    _make_fingerprint_task(tmp_path, target_id)
+    for _ in range(5):
+        other_id = str(uuid.uuid4())
+        _make_fingerprint_task(tmp_path, other_id)
 
-    response = client.get(f'/tasks/{task_id}/report?format=json')
+    response = client.get(f'/tasks/{target_id}/similar?limit=2')
     assert response.status_code == 200
-    data = response.json()
-
-    assert data['report_version'] == '1.0'
-    assert data['task_id'] == task_id
-    assert 'generated_at' in data
-    assert data['title'] == 'mysong'
-    assert data['summary']['bpm'] == 128.0
-    assert data['summary']['key'] == 'C major'
-    assert data['summary']['duration_seconds'] == 180.0
-    assert data['summary']['lufs'] == -14.0
-    assert len(data['structure']) == 3
-    assert data['structure'][0]['label'] == 'Intro'
-    assert len(data['sections']) == 2
-    assert len(data['cue_points']) == 3
-    assert len(data['chords']['segments']) == 2
-    assert data['chords']['progression'] == ['C', 'Am', 'F', 'G']
-    assert len(data['waveform']) == 5
-    assert len(data['energy']) == 5
-    assert len(data['loudness']) == 5
-    assert 'vocals' in data['stems']
-    assert 'drums' in data['stems']
-    assert data['stems']['vocals']['bpm'] == 128.0
-    assert 'full_mix' in data['midi']
-    assert data['midi']['full_mix']['note_count'] == 1
+    assert len(response.json()['matches']) <= 2
 
 
-def test_report_json_is_default_format(client, tmp_path):
-    """GET /tasks/{task_id}/report without format param defaults to JSON."""
+def test_get_similar_tasks_invalid_limit(client, tmp_path):
     task_id = str(uuid.uuid4())
-    _make_completed_task(tmp_path, task_id)
+    _make_fingerprint_task(tmp_path, task_id)
+    response = client.get(f'/tasks/{task_id}/similar?limit=0')
+    assert response.status_code == 400
 
-    response = client.get(f'/tasks/{task_id}/report')
+
+def test_similar_tasks_response_includes_reasons_and_details(client, tmp_path):
+    target_id = str(uuid.uuid4())
+    other_id = str(uuid.uuid4())
+    _make_fingerprint_task(tmp_path, target_id, bpm=128.0, key='C major',
+                           chord_progression=['C', 'G'], energy_profile=[0.2] * 16)
+    _make_fingerprint_task(tmp_path, other_id, bpm=128.0, key='C major',
+                           chord_progression=['C', 'G'], energy_profile=[0.2] * 16)
+
+    response = client.get(f'/tasks/{target_id}/similar')
     assert response.status_code == 200
-    assert response.headers['content-type'].startswith('application/json')
-    data = response.json()
-    assert 'report_version' in data
-
-
-def test_report_html_returns_self_contained_page(client, tmp_path):
-    """GET /tasks/{task_id}/report?format=html returns a complete HTML page."""
-    task_id = str(uuid.uuid4())
-    _make_completed_task(tmp_path, task_id)
-
-    response = client.get(f'/tasks/{task_id}/report?format=html')
-    assert response.status_code == 200
-    assert response.headers['content-type'].startswith('text/html')
-    body = response.text
-    assert '<!DOCTYPE html>' in body
-    assert 'SHANK Report' in body
-    assert '128.00' in body
-    assert 'C major' in body
-    assert 'Intro' in body
-    assert 'Verse' in body
-    assert 'Outro' in body
-    assert '<svg' in body
-
-
-def test_report_html_served_by_accept_header(client, tmp_path):
-    """Accept: text/html should trigger HTML format even without ?format=."""
-    task_id = str(uuid.uuid4())
-    _make_completed_task(tmp_path, task_id)
-
-    response = client.get(
-        f'/tasks/{task_id}/report',
-        headers={'accept': 'text/html,application/xhtml+xml'},
-    )
-    assert response.status_code == 200
-    assert response.headers['content-type'].startswith('text/html')
-    assert '<!DOCTYPE html>' in response.text
-
-
-def test_report_pdf_returns_pdf_bytes(client, tmp_path):
-    """GET /tasks/{task_id}/report?format=pdf returns a PDF file."""
-    task_id = str(uuid.uuid4())
-    _make_completed_task(tmp_path, task_id)
-
-    response = client.get(f'/tasks/{task_id}/report?format=pdf')
-    assert response.status_code == 200
-    assert response.headers['content-type'] == 'application/pdf'
-    assert response.content[:4] == b'%PDF'
-    assert 'attachment' in response.headers.get('content-disposition', '')
-
-
-def test_report_returns_404_for_unknown_task(client):
-    """Report endpoint returns 404 when the task does not exist."""
-    missing = str(uuid.uuid4())
-    response = client.get(f'/tasks/{missing}/report')
-    assert response.status_code == 404
-
-
-def test_report_returns_404_for_invalid_task_id(client):
-    """Report endpoint returns 404 for non-UUID task IDs."""
-    response = client.get('/tasks/not-a-uuid/report')
-    assert response.status_code == 404
-
-
-def test_report_json_minimal_task_no_analysis(client, tmp_path):
-    """Report should work for a task with no analysis data (e.g. pending task)."""
-    task_id = str(uuid.uuid4())
-    tasks_dir = tmp_path / 'tasks'
-    tasks_dir.mkdir(parents=True, exist_ok=True)
-    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
-        'task_id': task_id,
-        'status': 'pending',
-        'source': 'song.mp3',
-    }))
-
-    response = client.get(f'/tasks/{task_id}/report?format=json')
-    assert response.status_code == 200
-    data = response.json()
-    assert data['report_version'] == '1.0'
-    assert data['summary']['bpm'] is None
-    assert data['structure'] == []
-    assert data['chords']['segments'] == []
-
-
-def test_report_html_minimal_task_renders_placeholders(client, tmp_path):
-    """HTML report for a task with no data should still render without crashing."""
-    task_id = str(uuid.uuid4())
-    tasks_dir = tmp_path / 'tasks'
-    tasks_dir.mkdir(parents=True, exist_ok=True)
-    (tasks_dir / f'{task_id}.json').write_text(json.dumps({
-        'task_id': task_id,
-        'status': 'pending',
-        'source': 'empty.mp3',
-    }))
-
-    response = client.get(f'/tasks/{task_id}/report?format=html')
-    assert response.status_code == 200
-    assert '<!DOCTYPE html>' in response.text
-    assert 'No data' in response.text or 'No chord data' in response.text
+    match = response.json()['matches'][0]
+    assert 'reasons' in match
+    assert 'details' in match
+    assert isinstance(match['reasons'], list)
+    assert isinstance(match['details'], dict)

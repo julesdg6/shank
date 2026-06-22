@@ -236,8 +236,9 @@ docker build -t shank:local .
 | `GET` | `/tasks/{task_id}/chords` | Return chord detection results for a completed task |
 | `GET` | `/tasks/{task_id}/harmonic` | Return harmonic analysis (Roman numerals, key changes, borrowed chords) |
 | `GET` | `/tasks/{task_id}/beatgrid` | Return beat grid and beat detection metadata for a completed task |
-| `GET` | `/tasks/{task_id}/fingerprint` | Return the Audio DNA fingerprint (BPM, key, chord/energy/spectral profiles) |
-| `GET` | `/tasks/fingerprints` | Return fingerprints for all completed tasks (for similarity search and duplicate detection) |
+| `GET` | `/tasks/{task_id}/fingerprint` | Return the audio DNA fingerprint (BPM, key, chords, energy) for a completed task |
+| `GET` | `/tasks/{task_id}/similar` | Find completed tasks with similar audio fingerprints, ranked by similarity |
+| `GET` | `/tasks/fingerprints` | Return audio fingerprints for all completed tasks (for similarity search and duplicate detection) |
 | `GET` | `/tasks/{task_id}/report` | Generate a complete song-breakdown report (`?format=json\|html\|pdf`) |
 | `GET` | `/tasks/{task_id}/artifacts` | List downloadable output files for a completed task |
 | `GET` | `/tasks/{task_id}/artifacts/{artifact_name}` | Download a named artifact file (e.g. normalised WAV, stem) |

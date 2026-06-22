@@ -885,6 +885,106 @@ def _derive_cue_points(
     return result
 
 
+_BPM_SIMILARITY_THRESHOLD = 0.95  # ~5% tolerance
+_CHORD_SIMILARITY_THRESHOLD = 0.5
+_ENERGY_SIMILARITY_THRESHOLD = 0.8
+
+
+def compare_fingerprints(fp_a: dict, fp_b: dict) -> dict:
+    """Compare two fingerprints and return a similarity report.
+
+    Parameters
+    ----------
+    fp_a, fp_b:
+        Fingerprint dicts produced by :func:`build_fingerprint`.
+
+    Returns
+    -------
+    dict with:
+        ``similarity``  – integer 0–100 percentage.
+        ``reasons``     – list of human-readable reason strings.
+        ``details``     – per-dimension raw similarity scores.
+    """
+    reasons: list[str] = []
+    details: dict = {}
+    score = 0.0
+    total_weight = 0.0
+
+    # 1. BPM similarity (weight 0.25) – ratio of lower/higher BPM.
+    bpm_a = float(fp_a.get('bpm') or 0.0)
+    bpm_b = float(fp_b.get('bpm') or 0.0)
+    if bpm_a > 0 and bpm_b > 0:
+        bpm_ratio = min(bpm_a, bpm_b) / max(bpm_a, bpm_b)
+        if bpm_ratio >= _BPM_SIMILARITY_THRESHOLD:
+            reasons.append('Same BPM range')
+        details['bpm_similarity'] = round(bpm_ratio, 3)
+        score += bpm_ratio * 0.25
+        total_weight += 0.25
+
+    # 2. Key match (weight 0.25) – exact = 1.0, same tonic different mode = 0.5.
+    key_a = str(fp_a.get('key') or '').strip()
+    key_b = str(fp_b.get('key') or '').strip()
+    if key_a and key_b:
+        if key_a == key_b:
+            key_score = 1.0
+            reasons.append('Same key')
+        else:
+            tonic_a = key_a.split()[0] if key_a else ''
+            tonic_b = key_b.split()[0] if key_b else ''
+            key_score = 0.5 if (tonic_a and tonic_a == tonic_b) else 0.0
+            if key_score > 0:
+                reasons.append('Same tonic, different mode')
+        details['key_match'] = key_score > 0.0
+        score += key_score * 0.25
+        total_weight += 0.25
+
+    # 3. Chord progression similarity (weight 0.25) – Jaccard index over chord sets.
+    # Supports both the legacy ``chord_progression`` list and the current
+    # ``chord_profile`` dict produced by build_fingerprint.
+    def _chord_set(fp: dict) -> set[str]:
+        if fp.get('chord_profile'):
+            return set(fp['chord_profile'].keys())
+        return set(str(c) for c in (fp.get('chord_progression') or []) if str(c).strip())
+
+    prog_a = _chord_set(fp_a)
+    prog_b = _chord_set(fp_b)
+    if prog_a and prog_b:
+        union = len(prog_a | prog_b)
+        chord_score = len(prog_a & prog_b) / union if union > 0 else 0.0
+        if chord_score >= _CHORD_SIMILARITY_THRESHOLD:
+            reasons.append('Similar chord progression')
+        details['chord_similarity'] = round(chord_score, 3)
+        score += chord_score * 0.25
+        total_weight += 0.25
+
+    # 4. Energy curve similarity (weight 0.25) – cosine similarity.
+    energy_a_raw = fp_a.get('energy_profile') or []
+    energy_b_raw = fp_b.get('energy_profile') or []
+    energy_a = [float(v) for v in energy_a_raw if isinstance(v, (int, float))]
+    energy_b = [float(v) for v in energy_b_raw if isinstance(v, (int, float))]
+    if energy_a and energy_b:
+        min_len = min(len(energy_a), len(energy_b))
+        arr_a = np.array(energy_a[:min_len])
+        arr_b = np.array(energy_b[:min_len])
+        norm_a = float(np.linalg.norm(arr_a))
+        norm_b = float(np.linalg.norm(arr_b))
+        energy_score = float(np.dot(arr_a, arr_b) / (norm_a * norm_b)) if (norm_a > 0 and norm_b > 0) else 0.0
+        energy_score = _clamp(energy_score, 0.0, 1.0)
+        if energy_score >= _ENERGY_SIMILARITY_THRESHOLD:
+            reasons.append('Similar energy curve')
+        details['energy_similarity'] = round(energy_score, 3)
+        score += energy_score * 0.25
+        total_weight += 0.25
+
+    similarity_pct = int(round((score / total_weight) * 100)) if total_weight > 0 else 0
+
+    return {
+        'similarity': similarity_pct,
+        'reasons': reasons,
+        'details': details,
+    }
+
+
 def analyze_audio(file_path: str) -> dict:
     """Load audio from *file_path* and return BPM and key analysis results.
 

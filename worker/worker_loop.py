@@ -12,7 +12,7 @@ from typing import Any
 
 import numpy as np
 
-from analyze import analyze_audio
+from analyze import analyze_audio, build_fingerprint
 from downloader import download_youtube, extract_youtube_metadata
 from metadata import collect_song_metadata
 from mt3_client import transcribe_with_service
@@ -283,6 +283,7 @@ def _task_artifact_paths(
         for artifact_name, key in (
             ('beatgrid_json', 'beatgrid_json'),
             ('structure_json', 'structure_json'),
+            ('fingerprint_json', 'fingerprint_json'),
             ('cue_points_json', 'cue_points_json'),
             ('waveform_beats_png', 'waveform_beats_png'),
             ('tempo_curve_png', 'tempo_curve_png'),
@@ -447,7 +448,6 @@ def _write_structure_output(result_artifacts: dict[str, str], analysis_payload: 
 
 
 def _write_fingerprint_output(result_artifacts: dict[str, str], analysis_payload: dict[str, Any]) -> None:
-    from analyze import build_fingerprint  # noqa: PLC0415
     full_mix = analysis_payload.get('full_mix')
     fingerprint: dict[str, Any] = {}
     if isinstance(full_mix, dict):
