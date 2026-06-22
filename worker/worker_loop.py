@@ -308,6 +308,7 @@ def _structured_result_paths(task_id: str) -> dict[str, str]:
         'analysis_json': str(result_dir / 'analysis.json'),
         'beatgrid_json': str(result_dir / 'beatgrid.json'),
         'structure_json': str(result_dir / 'structure.json'),
+        'fingerprint_json': str(result_dir / 'fingerprint.json'),
         'cue_points_json': str(result_dir / 'cue_points.json'),
         'waveform_beats_png': str(result_dir / 'waveform_beats.png'),
         'tempo_curve_png': str(result_dir / 'tempo_curve.png'),
@@ -445,6 +446,18 @@ def _write_structure_output(result_artifacts: dict[str, str], analysis_payload: 
     Path(result_artifacts['structure_json']).write_text(json.dumps(structure, indent=2))
 
 
+def _write_fingerprint_output(result_artifacts: dict[str, str], analysis_payload: dict[str, Any]) -> None:
+    from analyze import build_fingerprint  # noqa: PLC0415
+    full_mix = analysis_payload.get('full_mix')
+    fingerprint: dict[str, Any] = {}
+    if isinstance(full_mix, dict):
+        try:
+            fingerprint = build_fingerprint(full_mix)
+        except Exception as exc:  # pragma: no cover
+            log.warning('Could not build audio fingerprint: %s', exc)
+    Path(result_artifacts['fingerprint_json']).write_text(json.dumps(fingerprint, indent=2))
+
+
 def _build_ace_step_prompt_payload(
     *,
     task: dict[str, Any],
@@ -579,6 +592,7 @@ def _write_structured_results(
     analysis_path.write_text(json.dumps(analysis_payload, indent=2))
     _write_beat_outputs(result_artifacts, analysis_payload)
     _write_structure_output(result_artifacts, analysis_payload)
+    _write_fingerprint_output(result_artifacts, analysis_payload)
     _write_cue_points_output(result_artifacts, analysis_payload)
     mt3_payload = mt3_result if isinstance(mt3_result, dict) else {}
     midi_stems_payload = midi_stems_result if isinstance(midi_stems_result, dict) else {}

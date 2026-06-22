@@ -1481,6 +1481,52 @@ def list_completed_tasks():
     return {'tasks': completed_tasks}
 
 
+@app.get('/tasks/fingerprints')
+def list_task_fingerprints():
+    """Return Audio DNA fingerprints for all completed tasks.
+
+    The response maps each ``task_id`` to its fingerprint dict.  Fingerprints
+    are loaded from the on-disk ``fingerprint.json`` artifact written by the
+    worker when a task completes.  Tasks that have no fingerprint yet (e.g.
+    still processing, or processed before this feature was added) are omitted.
+
+    Callers can use the returned fingerprints for:
+
+    * **Duplicate detection** – find tasks sharing the same ``fingerprint_hash``.
+    * **Collection organisation** – group by ``key`` or ``bpm`` range.
+    * **Similarity search** – compare ``energy_profile``/``spectral_profile``
+      vectors using cosine similarity or nearest-neighbour algorithms.
+    """
+    _ensure_dirs()
+    fingerprints: dict[str, Any] = {}
+    for task_file in TASKS_DIR.glob('*.json'):
+        try:
+            task = json.loads(task_file.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if task.get('status') != 'done':
+            continue
+        task_id = task.get('task_id')
+        if not isinstance(task_id, str):
+            continue
+        structured_results = task.get('results')
+        if not isinstance(structured_results, dict):
+            continue
+        fp_path = structured_results.get('fingerprint_json')
+        if not isinstance(fp_path, str) or not fp_path:
+            continue
+        resolved = _resolve_data_path(fp_path)
+        if resolved is None:
+            continue
+        try:
+            fingerprint = json.loads(resolved.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(fingerprint, dict) and fingerprint:
+            fingerprints[task_id] = fingerprint
+    return {'fingerprints': fingerprints}
+
+
 # ---------------------------------------------------------------------------
 # Reprocess task
 # ---------------------------------------------------------------------------
@@ -1693,6 +1739,7 @@ def _task_artifacts(task: dict) -> dict[str, Path]:
             'results_analysis_json': structured_results.get('analysis_json'),
             'beatgrid_json': structured_results.get('beatgrid_json'),
             'structure_json': structured_results.get('structure_json'),
+            'fingerprint_json': structured_results.get('fingerprint_json'),
             'waveform_beats_png': structured_results.get('waveform_beats_png'),
             'tempo_curve_png': structured_results.get('tempo_curve_png'),
             'beatgraph_png': structured_results.get('beatgraph_png'),
@@ -1932,6 +1979,42 @@ def get_task_beatgrid(task_id: str):
     if isinstance(beat_detection, dict):
         result['beat_detection'] = beat_detection
     return result
+
+
+@app.get('/tasks/{task_id}/fingerprint')
+def get_task_fingerprint(task_id: str):
+    """Return the Audio DNA fingerprint for a completed task.
+
+    The fingerprint encodes key musical characteristics for duplicate detection,
+    similarity search, collection organisation, and recommendation.
+
+    Fields:
+
+    * ``version``          – fingerprint schema version.
+    * ``bpm``              – raw BPM float.
+    * ``bpm_normalized``   – BPM normalised to [0, 1] on a 0–200 BPM scale.
+    * ``key``              – musical key, e.g. ``'A minor'``.
+    * ``key_index``        – integer 0–23 encoding tonic + mode.
+    * ``chord_profile``    – duration-weighted chord frequency map.
+    * ``energy_profile``   – 32-bin normalised energy curve.
+    * ``spectral_profile`` – 8-bin normalised mel-spectral summary.
+    * ``duration_seconds`` – track length in seconds.
+    * ``fingerprint_hash`` – SHA-256 hex digest for quick duplicate lookup.
+    """
+    task = _load_task(task_id)
+    structured_results = task.get('results')
+    if isinstance(structured_results, dict):
+        fp_path = structured_results.get('fingerprint_json')
+        if isinstance(fp_path, str) and fp_path:
+            resolved = _resolve_data_path(fp_path)
+            if resolved is not None:
+                try:
+                    fingerprint = json.loads(resolved.read_text())
+                    if isinstance(fingerprint, dict) and fingerprint:
+                        return fingerprint
+                except (OSError, json.JSONDecodeError):
+                    pass
+    raise HTTPException(status_code=404, detail='Fingerprint not available for this task')
 
 
 # ---------------------------------------------------------------------------

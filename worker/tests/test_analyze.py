@@ -19,6 +19,7 @@ from analyze import (
     _harmonic_analysis,
     _is_borrowed_chord,
     analyze_audio,
+    build_fingerprint,
 )
 import worker_loop
 
@@ -764,3 +765,107 @@ def test_poll_once_skips_url_task_without_file(tmp_path, reloaded_worker_loop):
 
     updated = json.loads(task_file.read_text())
     assert updated['status'] == 'done'
+
+
+# ---------------------------------------------------------------------------
+# Tests for build_fingerprint
+# ---------------------------------------------------------------------------
+
+def test_build_fingerprint_returns_expected_fields(tmp_path):
+    """build_fingerprint must return all required Audio DNA fields."""
+    wav = _write_sine_wav(tmp_path / 'test.wav')
+    result = analyze_audio(str(wav))
+    fp = build_fingerprint(result)
+
+    assert isinstance(fp, dict)
+    assert fp['version'] == '1'
+    assert isinstance(fp['bpm'], float)
+    assert isinstance(fp['bpm_normalized'], float)
+    assert 0.0 <= fp['bpm_normalized'] <= 1.0
+    assert isinstance(fp['key'], str)
+    assert isinstance(fp['key_index'], int)
+    assert 0 <= fp['key_index'] <= 23
+    assert isinstance(fp['chord_profile'], dict)
+    assert isinstance(fp['energy_profile'], list)
+    assert len(fp['energy_profile']) == 32
+    assert isinstance(fp['spectral_profile'], list)
+    assert len(fp['spectral_profile']) == 8
+    assert isinstance(fp['duration_seconds'], float)
+    assert isinstance(fp['fingerprint_hash'], str)
+    assert len(fp['fingerprint_hash']) == 64  # SHA-256 hex digest
+
+
+def test_build_fingerprint_bpm_normalized(tmp_path):
+    """bpm_normalized must be bpm / 200 clamped to [0, 1]."""
+    result = {'bpm': 120.0, 'key': 'C major'}
+    fp = build_fingerprint(result)
+    assert fp['bpm_normalized'] == round(120.0 / 200.0, 4)
+
+    result_high = {'bpm': 300.0, 'key': 'C major'}
+    fp_high = build_fingerprint(result_high)
+    assert fp_high['bpm_normalized'] == 1.0
+
+
+def test_build_fingerprint_key_index_major():
+    """Key index for major keys should be 0–11."""
+    _PITCH_CLASSES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+    for i, pitch in enumerate(_PITCH_CLASSES):
+        fp = build_fingerprint({'bpm': 120.0, 'key': f'{pitch} major'})
+        assert fp['key_index'] == i, f'Expected {i} for {pitch} major, got {fp["key_index"]}'
+
+
+def test_build_fingerprint_key_index_minor():
+    """Key index for minor keys should be 12–23."""
+    _PITCH_CLASSES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+    for i, pitch in enumerate(_PITCH_CLASSES):
+        fp = build_fingerprint({'bpm': 120.0, 'key': f'{pitch} minor'})
+        assert fp['key_index'] == i + 12, f'Expected {i + 12} for {pitch} minor, got {fp["key_index"]}'
+
+
+def test_build_fingerprint_chord_profile_sums_to_one(tmp_path):
+    """chord_profile values must sum to 1.0 when chord segments are present."""
+    wav = _write_chord_wav(tmp_path / 'chord.wav')
+    result = analyze_audio(str(wav))
+    fp = build_fingerprint(result)
+
+    if fp['chord_profile']:
+        total = sum(fp['chord_profile'].values())
+        assert abs(total - 1.0) < 1e-3, f'chord_profile values sum to {total}, expected ~1.0'
+
+
+def test_build_fingerprint_profiles_normalized(tmp_path):
+    """energy_profile and spectral_profile values must be in [0, 1]."""
+    wav = _write_sine_wav(tmp_path / 'test.wav')
+    result = analyze_audio(str(wav))
+    fp = build_fingerprint(result)
+
+    assert all(0.0 <= v <= 1.0 for v in fp['energy_profile']), 'energy_profile contains out-of-range values'
+    assert all(0.0 <= v <= 1.0 for v in fp['spectral_profile']), 'spectral_profile contains out-of-range values'
+
+
+def test_build_fingerprint_hash_is_deterministic(tmp_path):
+    """The same analysis result must always produce the same fingerprint_hash."""
+    wav = _write_sine_wav(tmp_path / 'test.wav')
+    result = analyze_audio(str(wav))
+    fp1 = build_fingerprint(result)
+    fp2 = build_fingerprint(result)
+    assert fp1['fingerprint_hash'] == fp2['fingerprint_hash']
+
+
+def test_build_fingerprint_hash_differs_for_different_bpm():
+    """Different BPM values must produce different fingerprint hashes."""
+    fp_a = build_fingerprint({'bpm': 120.0, 'key': 'C major'})
+    fp_b = build_fingerprint({'bpm': 140.0, 'key': 'C major'})
+    assert fp_a['fingerprint_hash'] != fp_b['fingerprint_hash']
+
+
+def test_build_fingerprint_empty_analysis():
+    """build_fingerprint must not raise for a minimal/empty analysis dict."""
+    fp = build_fingerprint({})
+    assert isinstance(fp, dict)
+    assert fp['bpm'] == 0.0
+    assert fp['key'] == 'C major'
+    assert fp['key_index'] == 0
+    assert fp['chord_profile'] == {}
+    assert len(fp['energy_profile']) == 32
+    assert len(fp['spectral_profile']) == 8

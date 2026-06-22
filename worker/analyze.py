@@ -1,6 +1,7 @@
 """Audio analysis helpers with optional advanced beat/downbeat/loudness detectors."""
 
 from functools import lru_cache
+import hashlib
 import json
 import logging
 import os
@@ -55,6 +56,12 @@ _HOT_CUE_COLORS = (
     '#C364FA',  # G – purple
     '#19D1CE',  # H – cyan
 )
+
+# Audio DNA fingerprint settings
+_FINGERPRINT_VERSION = '1'
+_BPM_NORM_SCALE = 200.0   # BPM normalization ceiling (BPM / scale → [0, 1])
+_FINGERPRINT_ENERGY_BINS = 32
+_FINGERPRINT_SPECTRAL_BINS = 8
 
 # ---------------------------------------------------------------------------
 # Harmonic analysis constants
@@ -1035,4 +1042,155 @@ def analyze_audio(file_path: str) -> dict:
         'spectrogram_summary': spectrogram_summary,
         'loudness_curve': loudness_curve,
         'energy_over_time': energy_over_time,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Audio DNA fingerprint
+# ---------------------------------------------------------------------------
+
+def _key_to_index(key: str) -> int:
+    """Convert a key string like ``'C major'`` or ``'F# minor'`` to 0–23.
+
+    The index encodes both tonic (0–11) and mode (major = 0–11, minor = 12–23).
+    Unknown or malformed keys default to 0 (C major).
+    """
+    parts = key.strip().split()
+    if len(parts) < 2:
+        return 0
+    pitch_name = parts[0]
+    mode = parts[1].lower()
+    try:
+        pitch_idx = _PITCH_CLASSES.index(pitch_name)
+    except ValueError:
+        return 0
+    return pitch_idx + (12 if mode == 'minor' else 0)
+
+
+def _build_chord_profile(chords: dict) -> dict[str, float]:
+    """Return a duration-weighted, normalised frequency histogram of chord occurrences.
+
+    Keys are ``'<Root>_<quality>'``, e.g. ``'C_major'``.  Values sum to 1.0.
+    An empty dict is returned when no chord segments are present.
+    """
+    segments = chords.get('segments', []) if isinstance(chords, dict) else []
+    counts: dict[str, float] = {}
+    for seg in segments:
+        if not isinstance(seg, dict):
+            continue
+        root = seg.get('root', '')
+        quality = seg.get('quality', '')
+        if not root or not quality:
+            continue
+        chord_key = f'{root}_{quality}'
+        start = float(seg.get('start_seconds') or 0.0)
+        end = float(seg.get('end_seconds') or 0.0)
+        duration = max(end - start, 0.0)
+        counts[chord_key] = counts.get(chord_key, 0.0) + duration
+    total = sum(counts.values())
+    if total <= 0:
+        return {}
+    return {
+        k: round(v / total, 4)
+        for k, v in sorted(counts.items(), key=lambda item: -item[1])
+    }
+
+
+def _downsample_to(values: list[float], target_bins: int) -> list[float]:
+    """Average *values* into exactly *target_bins* bins.
+
+    If *values* is shorter than *target_bins*, the list is zero-padded.
+    """
+    if not values:
+        return [0.0] * target_bins
+    if len(values) <= target_bins:
+        return list(values) + [0.0] * (target_bins - len(values))
+    arr = np.array(values)
+    return [round(float(np.mean(chunk)), 5) for chunk in np.array_split(arr, target_bins)]
+
+
+def _normalize_to_unit(values: list[float]) -> list[float]:
+    """Min-max normalise *values* to the [0, 1] range."""
+    if not values:
+        return values
+    min_v = min(values)
+    max_v = max(values)
+    if max_v == min_v:
+        return [0.0] * len(values)
+    scale = max_v - min_v
+    return [round((v - min_v) / scale, 5) for v in values]
+
+
+def build_fingerprint(analysis_result: dict) -> dict:
+    """Build a compact Audio DNA fingerprint from *analysis_result*.
+
+    The fingerprint encodes the key musical characteristics of a track so that
+    it can be used for:
+
+    * **Duplicate detection** – compare ``fingerprint_hash`` values.
+    * **Similar track search** – compare ``energy_profile``, ``spectral_profile``,
+      ``chord_profile``, and ``bpm_normalized``.
+    * **Collection organisation** – group by ``key`` and ``bpm`` range.
+    * **Recommendation engine** – nearest-neighbour search on the feature vectors.
+
+    Parameters
+    ----------
+    analysis_result:
+        Dict as returned by :func:`analyze_audio`.
+
+    Returns
+    -------
+    dict
+        ``version``          – fingerprint schema version string.
+        ``bpm``              – raw BPM (float).
+        ``bpm_normalized``   – BPM normalised to [0, 1] on a 0–200 BPM scale.
+        ``key``              – musical key string, e.g. ``'A minor'``.
+        ``key_index``        – integer 0–23 encoding tonic + mode.
+        ``chord_profile``    – duration-weighted chord frequency dict.
+        ``energy_profile``   – 32-bin normalised energy curve.
+        ``spectral_profile`` – 8-bin normalised mel-spectral summary.
+        ``duration_seconds`` – track duration in seconds.
+        ``fingerprint_hash`` – SHA-256 hex digest over quantised key fields.
+    """
+    bpm = float(analysis_result.get('bpm') or 0.0)
+    key = str(analysis_result.get('key') or 'C major')
+    key_index = _key_to_index(key)
+
+    chords = analysis_result.get('chords') or {}
+    energy_over_time = analysis_result.get('energy_over_time') or []
+    spectrogram_summary = analysis_result.get('spectrogram_summary') or []
+    duration_seconds = float(analysis_result.get('duration_seconds') or 0.0)
+
+    bpm_normalized = round(min(bpm / _BPM_NORM_SCALE, 1.0), 4)
+    chord_profile = _build_chord_profile(chords)
+
+    raw_energy = [float(v) for v in energy_over_time if isinstance(v, (int, float))]
+    energy_profile = _normalize_to_unit(_downsample_to(raw_energy, _FINGERPRINT_ENERGY_BINS))
+
+    raw_spectral = [float(v) for v in spectrogram_summary if isinstance(v, (int, float))]
+    spectral_profile = _normalize_to_unit(_downsample_to(raw_spectral, _FINGERPRINT_SPECTRAL_BINS))
+
+    # Build a reproducible hash over quantised fields for duplicate detection.
+    hash_data = {
+        'bpm_int': round(bpm),
+        'key_index': key_index,
+        'energy_8': [round(v, 2) for v in _downsample_to(energy_profile, 8)],
+        'spectral_4': [round(v, 2) for v in _downsample_to(spectral_profile, 4)],
+        'top_chords': list(chord_profile.keys())[:3],
+    }
+    fingerprint_hash = hashlib.sha256(
+        json.dumps(hash_data, sort_keys=True).encode()
+    ).hexdigest()
+
+    return {
+        'version': _FINGERPRINT_VERSION,
+        'bpm': round(bpm, 2),
+        'bpm_normalized': bpm_normalized,
+        'key': key,
+        'key_index': key_index,
+        'chord_profile': chord_profile,
+        'energy_profile': energy_profile,
+        'spectral_profile': spectral_profile,
+        'duration_seconds': round(duration_seconds, 2),
+        'fingerprint_hash': fingerprint_hash,
     }
